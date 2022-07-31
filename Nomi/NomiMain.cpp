@@ -43,6 +43,8 @@ wxString wxbuildinfo(wxbuildinfoformat format)
 }
 
 //(*IdInit(NomiFrame)
+const long NomiFrame::ID_STATICTEXT1 = wxNewId();
+const long NomiFrame::ID_BUTTON1 = wxNewId();
 const long NomiFrame::idMenuQuit = wxNewId();
 const long NomiFrame::idMenuAbout = wxNewId();
 const long NomiFrame::ID_STATUSBAR1 = wxNewId();
@@ -56,6 +58,7 @@ END_EVENT_TABLE()
 NomiFrame::NomiFrame(wxWindow* parent,wxWindowID id)
 {
     //(*Initialize(NomiFrame)
+    wxBoxSizer* BoxSizer1;
     wxMenu* Menu1;
     wxMenu* Menu2;
     wxMenuBar* MenuBar1;
@@ -63,7 +66,13 @@ NomiFrame::NomiFrame(wxWindow* parent,wxWindowID id)
     wxMenuItem* MenuItem2;
 
     Create(parent, id, wxEmptyString, wxDefaultPosition, wxDefaultSize, wxDEFAULT_FRAME_STYLE, _T("id"));
-    SetClientSize(wxSize(396,479));
+    SetClientSize(wxSize(358,261));
+    BoxSizer1 = new wxBoxSizer(wxHORIZONTAL);
+    StaticText1 = new wxStaticText(this, ID_STATICTEXT1, _("Label"), wxDefaultPosition, wxDefaultSize, 0, _T("ID_STATICTEXT1"));
+    BoxSizer1->Add(StaticText1, 1, wxALL|wxALIGN_CENTER_HORIZONTAL|wxALIGN_CENTER_VERTICAL, 5);
+    Button1 = new wxButton(this, ID_BUTTON1, _("Hello World! \n(testing :D)"), wxDefaultPosition, wxDefaultSize, 0, wxDefaultValidator, _T("ID_BUTTON1"));
+    BoxSizer1->Add(Button1, 1, wxALL|wxALIGN_CENTER_HORIZONTAL|wxALIGN_CENTER_VERTICAL, 5);
+    SetSizer(BoxSizer1);
     MenuBar1 = new wxMenuBar();
     Menu1 = new wxMenu();
     MenuItem1 = new wxMenuItem(Menu1, idMenuQuit, _("Quit\tAlt-F4"), _("Quit the application"), wxITEM_NORMAL);
@@ -80,6 +89,8 @@ NomiFrame::NomiFrame(wxWindow* parent,wxWindowID id)
     StatusBar1->SetFieldsCount(1,__wxStatusBarWidths_1);
     StatusBar1->SetStatusStyles(1,__wxStatusBarStyles_1);
     SetStatusBar(StatusBar1);
+    SetSizer(BoxSizer1);
+    Layout();
 
     Connect(idMenuQuit,wxEVT_COMMAND_MENU_SELECTED,(wxObjectEventFunction)&NomiFrame::OnQuit);
     Connect(idMenuAbout,wxEVT_COMMAND_MENU_SELECTED,(wxObjectEventFunction)&NomiFrame::OnAbout);
