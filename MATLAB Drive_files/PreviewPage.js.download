@@ -1,0 +1,516 @@
+define([
+  "underscore",
+  "jquery",
+  "backbone",
+  "util",
+  "config",
+  "pages/AbstractPage",
+  "dao/gdsdao",
+  "filebrowser/FbTreeController",
+  "templates/previewPage",
+  "sharingFileService",
+  "OpenInMOView",
+  "dojo/i18n!nls/mldoStringResource",
+  "filebrowser/BreadcrumbManager"
+], function ( _, $, Backbone, Util, GCONFIG, AbstractPage, GDSDAO, FbTreeController, PreviewPageTemplate, FileService, OpenInMOView, MLDOStrings, BreadcrumbManager) {
+
+  var PreviewPage = AbstractPage.extend({
+
+    initialize: function (params) {
+
+      this.template = PreviewPageTemplate;
+
+      this.events = {
+        "click #previewView div.facets-files": "goToFiles",
+        "click #previewViewHeader li.facets-files": "goToFiles",
+        "click #previewView div.sharedContent": "goToSharing",
+        "click #previewViewHeader li.facets-sharing" : "goToSharing",
+        "click #previewView div.facets-trash": "goToTrashCan",
+        "click #previewViewHeader li.facets-trash" : "goToTrashCan",
+        "click #previewView .info-panel .openCloseButton" : "openOrClosePanel",
+        "click div.appTitle": "deSelectGrid",
+        "click #previewView div.generalToolbar div.actionIconContainer": "deSelectGrid",
+        "click #previewView.treeView div.wrapper": "deSelectGrid",
+        "click div.myfilesTitlebar": "deSelectGrid",
+        "click #previewView div.facets": "deSelectGrid",
+        "click div#previewFooter": "deSelectGrid",
+        "click #previewViewHeader.headerContainer .navbar": "deSelectGrid",
+        "click #previewViewHeader .matlabDriveUserName": "deSelectGrid",
+        "dragstart #previewView.treeView div.wrapper": "dragoverNotAllowed"
+      };
+
+      if (!params || typeof params !== "object" || $.isEmptyObject(params)) {
+        throw new TypeError("Invalid initialize argument");
+      }
+      if (!params.pageOptions || typeof params.pageOptions !== "object") {
+        throw new TypeError("Invalid initialize argument: invalid pageOptions");
+      }
+      var options = params.pageOptions;
+      if (!params.config || typeof params.config !== "object") {
+        throw new TypeError("Invalid config argument in initialize params");
+      }
+      var config = params.config;
+      this.config = config;
+      if (!options.authmanager || typeof options.authmanager !== "object" || !options.authmanager.getDAO || typeof options.authmanager.getDAO !== "function") {
+        throw new TypeError("Invalid authorization manager argument in pageOptions");
+      }
+      this.authMgr = options.authmanager;
+      if (!options.quotamanager || typeof options.quotamanager !== "object" || !options.quotamanager.render || typeof options.quotamanager.render !== "function") {
+        throw new TypeError("Invalid quotamanager argument in pageOptions");
+      }
+      this.quotaMgr = options.quotamanager;
+
+      this.initializeInvitationParams = function (args) {
+        if (!args || typeof args !== "object" || $.isEmptyObject(args)) {
+          throw new TypeError("Invalid arguments");
+        }
+        this.fileService = this.createGDSFileService();
+        this.userAuthenticated = args.userAuthenticated;
+        this.originId = null;
+        this.baseActionSelector = 'div#previewView.treeView div.toolbar_container';
+        this.breadcrumbManager = new BreadcrumbManager({
+          baseSelector: 'div#previewView.treeView div.toolbar_container div.generalToolbar ',
+          parentDisplayCount: 0,
+          visibleLongLength: 24,
+          visibleShortLength: 12,
+          minimumVisibleLIs: 2,
+          alwaysUseShortTruncation: false,
+          rootFolderName: "this.getInvitationName()",
+          truncateRootFolderName: true,
+          el: document,
+          goToMethod: this.goToBreadcrumb.bind(this),
+          deSelectMethod: this.deSelectGrid.bind(this),
+          getRootFolderNameMethod: this.getRootFolderName.bind(this),
+          updateSharedFolderBreadcrumb: false
+        });
+      };
+
+      this.getAuthentication = function () {
+        return this.userAuthenticated;
+      };
+      this.setAuthentication = function (authentication) {
+        this.userAuthenticated = authentication;
+      };
+
+      this.getInvitationDetails = function () {
+        return {invitationId: this.getInvitationId(), invitationName: this.getInvitationName(), invitationStatus: this.getInvitationStatus(), invitationFullPath: this.getInvitationFullPath(),
+          authenticated: this.getAuthentication(), invitationTombstoneId: this.getInvitationTombstoneId()};
+      };
+
+      this.getInvitationId = function () {
+        return this.invitationId;
+      };
+      this.setInvitationId = function (invitationId) {
+        this.invitationId = invitationId;
+      };
+
+      this.getInvitationName = function () {
+        return this.invitationName;
+      };
+      this.setInvitationName = function (name) {
+        this.invitationName = name;
+      };
+
+      this.getInvitationType = function () {
+        return this.invitationType;
+      };
+      this.setInvitationType = function (type) {
+        this.invitationType = type;
+      };
+
+      this.getInvitationStatus = function () {
+        return this.invitationStatus;
+      };
+      this.setInvitationStatus = function (status) {
+        this.invitationStatus = status;
+      };
+
+      this.getInvitationFullPath = function () {
+        return this.invitationFullPath;
+      };
+      this.setInvitationFullPath = function (path) {
+        this.invitationFullPath = path;
+      };
+
+      this.getInvitationTombstoneId = function () {
+        return this.invitationTombstoneId;
+      };
+      this.setInvitationTombstoneId = function (tombstoneId) {
+        this.invitationTombstoneId = tombstoneId;
+      };
+
+      this.getInvitationAccessType = function () {
+        return this.invitationAccessType;
+      };
+      this.setInvitationAccessType = function (invitationAccessType) {
+        this.invitationAccessType = invitationAccessType;
+      };
+
+      this.getStartingFullPath = function () {
+        return this.startingFullPath;
+      };
+      this.setStartingFullPath = function (name) {
+        this.startingFullPath = name;
+      };
+
+      this.setSessionId = function (sessionId) {
+        this.sessionId = sessionId;
+      };
+      this.getSessionId = function () {
+        return this.sessionId;
+      };
+
+      this.getTreeController = function () {
+        return this.treeController;
+      };
+      this.setTreeController = function (tc) {
+        this.treeController = tc;
+      };
+
+      this.getFileService = function () {
+        return this.fileService;
+      };
+
+      this.getBreadcrumbManager = function() { return this.breadcrumbManager; };
+
+      this.getBaseActionSelector = function() { return this.baseActionSelector; };
+
+      this.getRootFolderName = function() {
+        return this.getInvitationName();
+      };
+
+      this.resizeBreadcrumbs = function(e) {
+        if (this.getBreadcrumbManager()) {
+          let currentPath = this.getTreeController().getFileService().getStoredCurrentFolder();
+          this.getBreadcrumbManager().updateBreadcrumbs(currentPath);
+        }
+      };
+
+      this.startPage = function (msgHandler) {
+        this.stopPage(); // stop any previous listeners before starting new listeners
+        if (!msgHandler || typeof msgHandler !== "function") {
+          throw new TypeError("Invalid message handler argument");
+        }
+        var context = this;
+        $('body').addClass('previewPage');
+        context.initializeInvitationParams({
+          invitationId: context.getInvitationId(),
+          userAuthenticated: context.getAuthentication(),
+          isSharingEnabled: true,
+          startingFullPath: context.getStartingFullPath()
+        });
+        if (context.getTreeController()) {
+          context.getTreeController().start(msgHandler);
+        }
+        if (context.getAuthentication() === false) {
+          $('body').addClass('notAuthenticated');
+        }
+        if (context.getBreadcrumbManager()) {
+          window.addEventListener("resize", context.resizeBreadcrumbs, false);
+        }
+        if (context.config.isInfoPanelEnabled && context.config.isInfoPanelEnabled()) {
+          $(document).on('infopanelupdatePreview:mldo', function(e, data) {
+            if (e && e.preventDefault) {
+              e.preventDefault();
+            }
+            if (data) {
+              var rootFolderName;
+              if (data.data.name === "/") {
+                rootFolderName = _.escape(context.getInvitationName());
+              }
+              context.updateInfoPanel(data, rootFolderName, context.getInvitationStatus());
+            }
+          });
+          $(document).on('removeinfopanel:mldo', function() {
+            context.removeInfoPanel();
+          });
+        }
+        $(document).on("click", "li.headernav_login.dropdown:not(.open) a", context.updateUserQuota);
+        $(document).on("click", "li.headernav_login.dropdown:not(.open) a", context.updateSettings);
+        context.$el.on("click", "li.dropdown-additionalApplications input", context.changeApplication);
+      };
+
+      this.stopPage = function () {
+        var context = this;
+        var tree = context.getTreeController();
+        if (context.getBreadcrumbManager()) {
+          window.removeEventListener("resize", context.resizeBreadcrumbs, false);
+          context.getBreadcrumbManager().stop();
+        }
+        if (tree) {
+          tree.stop(); // important
+        }
+        $('body').removeClass('previewPage');
+        if (!this.getAuthentication()) {
+          $('body').removeClass('notAuthenticated');
+        }
+        $(document).off("click", "li.headernav_login.dropdown:not(.open) a", context.updateUserQuota);
+        $(document).off("click", "li.headernav_login.dropdown:not(.open) a", context.updateSettings);
+        context.$el.off("click", "li.dropdown-additionalApplications input", context.changeApplication);
+        if (context.config.isInfoPanelEnabled && context.config.isInfoPanelEnabled()) {
+          $(document).off("infopanelupdatePreview:mldo");
+          $(document).off("removepanelupdate:mldo");
+        }
+        $('#filesViewHeader').removeClass('previewPage');
+      };
+
+      this.stopPageOnRedirectToLogin = function() {
+        $('#previewView').remove();
+        if ($('#sharingView')) {
+          $('#sharingView').remove();
+        }
+      };
+
+      this.getTreeControllerOptions = function() {
+        var context = this;
+        return {
+          id: "Preview",
+          invitationId: this.getInvitationId(),
+          getInvitationDetailsMethod: this.getInvitationDetails.bind(this),
+          gdsDAO: this.getFileService().gdsDAO,
+          enableNavigation: true,
+          viewerServiceEnabled: (this.config.isViewerServiceEnabled && this.config.isViewerServiceEnabled()),
+          viewerServiceURL: this.config.getViewerServiceURL(),
+          showUploadDetails: false,
+          viewFileEnabled: (this.config.isFileViewEnabled && this.config.isFileViewEnabled()),
+          inlineFileView: (this.config.getInlineFileView && this.config.getInlineFileView()),
+          prohibitChangeTreeRoot: false,
+          noHtmlStorage: true,
+          viewInNewTabEnabled: (this.config.isViewInNewTabEnabled && this.config.isViewInNewTabEnabled()),
+          mockOpenwith: (this.config.mockOpenwith && this.config.mockOpenwith()),
+          directoryUploadEnabled: false,
+          openWithEnabled: (this.config.isOpenWithEnabled && this.config.isOpenWithEnabled()),
+          allowDnD: false,
+          sharingEnabled: true,
+          personalInvitationsEnabled: true,
+          editPermissionsEnabled: false,
+          isInfoPanelEnabled: this.config.isInfoPanelEnabled && this.config.isInfoPanelEnabled(),
+          folderDownloadEnabled: (this.config.isFolderDownloadEnabled && this.config.isFolderDownloadEnabled() === true),
+          listContentsMethod: function (path) {
+            return context.getFileService().gdsDAO.previewInvitation(context.getInvitationId(), path);
+          },
+          actions: {
+            gotodrive: true,
+            addtodrive: true,
+            download: true,
+            sharelink: true,
+            openInMatlabOnline: (this.config.isOpenWithEnabled && this.config.isOpenWithEnabled()),
+            viewinbrowser: (this.config.isFileViewEnabled && this.config.isFileViewEnabled())
+          },
+          columns: {
+            name: true,
+            size: true,
+            clientModifiedDate: true
+          },
+          breadcrumbsBaseSelector: (this.getBreadcrumbManager() ? this.getBreadcrumbManager().getBreadcrumbsBaseSelector() : '')
+        };
+      };
+
+      this.createTreeController = function () {
+        var tree;
+        try {
+          tree = new FbTreeController(this.getTreeControllerOptions());
+          this.setTreeController(tree);
+        } catch (e) {
+          this.setTreeController(e);
+        }
+      };
+
+      this.render = function (msgHandler) {
+        var am = this.getAuthManager();
+        var touchevents = (('ontouchstart' in window) || ("DocumentTouch" in window && window.DocumentTouch && document instanceof window.DocumentTouch));
+        var templateParameters = {};  // new object
+        templateParameters.headerNavigation = this.renderNavigationHeader();
+        templateParameters.isUserAuthenticated = this.getAuthentication();
+        templateParameters.invitationId = this.getInvitationId();
+        templateParameters.invitationType = this.getInvitationType();
+        templateParameters.invitationStatus = this.getInvitationStatus();
+        templateParameters.invitationAccessType = this.getInvitationAccessType();
+        templateParameters.isCopyToDriveEnabled = !!(this.config.isCopyToDriveEnabled && this.config.isCopyToDriveEnabled());
+        templateParameters.sharingEnabled = this.isSharingEnabled;
+        templateParameters.personalInvitationsEnabled = true;
+        templateParameters.facetsFiles = MLDOStrings.filesPageFacetsFiles;
+        templateParameters.facetsSharing = MLDOStrings.previewPageFacetsSharing;
+        templateParameters.facetsDeletedFiles = MLDOStrings.filesPageFacetsDeletedFiles;
+        templateParameters.invitationPreviewTitle = MLDOStrings.invitationPreviewModalTitle;
+        templateParameters.addToDriveToolTipText = MLDOStrings.addToDriveToolTipText;
+        templateParameters.goToDriveActionLabel = MLDOStrings.previewPageGoToDriveLabel;
+        templateParameters.addActionLabel = MLDOStrings.previewPageAddLabel;
+        templateParameters.addToDriveActionLabel = MLDOStrings.previewPageAddToDriveLabel;
+        templateParameters.acceptToolTipText = MLDOStrings.acceptToolTipText;
+        templateParameters.acceptActionLabel = MLDOStrings.previewPageAcceptLabel;
+        templateParameters.goToDriveToolTipText = MLDOStrings.goToDriveToolTipText;
+        templateParameters.declineToolTipText = MLDOStrings.declineToolTipText;
+        templateParameters.declineActionLabel = MLDOStrings.previewPageDeclineLabel;
+        templateParameters.downloadToolTipText = MLDOStrings.downloadToolTipText;
+        templateParameters.downloadActionLabel = MLDOStrings.previewPageDownloadActionLabel;
+        templateParameters.downloadActionSelectionLabel = MLDOStrings.previewPageDownloadActionSelectionLabel;
+        templateParameters.shareLinkToolTipText = MLDOStrings.shareLinkToolTipText;
+        templateParameters.shareLinkActionLabel = MLDOStrings.previewPageShareLinkLabel;
+        templateParameters.copyToDriveToolTipText = MLDOStrings.copyToDriveToolTipText;
+        templateParameters.copyToDriveActionLabel = MLDOStrings.previewPageCopyToDriveLabel;
+        templateParameters.viewToolTipText = MLDOStrings.viewToolTipText;
+        templateParameters.viewFile = MLDOStrings.viewFile;
+        templateParameters.openToolTipText = MLDOStrings.openToolTipText;
+        templateParameters.openLiveEditor = MLDOStrings.viewOpenLiveEditor;
+        templateParameters.panelInfoIcon = MLDOStrings.panelInfoIcon;
+        templateParameters.panelEditAccessTypeInfoIcon = MLDOStrings.editAccessTypeInfoIcon;
+        templateParameters.panelViewAccessTypeInfoIcon = MLDOStrings.viewAccessTypeInfoIcon;
+        templateParameters.panelOwnerAccessTypeInfoIcon = MLDOStrings.ownerAccessTypeInfoIcon;
+        templateParameters.isInfoPanelEnabled = this.config.isInfoPanelEnabled();
+        templateParameters.panelOwnedBy = MLDOStrings.panelOwnedBy;
+        templateParameters.panelAccessType = MLDOStrings.panelAccessType;
+        templateParameters.panelSharedFolderRoot = MLDOStrings.panelSharedFolderRoot;
+        templateParameters.panelCreatedOn = MLDOStrings.panelCreatedOn;
+        templateParameters.panelModifiedOn = MLDOStrings.panelModifiedOn;
+        templateParameters.panelFolderSize = MLDOStrings.panelFolderSize;
+        templateParameters.footerPatentsLabel = MLDOStrings.footerPatents;
+        templateParameters.footerTrademarksLabel = MLDOStrings.footerTrademarks;
+        templateParameters.footerPrivacyPolicyLabel = MLDOStrings.footerPrivacy;
+        templateParameters.footerPiracyLabel = MLDOStrings.footerPiracy;
+        templateParameters.copyrightYear = new Date().getFullYear();
+
+        var htmlResult = this.template(templateParameters);
+        this.$el.empty().html(htmlResult);
+        // render subviews
+
+        $('.appContainer').removeClass('ff-delete');
+        $('.mainFooter').addClass('ff-delete');
+        $('#previewView.treeView').addClass('ff-delete');
+        $('.right-column').addClass('ff-delete');
+        $('.facets').addClass('ff-delete');
+        if (this.config.isInfoPanelEnabled && !this.config.isInfoPanelEnabled()) {
+          $('#previewView').addClass('no-info-panel');
+          $('#previewView .wrapper').addClass('no-info-panel');
+        }
+
+        var treeOptions = {
+          id: "jstree",
+          invitationId: this.getInvitationId(),
+          invitationName: this.getInvitationName(),
+          invitationStatus: this.getInvitationStatus(),
+          invitationFullPath: this.getInvitationFullPath(),
+          invitationTombstoneId: this.getInvitationTombstoneId(),
+          authenticated: this.getAuthentication(),
+          enableNavigation: true,
+          goToDriveSelector: this.getBaseActionSelector() + " .goToDrive",
+          addSelector: this.getBaseActionSelector() + " .add",
+          addToDriveSelector: this.getBaseActionSelector() + " .addToDrive",
+          downloadSelector: this.getBaseActionSelector() + " .downloadFiles",
+          shareLinkSelector: this.getBaseActionSelector() + " .shareLink",
+          declineSelector: this.getBaseActionSelector() + " .declineInvitation",
+          copyToDriveSelector: this.getBaseActionSelector() + " .copyToDrive",
+          openSelector : this.getBaseActionSelector() + ' .open',
+          viewSelector : this.getBaseActionSelector() + ' .view'
+        };
+
+        var tree = this.getTreeController();
+        if (!tree) {
+          this.createTreeController();
+          tree = this.getTreeController();
+        }
+        if (tree) {
+          // start breadcrumbs before starting treeController
+          if (this.getBreadcrumbManager()) {
+            this.getBreadcrumbManager().render();
+          }
+
+          tree.start(msgHandler);
+          tree.render(treeOptions);
+          if (this.getStartingFullPath() !== "/") {
+            tree.setCurrentFolder(this.getStartingFullPath(), false);
+          }
+        }
+        this.$el.off('dragover'); // clear previous listeners
+        this.$el.on('dragover', this.dragNotAllowed);
+        if (this.getAuthentication()) {
+          this.getUserQuotaController().setElement($('.quotaListItem'));
+          this.getUserQuotaController().render();
+          this.updateSettings();
+        }
+        if (!touchevents) {
+          $('[data-toggle="tooltip"]').tooltip();
+          $('.share a.dropdown-toggle').tooltip({placement: "top", container: ".myfilesTitlebar"});
+        }
+        this.renderMatrix();
+        return this;
+      };
+
+      this.closeFileViewerAndShowTree = function() {
+          this.getTreeController().getActionHandler().closeFileViewerAndShowTree();
+      };
+
+      this.goToBreadcrumb = function(folderPath) {
+        this.closeFileViewerAndShowTree();
+        if (folderPath && typeof folderPath === 'string') {
+          this.changeTreeRoot(folderPath);
+          $.event.trigger('previewnavupdate:mldo', {path: folderPath, invitationId: this.getInvitationId()});
+        }
+      };
+
+      this.refresh = function () {
+        if (this.getTreeController()) {
+          this.getTreeController().refresh();
+        }
+      };
+
+      this.readInvitation = function () {
+        var context = this;
+        var promise = this.getFileService().getPreviewInvitation(this.getInvitationId());
+        promise.done(function (invitation) {
+          // If the original invitation was a CFO, update to reflect the returned open invitation
+          if (invitation && typeof invitation === "object" && invitation.hasOwnProperty("name")) {
+            if (context.getInvitationId() !== invitation.invitationEntityId.invitationId) {
+              context.setInvitationId(invitation.invitationEntityId.invitationId);
+              $.event.trigger('previewnavupdate:mldo', {path: context.getStartingFullPath(), invitationId: context.getInvitationId()});
+            }
+            context.setInvitationName(invitation.name);
+            context.setInvitationType(invitation.type);
+            context.setInvitationStatus(invitation.status);
+            context.setInvitationFullPath(invitation.fullPath);
+            context.setInvitationTombstoneId(invitation.tombstoneId);
+            context.setInvitationAccessType(invitation.accessType);
+          }
+        });
+        return promise;
+      };
+
+      this.dragNotAllowed = function (e) {
+        if (e && e.preventDefault && e.originalEvent && e.originalEvent.dataTransfer) {
+          e.preventDefault();
+          e.originalEvent.dataTransfer.dropEffect = 'none';
+        }
+      };
+
+      this.createGDSFileService = function () {
+        var fs;
+        var dao = new GDSDAO(GCONFIG);
+        if (this.getSessionId()) {
+          dao.sessionId = this.getSessionId();
+        }
+        var listContentMethod;
+        var context = this;
+        if (dao.hasOwnProperty("previewInvitation")) {
+          listContentMethod = function (path) {
+            return dao.previewInvitation(context.getInvitationId(), path);
+          };
+        }
+        fs = new FileService();
+        fs.initialize({
+          gdsDAO: dao,
+          enableNavigation: true,
+          listContentsMethod: listContentMethod
+        });
+        return fs;
+      };
+
+      this.constructor.__super__.initializeParams.apply(this, arguments);
+
+      _.bindAll(this, "goToFiles", "goToSharing", "goToTrashCan", "createGDSFileService",
+        "goToBreadcrumb", "changeTreeRoot", "readInvitation", "changeApplication", "getTreeControllerOptions",
+        "deSelectGrid", "render", "stopPage", "updateUserQuota", "updateSettings", "resizeBreadcrumbs", "closeFileViewerAndShowTree");
+    }
+  });
+
+  return PreviewPage;
+}); // require

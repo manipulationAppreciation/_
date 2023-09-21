@@ -1,0 +1,52 @@
+//Copyright 2015-2016 MathWorks, Inc.
+
+define([
+    "dojo/_base/declare"
+], function (declare) {
+    function filter(data) {
+        var allFileInfos = data;
+        var filteredFileInfos = [];
+        allFileInfos.forEach(function (file) {
+                var fileInfo = file;
+                if (allFileInfos.filter(function (e) {
+                    return e.path === fileInfo.parent;
+                }).length > 0) {
+                    return;
+                } else {
+                    filteredFileInfos.push(fileInfo);
+                    return;
+                }
+            }
+        );
+        return filteredFileInfos;
+    }
+
+    return declare([], {
+        _data: [],
+        _copy: true,
+        clear: function () {
+            this._data = [];
+        },
+
+        cut: function (data) {
+            this._copy = false;
+            this._data = filter(data);
+        },
+
+        copy: function (data) {
+            this._copy = true;
+            this._data = filter(data);
+        },
+
+        isCopy: function () {
+            return this._copy;
+        },
+
+        getData: function () {
+            return this._data;
+        },
+
+        containsData: function () {
+            return this._data.length > 0;
+        }});
+});

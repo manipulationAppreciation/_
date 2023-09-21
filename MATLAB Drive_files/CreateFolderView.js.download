@@ -1,0 +1,205 @@
+/**
+ * Created by ghorn on 4/22/2016.
+ */
+  define([
+   "jquery",
+   "bootstrap",
+   "backbone",
+   "util",
+   "templates/CreateFolder",
+   "templates/CreateFolderInline",
+   "dojo/i18n!nls/mldoStringResource",
+   "dojo/string"
+ ], function( $, Bootstrap, Backbone, Utils, CreateFolderTemplate, InlineTemplate, MLDOStrings, DojoString ) {
+
+    return Backbone.View.extend({
+
+        template: CreateFolderTemplate,
+
+        events: {
+            "click .createNewFolder": "create",
+            "keydown #folderNameInput": "onKeydown",
+            "focus #folderNameInput" : "clearError",
+            "click button.btn.msgClose": "clearError"
+        },
+
+        initialize: function(args) {
+          if (!args || Object.keys(args).length === 0) {
+            throw new TypeError("Invalid arguments");
+          }
+          if (!(args.fileService && args.fileService.refreshGrid &&
+                typeof args.fileService.refreshGrid === "function" &&
+                args.fileService.createFolder &&
+                typeof args.fileService.createFolder === "function")) {
+            throw new TypeError("Invalid fileService argument");
+          }
+          this.fileService = args.fileService;
+          if (!args.path) {
+            throw new TypeError("Invalid path argument");
+          }
+          this.path = args.path;
+          if (!args.root) {
+            throw new TypeError("Invalid root (current file browser root folder) argument");
+          }
+          this.currentRootFolder = args.root;
+          this.inline = false;
+          if (args.inline === true) {
+            this.inline = true;
+            this.template = InlineTemplate;
+          }
+          _.bindAll(this, "setInputFocus");
+        },
+
+        isInline: function() { return this.inline; },
+
+        render: function() {
+            var self = this;
+            this.$el.html(this.template({
+              modalTitle: MLDOStrings.createFolderDialogCreateFolderTitle,
+              inputLabel: MLDOStrings.createFolderDialogFolderNameInputLabel,
+              statusError: MLDOStrings.createFolderDialogInputError2Status,
+              createButton: MLDOStrings.createFolderDialogButtonCreate,
+              cancelButton: MLDOStrings.createFolderDialogButtonCancel
+            }));
+            if (!this.isInline()) {
+              this.$el.on("shown.bs.modal", this.setInputFocus);
+              this.$el.on("hidden.bs.modal", function() {
+                  Utils.reEnableTabbingOnPage(Utils.getTabbableElements());
+                  document.removeEventListener('keydown', Utils.returnFocusToFirstElementInModal);
+                  self.remove();
+              });
+              this.$el.off('dragover'); // clear previous listeners
+              this.$el.on('dragover', this.dragNotAllowed);
+            }
+            this.$el.bind('input', function() {
+                var $input = $("#folderNameInput");
+                var text = $input.val();
+                if (/[\/\\:?*"<>|]/.test(text)) {
+                    self.displayValidationError(DojoString.substitute(MLDOStrings.createFolderDialogValidationText, {arg1: "\" / : \\ ? * < | >."}));
+                    self.disableSubmit();
+                } else if (/^\s*$/.test(text)) {
+                    self.hideValidationError();
+                    self.disableSubmit();
+                } else {
+                    self.hideValidationError();
+                    self.enableSubmit();
+                }
+            });
+            if (!this.isInline()) {
+              $('#createFolderDialog').modal({backdrop: 'static'});
+            }
+            return this;
+        },
+
+        setInputFocus: function() {
+          $("#folderNameInput").focus();
+          Utils.disableTabbingOnPage(Utils.getTabbableElements());
+          Utils.enableTabbingOnModal(Utils.getTabbableElements());
+          var firstFocusableElement = document.querySelector('div.modal-header button.cancelNewFolder'); // get first element to be focused inside modal
+          var lastFocusableElement = document.querySelector('div.modal-footer button.cancelNewFolder'); // get last element to be focused inside modal
+          document.addEventListener('keydown', Utils.returnFocusToFirstElementInModal.bind(null, firstFocusableElement, lastFocusableElement), false);
+        },
+
+        dragNotAllowed: function(e) {
+          e.preventDefault();
+          e.originalEvent.dataTransfer.dropEffect = 'none';
+        },
+
+        disableSubmit: function() {
+            $('.createNewFolder').prop('disabled', true);
+        },
+
+        enableSubmit: function() {
+            $('.createNewFolder').prop('disabled', false);
+        },
+
+        displayValidationError: function(err) {
+            $('.inline_form_error_msg').html(err);
+            $('.inline_form_error').show();
+            $('#new_folder_validation_group').addClass('has-error has-feedback');
+            $('.form-control-feedback').show();
+        },
+
+        hideValidationError: function() {
+            $('.inline_form_error').hide();
+            $('.inline_form_error_msg').empty();
+            $('#new_folder_validation_group').removeClass('has-error has-feedback');
+            $('.form-control-feedback').hide();
+        },
+
+        displayErrorOnDialog: function(err) {
+          var msg = null;
+          switch(err.errorCode) {
+            case "RESOURCE_ALREADY_EXISTS":
+              msg = MLDOStrings.createFolderDialogResourceAlreadyExists;
+              break;
+            case "ILLEGAL_PATH_ELEMENT":
+              msg = MLDOStrings.createFolderDialogIllegalPathElement;
+              break;
+            default:
+              msg = err.message;
+          }
+          var $errorContent = $('<span class="notificationImageError" aria-hidden="true"></span><span class="notificationContentTextError">' + msg + '</span>' +
+            '<button type="button" class="btn msgClose" aria-label="Close Message">\n' +
+            '<span aria-hidden="true">×</span>\n' +
+            '</button>');
+          $('#mldo-error-container').show().html($errorContent);
+        },
+
+        clearError: function(e) {
+          if (e && e.preventDefault) {
+            e.preventDefault();
+          }
+          $('#mldo-error-container').empty().hide();
+        },
+
+        create: function(e) {
+          if (e && e.preventDefault) {
+            e.preventDefault();
+          }
+          var folderName = $("#folderNameInput").val(); // _.escape($("#folderNameInput").val());
+
+          // Bail out if no input
+          if (!folderName || !folderName.trim()) {
+              return;
+          }
+
+          folderName = folderName.trim();
+          var folderPath = this.path + (this.path === "/" ? "" : "/") + folderName;
+          var self = this;
+          this.fileService.createFolder(folderPath)
+            .done(function() {
+                if (self.path !== "/") {
+                  self.fileService.dispatchCanonicalizedTreeEvent("focusrow:treecontroller", {
+                      path: Utils.getRelativePath(self.path, self.currentRootFolder),
+                      parentFolder: Utils.getRelativePath(self.path, self.currentRootFolder),
+                      shouldExpand: true
+                  });
+                }
+                self.fileService.focusRowAfterGridRefresh({path: Utils.getRelativePath(folderPath, self.currentRootFolder)});
+                self.fileService.refreshGrid();
+                var msg = DojoString.substitute(MLDOStrings.createFolderDialogFolderCreated, {arg1: folderName, arg2: Utils.getFolderNameFromPath(self.path, self.fileService.gdsDAO.getApplicationId())});
+                self.fileService.notify(msg, "NORMAL");
+                if (!self.isInline()) {
+                  $(".cancelNewFolder").click();
+                }
+            })
+            .fail(function(e) {
+                self.displayErrorOnDialog(e);
+            });
+        },
+
+        onKeydown: function(e) {
+            var code = e.keyCode || e.which;
+            if (code == 13) { // Enter key
+                e.preventDefault();
+                var folderName = $("#folderNameInput").val();
+
+                // Bail out if no input
+                if (folderName && folderName.trim()) {
+                    $(".createNewFolder").click();
+                }
+            }
+        }
+    });
+});

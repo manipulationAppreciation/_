@@ -1,0 +1,89 @@
+define([], function() {
+  var abstractMethod = function () { throw new Error("Abstract method."); };
+  var AbstractWidget = function() { throw new Error("Cannot instantiate abstract class."); };
+  AbstractWidget.prototype = {
+
+    initialize: function(args) {
+      if (!args || typeof args !== "object" || !("widgetName" in args) || !args.widgetName) {
+        throw new TypeError("Invalid args");
+      }
+      if (typeof args.widgetName !== "string") {
+        throw new TypeError("Invalid widgetName value");
+      }
+      this.widgetName = args.widgetName;
+      this.embeddedCore = null;
+      if (("embeddedCore" in args) && args.embeddedCore && typeof args.embeddedCore === "object") {
+        this.embeddedCore = args.embeddedCore;
+      }
+      if (!this.embeddedCore || !("getDAO" in this.embeddedCore) || !this.embeddedCore.getDAO()) {
+        this.embeddedCore = null;
+        throw new TypeError("Invalid embeddedCore argument");
+      }
+      this.apsType = "";  // default is no APS
+      if (args && typeof args === "object" && ("apsType" in args) && args.apsType) {
+        this.apsType = args.apsType;
+      }
+    },
+
+    getName: function() { return this.widgetName; },
+
+    getApsType: function() { return this.apsType; },
+
+    getEmbeddedCore: function() { return this.embeddedCore; },
+
+    setClientString: function(clientString) {
+      /* do nothing by default */
+    },
+
+    setGdsClientType: function(gdsClientType) {
+      /* do nothing by default */
+    },
+
+    getWidgetContainer: function() {
+      var container;
+      if (this.getEmbeddedCore() && ("getWidgetContainer" in this.getEmbeddedCore())) {
+        container = this.getEmbeddedCore().getWidgetContainer();
+      }
+      return container;
+    },
+
+    start: function(msg) {
+      this.getInstance(msg.containerId, msg.sessionId, msg.configOptions);
+      if (msg.userId && msg.authToken && this.getEmbeddedCore()) {
+        this.startAPS(msg.userId, msg.authToken);
+      }
+    },
+
+    startAPS: function(userId, authToken) {
+      var context = this;
+      if (this.getApsType() === "STORAGE") {
+        this.getEmbeddedCore().startQuotaAPS(userId, authToken);
+        $(window).on('online', function(e) {context.getEmbeddedCore().restartQuotaAPS(userId, authToken); });
+      }
+      if (this.getApsType() === "FILES") {
+        this.getEmbeddedCore().startRefreshAPS(userId, authToken);
+        $(window).on('online',  function(e) {context.getEmbeddedCore().restartRefreshAPS(userId, authToken); });
+      }
+    },
+
+    getInstance: function(containerId, sessionId, configOptions) {
+      if (sessionId) {
+        if (configOptions &&
+            typeof configOptions === "object" &&
+            configOptions.hasOwnProperty("cssDefaultClassName") &&
+            typeof configOptions.cssDefaultClassName === "string" &&
+            configOptions.cssDefaultClassName.length) {
+          this.getWidgetContainer().addClass(configOptions.cssDefaultClassName);
+        }
+      }
+    },
+
+    getController: function() { return this.controller; },
+
+    setController: function(controller) { this.controller = controller; },
+
+    clean: function() { /* default: do nothing */ }
+
+  };
+  return AbstractWidget;
+});

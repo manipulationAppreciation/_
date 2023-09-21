@@ -1,0 +1,62 @@
+define([
+    "dojo/_base/declare",
+    "dgrid/editor",
+    "dgrid/tree",
+    "dijit/form/ValidationTextBox",
+    "mw-filebrowser/columns/helpers/FileIconUtils",
+    "mw-filebrowser/columns/helpers/NameComparator",
+    "dojo/i18n!nls/mldoStringResource",
+    "dojo/string"
+], function (declare, editor, tree, ValidationTextBox, FileIconUtils, NameComparator, MLDOStrings, DojoString) {
+    return declare([], {
+      constructor: function (args) {
+          args = args || {};
+          this.column = {
+              id: "SharedByColumn",
+              label: MLDOStrings.sharedByColumnLabel,
+              renderHeaderCell: function (th) {
+                if (!th || !th.appendChild || typeof th.appendChild !== "function") {
+                  throw new TypeError("Invalid th argument");
+                }
+                var sharedByColumn = document.createElement("div");
+                sharedByColumn.className = "columnHeaderLabel";
+                var labelNode = document.createTextNode(MLDOStrings.sharedByColumnLabel);
+                sharedByColumn.appendChild(labelNode);
+                th.appendChild(sharedByColumn);
+              },
+              field: "sharedBy",
+              get: function (fileInfo) {
+                var retVal = MLDOStrings.sharingPageSharedViaLink;
+                if (!fileInfo) {
+                  throw new TypeError("Invalid fileInfo argument");
+                }
+                if (fileInfo.initiator && fileInfo.initiator.displayValue) {
+                  retVal = fileInfo.initiator.displayValue;
+                }
+                return retVal;
+              },
+              sortable: true,
+              sort: function (a, b) {
+                if (!a || typeof a !== "object" || !a.initiator || typeof a.initiator !== "object") {
+                  throw new TypeError("Invalid a argument");
+                }
+                if (!b || typeof b !== "object" || !b.initiator || typeof b.initiator !== "object") {
+                  throw new TypeError("Invalid b argument");
+                }
+                var valueA, valueB;
+                if (a.initiator.displayValue === "Me") {
+                  return -1;
+                } else {
+                  valueA = a.initiator.displayValue;
+                }
+                if (b.initiator.displayValue === "Me") {
+                  return 1;
+                } else {
+                  valueB = b.initiator.displayValue;
+                }
+                return NameComparator.caseSensitiveStringComparator(valueA, valueB);
+              }
+          };
+      }
+    });
+});

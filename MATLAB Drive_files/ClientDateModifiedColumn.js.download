@@ -1,0 +1,77 @@
+//Copyright 2016 MathWorks, Inc.
+
+define([
+  "dojo/_base/declare",
+  "mw-filebrowser/columns/helpers/NameComparator",
+  "mw-filebrowser/columns/helpers/DateComparator",
+  "dojo/i18n!nls/mldoStringResource",
+  "dojo/string"
+], function (declare, NameComparator, DateComparator, MLDOStrings, DojoString) {
+    function formatDate(utcDate) {
+        var date = new Date(utcDate);
+        return date.toLocaleDateString() + " " + date.toLocaleTimeString(navigator.language, {hour: '2-digit', minute: '2-digit'});
+    }
+
+    return declare([], {
+        constructor: function (args) {
+            args = args || {};
+            this.column = {
+                id: "clientDateModifiedColumn",
+                label: MLDOStrings.clientDateModifiedColumnLabel,
+                renderHeaderCell: function (th) {
+                  if (!th || !th.appendChild || typeof th.appendChild !== "function") {
+                    throw new TypeError("Invalid th argument");
+                  }
+                  var clientDateModifiedColumn = document.createElement("div");
+                  clientDateModifiedColumn.className = "columnHeaderLabel";
+                  var labelNode = document.createTextNode(MLDOStrings.clientDateModifiedColumnLabel);
+                  clientDateModifiedColumn.appendChild(labelNode);
+                  th.appendChild(clientDateModifiedColumn);
+                },
+                field: "clientLastModifiedUtc",
+                get: function (fileInfo) {
+                  if (!fileInfo || !fileInfo.clientLastModifiedUtc) {
+                    throw new TypeError("Invalid fileInfo argument");
+                  }
+                  return formatDate(fileInfo.clientLastModifiedUtc);
+                },
+                sortable: true,
+                sort: function (a, b) {
+                  if (!a || typeof a !== "object") {
+                    throw new TypeError("Invalid a argument");
+                  }
+                  if (!b || typeof b !== "object") {
+                    throw new TypeError("Invalid b argument");
+                  }
+                  var aDate = new Date(a.clientLastModifiedUtc);
+                  var bDate = new Date(b.clientLastModifiedUtc);
+                  if (a.isDirectory || b.isDirectory) {
+                      return this.separateFoldersFromFiles(a, b);
+                  } else if (aDate.getTime() === bDate.getTime()) {
+                      return NameComparator.caseSensitiveStringComparator(a.name, b.name);
+                  } else {
+                      return DateComparator.compareDate(aDate, bDate);
+                    }
+                },
+                separateFoldersFromFiles: function (aFileInfo, bFileInfo) {
+                  if (!aFileInfo || typeof aFileInfo !== "object") {
+                    throw new TypeError("Invalid aFileInfo argument");
+                  }
+                  if (!bFileInfo || typeof bFileInfo !== "object") {
+                    throw new TypeError("Invalid bFileInfo argument");
+                  }
+                  var aDate = new Date(aFileInfo.clientLastModifiedUtc);
+                  var bDate = new Date(bFileInfo.clientLastModifiedUtc);
+                  if ((aFileInfo.isDirectory && bFileInfo.isDirectory)) {
+                      return DateComparator.compareDate(aDate, bDate);
+                  } else if (aFileInfo.isDirectory) {
+                      return -1;
+                  } else if (bFileInfo.isDirectory) {
+                      return 1;
+                  }
+                },
+                hidden: true
+            };
+        }
+    });
+});

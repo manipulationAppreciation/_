@@ -1,0 +1,868 @@
+define([
+    "underscore",
+    "jquery",
+    "dojo/_base/Deferred",
+    "dojo/store/util/QueryResults",
+    "mw-filename-utils/FileNameUtil",
+    "dojo/store/Memory",
+    "dojo/store/Observable",
+    "util",
+    "filebrowser/gdsdata/FbNodeData",
+    "FileConflictView",
+    "dojo/i18n!nls/mldoStringResource",
+    "dojo/string"
+], function( _, $, Deferred, QueryResults, FileNameUtil, Memory, Observable, Util,
+            FbNodeData, FileConflictView, MLDOStrings, DojoString) {
+
+  /**
+   * MLDOFileServiceController handles all interaction with GDS service and file path management.
+   */
+  var MLDOFileServiceController = function (options) { };
+
+  MLDOFileServiceController.prototype = {
+
+      initialize: function(options) {
+        var context = this;
+        if (!options || typeof options !== "object" || !options.gdsDAO || (!options.gdsDAO.getFolderData && !options.listContentsMethod)) {
+          throw new TypeError("Invalid options argument");
+        }
+        this.gdsDAO = options.gdsDAO || null;
+
+        this.breadcrumbsBaseSelector = null;
+        if (options.breadcrumbsBaseSelector && typeof options.breadcrumbsBaseSelector === 'string') {
+          this.breadcrumbsBaseSelector = options.breadcrumbsBaseSelector;
+        }
+
+        this.treeEventId = (options.treeEventId && typeof options.treeEventId === 'string') ? options.treeEventId : '';
+        this.fileNameConflicts = [];
+        this.enableNavigation = (options && options.enableNavigation === false)? false : true;
+        // Right now we only use HTML5 local storage. If that's not supported, we do no storing of values.
+        this.htmlLocalStorage = ((typeof(Storage) !== "undefined") && !(options && ("noHtmlStorage" in options) && options.noHtmlStorage === true)) ? true : false;
+        // test and turn off if browser settings doen't allow access.
+        if (this.htmlLocalStorage) {
+          try {
+            localStorage.getItem("mldo.currentFolder");
+          } catch (e) {
+            this.htmlLocalStorage = false;
+          }
+        }
+
+        this.currentWorkingFolder = FileNameUtil.folderInfoFromPath('/');
+        this.listContentsMethod = (options && options.listContentsMethod && typeof options.listContentsMethod === "function") ? options.listContentsMethod : this.gdsDAO.getFolderData;
+        this.getDownloadURIMethod = (options && options.getDownloadURIMethod && typeof options.getDownloadURIMethod === "function") ? options.getDownloadURIMethod : this.gdsDAO.getDownloadURI;
+        this.fileStore = {
+            store: new Observable(new Memory({
+                idProperty: "path",
+                getChildren: function (parent, options) {
+                  parent.opened = true;
+                  return this.query(parent, options);
+                },
+
+                mayHaveChildren: function (parent) {
+                    return parent.isDirectory;
+                },
+
+                getIdentity: function (node) {
+                  var identity;
+                  if (node.tombstoneId) {
+                    identity = node.tombstoneId;
+                  } else {
+                    identity = node.path;
+                  }
+                  return identity;
+                },
+
+                query: function(parent, options) {
+                  return context.query(parent, options);
+                }
+            }))
+        };
+        this.invitationId = options.invitationId ? options.invitationId: null;
+        _.bindAll(this, "focusRowAfterGridRefresh", "doAfterGridRefresh",
+                        "moveFiles", "getCurrentUserData",
+                        "getDestinationFolderPathFromTarget", "unsetCurrentUserData");
+      },
+
+      useHtmlLocalStorage: function() {
+        return this.htmlLocalStorage;
+      },
+
+      getBreadCrumbsSelector: function() {
+        return this.breadcrumbsBaseSelector;
+      },
+
+      getStoredCurrentFolder: function() {
+        if (this.enableNavigation) {
+          if (! this.storedCurrentFolder) {
+            if (this.useHtmlLocalStorage()) {
+              this.storedCurrentFolder = localStorage.getItem("mldo.currentFolder");
+            }
+            if (! this.storedCurrentFolder) {
+              this.setStoredCurrentFolder('/', true);
+            }
+          }
+          return decodeURI(this.storedCurrentFolder);
+        } else {
+          return "/"; // always return root
+        }
+      },
+
+      setStoredCurrentFolder: function(path, onlyStore) {
+        if (path && typeof path === "string" && path.length && path!== "/") {
+          path = encodeURI(path);
+        }
+        if (this.enableNavigation || path === "/") {
+          // We only save it local storage if it's supported.
+          // Save for retrieving if opening new browser window.
+          if (this.useHtmlLocalStorage()) {
+            localStorage.setItem("mldo.currentFolder", path);
+          }
+          this.storedCurrentFolder = path;
+          if (this.enableNavigation && !onlyStore) {
+            this.updateBreadcrumbs(path);
+          }
+        }
+      },
+
+      getCurrentFolderInfo: function () {
+          return this.currentWorkingFolder;
+      },
+
+      currentDirectory: function (path) {
+        var context = this;
+        if (path && path.length) {
+          if (this.enableNavigation) {
+            if (path.charAt(0) !== "/") {
+              path = "/" + path;
+            }
+            var root = context.getStoredCurrentFolder();
+            if (root !== '/') {
+              path = root + path;
+            }
+            context.setStoredCurrentFolder(path, false);
+          }
+        }
+        return context.getStoredCurrentFolder();
+      },
+
+      getCurrentUserData: function () {
+        return this.gdsDAO.getLoginData();
+      },
+
+      unsetCurrentUserData: function() {
+        this.gdsDAO.setLoginData(null);
+      },
+
+      notify: function(message, severity, linkData) {
+        this.dispatchCanonicalizedTreeEvent("message:treecontroller", {message: message, severity: severity, linkData: linkData});
+      },
+
+      refreshGrid: function() {
+        this.dispatchCanonicalizedTreeEvent("refreshgrid:treecontroller");
+      },
+
+
+
+      clearSelectionRefreshGrid: function() {
+        this.dispatchCanonicalizedTreeEvent("clearrefreshgrid:treecontroller");
+      },
+
+      listContent: function(path) {
+        return this.listContentsMethod.call(this.gdsDAO, path);
+      },
+
+      /**
+       * As mentioned elsewhere, dgrid does have a dgrid-refresh-complete event but,
+       * it is send when the root folder contents is complete. It does not wait for any
+       * subfolder contents to be gotten.  Therefore it is sent too soon most of the time for
+       * our purposes.  To get around this, we send a custom "query-complete:mldo" event when
+       * each query and sub-query are complete.  We use debounce so that only one actual event
+       * is send.  The idea is that a single refresh will query all contents, using multiple queries,
+       * in quick succession.  As long as each query occurs within a 400ms interval (i.e. as long
+       * as a query issued with 500ms of the last query, no notification will be sent).  So, onCurrentFolderChange
+       * 500ms passes without a query being issued, the event will be sent.
+      */
+      sendQueryCompleteNotification: _.debounce(function() {
+        $.event.trigger("query-complete:mldo");
+      }, 300),
+
+      query: function(parent, options){
+        var def = new Deferred();
+        var context = this;
+        var currentRoot = this.getStoredCurrentFolder();
+        var path = (currentRoot === "/"? "" : currentRoot);
+        if (parent && parent.path) {
+          path += parent.path;
+        }
+        if (!path) {
+          path = "/";
+        }
+        var folderPromise = this.listContent(path);
+        var treeNode = null;
+        var children = [];
+        folderPromise.done(function(folderData) {
+          if (!folderData || typeof folderData !== "object") {
+            throw new Error("Invalid folderData returned by listContentsMethod");
+          }
+          // sanity check the result. Throw error if not good.
+          if (!folderData.folderSummary && !folderData.deletedFiles && !folderData.searchResultSummary) {
+            throw new Error("Unexpected service call results from getFolderData: " + (folderData ? JSON.stringify(folderData) : ""));
+          }
+          treeNode = new FbNodeData(folderData, parent);
+          if (treeNode.self && treeNode.self.path === "/") {
+            context.currentWorkingFolder.name = _.escape(treeNode.self.name);
+            context.currentWorkingFolder.isSharedFolder = treeNode.self.isSharedFolder;
+            context.currentWorkingFolder.accessType = treeNode.self.accessType;
+            if (treeNode.self.shareAttributes) {
+              context.currentWorkingFolder.shareAttributes = treeNode.self.shareAttributes;
+            }
+            context.currentWorkingFolder.sharedParentPath = treeNode.self.sharedParentPath;
+            context.currentWorkingFolder.initiator = treeNode.self.initiator;
+            context.currentWorkingFolder.filePermissions.canWrite = treeNode.self.filePermissions.canWrite;
+            context.currentWorkingFolder.filePermissions.parentCanWrite = treeNode.self.filePermissions.parentCanWrite;
+            context.currentWorkingFolder.clientLastModifiedUtc = treeNode.self.clientLastModifiedUtc;
+            context.currentWorkingFolder.modifiedUtc = treeNode.self.modifiedUtc;
+            context.currentWorkingFolder.createdOnUtc = treeNode.self.createdOnUtc;
+            if (treeNode.self.hasOwnProperty("folderSize")) {
+              context.currentWorkingFolder.folderSize = treeNode.self.folderSize;
+            }
+          }
+          if (treeNode && treeNode.contents) {
+            children = treeNode.contents;
+            if (options && options.sort) {
+              children.sort(options.sort);
+            }
+          }
+          def.resolve(children);
+          context.sendQueryCompleteNotification();
+        }).fail(function(err) {
+          var severity = "ERROR";
+          var message = "";
+          if (err && typeof err === "object") {
+            message = Util.getErrorMessageTranslator().getTranslatedMessage(err,
+                                                                            "fileService.query",
+                                                                            [Util.getFolderNameFromPath(path, context.gdsDAO.getApplicationId())],
+                                                                            context.isThrowErrorOnMessageTranslationEnabled());
+            if ( (!err.errorCode && err.message === "Action aborted.") || (err.errorCode === "SERVICE_ERROR") ) {
+              severity = "SEVERE";
+            }
+          }
+          def.resolve(children);
+          if (err.errorCode === 'RESOURCE_DOES_NOT_EXIST') {
+            if(path!=="/") {
+                // this may be a file. go to parent directory and open the file
+                var parentPath = Util.getParentPath(path);
+                context.setStoredCurrentFolder(parentPath, false);
+                context.refreshGrid();
+                if (context.getTreeEventId() === "Preview") {
+                  $.event.trigger('previewnavupdate:mldo', {path: parentPath, invitationId: context.invitationId});
+                } else {
+                  //assume Files page - need to extend for Trash
+                  $.event.trigger('navupdate:mldo', {path: parentPath});
+                }
+                // for some reason, file paths need to be relative and not absolute
+                var filePath = "/" + Util.getFileNameFromPath(path);
+                // a small timeout is needed to ensure that all children are available before I can make a selection
+                setTimeout(function() {
+                  context.focusRowAfterGridRefresh({path: filePath, pageId: "Files"});
+                }, 0);
+                var fileInfo = context.getFileInfoFromPath(path);
+                fileInfo[0].isDirectory = false;
+                fileInfo[0].isFullPath = true;
+                $.event.trigger('tryOpenFile', fileInfo[0]);
+                return;
+            }
+              message = MLDOStrings.fsFolderNotFound;
+              context.setStoredCurrentFolder("/", false);
+              context.refreshGrid();
+              if (context.getTreeEventId() === "Preview") {
+                $.event.trigger('previewnavupdate:mldo', {path: "/", invitationId: context.invitationId});
+              } else { //assuming Files - need to extend for Trash
+                $.event.trigger('navupdate:mldo', {path: "/"});
+              }
+          }
+          context.notify(message, severity);
+          if (context.gdsDAO.config.isInfoPanelEnabled && context.gdsDAO.config.isInfoPanelEnabled()) {
+            if (context.getTreeEventId() === "Files" || context.getTreeEventId() === "Preview") {
+              $.event.trigger('removeinfopanel:mldo');
+            }
+          }
+        });
+        var results = QueryResults(def.promise);
+        return results;
+      },
+
+      getFileInfoFromPath: function (path) {
+        var info = FileNameUtil.folderInfoFromPath(path);
+
+        return [info];
+      },
+
+      getDownloadURI: function(path, invitationId) {
+        return this.getDownloadURIMethod.call(this.gdsDAO, path, invitationId);
+      },
+
+      rename: function(oldPath, newPath) {
+        return this.gdsDAO.rename(oldPath, newPath);
+      },
+
+      move: function(originalPath, newPath, overwrite) {
+        return this.gdsDAO.move(originalPath, newPath, overwrite);
+      },
+
+      copy: function(originalPath, newPath, overwrite) {
+        return this.gdsDAO.copy(originalPath, newPath, overwrite);
+      },
+
+      delete: function(path, isFolder) {
+        return this.gdsDAO.delete(path, isFolder);
+      },
+
+      permanentlyDelete: function(tombstoneId, shouldUnshare) {
+        return this.gdsDAO.permanentlyDelete(tombstoneId, shouldUnshare);
+      },
+
+      permanentlyDeleteAll: function() {
+        return this.gdsDAO.permanentlyDeleteAll();
+      },
+
+      restore: function(tombstoneId, alternatePath) {
+        return this.gdsDAO.restore(tombstoneId, alternatePath);
+      },
+
+      createFolder: function(folderPath) {
+        return this.gdsDAO.createFolder(folderPath);
+      },
+
+      uploadFile: function(folder, fileName, file, getXHR, overwrite) {
+        return this.gdsDAO.uploadFile(folder, fileName, file, getXHR, overwrite);
+      },
+
+      getUploadUrl: function() {
+        return this.gdsDAO.gdsBaseUrl + '/upload';
+      },
+
+      getBaseUrl: function() {
+        return this.gdsDAO.gdsBaseUrl;
+      },
+
+      focusRowAfterGridRefresh: function(args) {
+        $(document).on("query-complete:mldo", args, this.doAfterGridRefresh);
+      },
+
+      doAfterGridRefresh: function(e) {
+        var pageId = (e && e.data && e.data.pageId) ? e.data.pageId : undefined;
+        this.dispatchCanonicalizedTreeEvent("focusrow:treecontroller", e.data, pageId);
+        $(document).off("query-complete:mldo", this.doAfterGridRefresh);
+      },
+
+      setOriginId: function(originId) {
+        this.gdsDAO.setOriginId(originId);
+      },
+
+      getOriginId: function() {
+        return this.gdsDAO.getOriginId();
+      },
+
+      showFileNameConflictDialog: function(targetFolder, isCopy) {
+        var context = this;
+        var target = targetFolder || this.currentDirectory();
+        var fileConflictDialogContainer = document.createElement('div');
+        var len = this.fileNameConflicts.length || 0;
+        fileConflictDialogContainer.setAttribute("id", "fileConflictDialogContainer");
+        $('#modalContainer').append(fileConflictDialogContainer);
+        var fConflictDialog = new FileConflictView({
+          dialogBodyText: DojoString.substitute((len > 1 ? MLDOStrings.fconflictFolderHasConflicts : MLDOStrings.fconflictFolderHasConflict), [this.fileNameConflicts.length]),
+          filesArray: this.fileNameConflicts,
+          targetFolder: target,
+          currentFolder: this.currentDirectory(),
+          isMove: true,
+          replaceFileCallback: function(originalPath, destinationFolderPath, fileName) {
+            var promise;
+            if (isCopy) {
+              promise = context.copy(originalPath, destinationFolderPath + '/' + fileName, true);
+            } else {
+              promise = context.move(originalPath, destinationFolderPath + '/' + fileName, true);
+            }
+            return promise;
+          },
+          keepFileSeparateCallback: function(originalPath, destinationFolderPath, fileName) {
+            var promise;
+            if (isCopy) {
+              promise = context.copy(originalPath, destinationFolderPath + '/' + fileName, false);
+            } else {
+              promise = context.move(originalPath, destinationFolderPath + '/' + fileName, false);
+            }
+            return promise;
+          },
+          focusRowAfterGridRefreshCallback: function(args) {
+            return context.focusRowAfterGridRefresh(args);
+          },
+          dispatchTreeEventMethod: function(eventName, data) {
+            context.dispatchCanonicalizedTreeEvent(eventName, data);
+          }
+        });
+        fConflictDialog.setElement(fileConflictDialogContainer);
+        fConflictDialog.render();
+      },
+
+      getRelativePathFromFullPath: function(fullPath) {
+        if (!fullPath || typeof fullPath !== "string") {
+          throw new TypeError("Invalid fullPath argument");
+        }
+        var currentFolder = this.currentDirectory();
+        var relativePath = Util.getRelativePath(fullPath, currentFolder);
+        if (!relativePath) {
+          relativePath = "/";
+        }
+        var relativePathLen = relativePath.length;
+        if (relativePath !== '/' && relativePathLen && relativePathLen > 1 && relativePath[relativePathLen - 1] === "/") {
+         relativePath = relativePath.substring(0, relativePathLen - 1);
+        }
+        return relativePath;
+      },
+
+      getDestinationFolderPathFromTarget: function(targetDrop) {
+        if (!targetDrop || typeof targetDrop !== "object") {
+          throw new TypeError("Invalid targetDrop argument");
+        }
+        var destinationFolderPath = null;
+        var potentialNewPath = FileNameUtil.pathFromFileInfo(targetDrop);
+        if (targetDrop instanceof FbFolderNode) {
+          destinationFolderPath = potentialNewPath;
+        } else {
+          if (targetDrop.name) {
+            if(targetDrop.isDirectory) {
+              destinationFolderPath = potentialNewPath;
+            } else {
+              // moveFile always gets a folder target from DnD module so this should never be hit.
+              // But, just in case.
+              destinationFolderPath = this.getRelativePathFromFullPath(targetDrop.location);
+            }
+          } else {
+            destinationFolderPath = '/';
+          }
+        }
+        return destinationFolderPath;
+      },
+
+      moveFile: function(files, targetDrop) {
+        if (!files || !Array.isArray(files) || !files.length) {
+          throw new TypeError("Invalid files argument");
+        }
+        if (!targetDrop || typeof targetDrop !== "object") {
+          throw new TypeError("Invalid targetDrop argument");
+        }
+        this.fileNameConflicts.length = 0; // reset array
+        var publicPromise = $.Deferred();
+        var file = null;
+        var goodCount = 0;
+        var failedList = [];
+        var len = files.length;
+        var isCopy = false;
+        var internalPromise;
+        var filteredFiles;
+        if (len >= 1) {
+          if (len > 1) {
+            filteredFiles = Util.filterBasedOnParent(files);
+          } else {
+            filteredFiles = files;
+          }
+          internalPromise = this.moveFiles(filteredFiles, targetDrop, isCopy, goodCount, failedList);
+        }
+        if (internalPromise !== undefined) {
+          internalPromise.done(function(data) {
+            publicPromise.resolve(data);
+          }).fail(function(err) {
+            publicPromise.reject(err);
+          });
+        }
+        return publicPromise;
+      },
+
+      copyFile: function(files, targetDrop) {
+        if (!files || !Array.isArray(files) || !files.length) {
+          throw new TypeError("Invalid files argument");
+        }
+        if (!targetDrop || typeof targetDrop !== "object") {
+          throw new TypeError("Invalid targetDrop argument");
+        }
+        this.fileNameConflicts.length = 0; // reset array
+        var publicPromise = $.Deferred();
+        var file = null;
+        var goodCount = 0;
+        var failedList = [];
+        var isCopy = true;
+        var len = files.length;
+        var internalPromise;
+        var filteredFiles;
+        if (len >= 1) {
+          if (len > 1) {
+            filteredFiles = Util.filterBasedOnParent(files);
+          } else {
+            filteredFiles = files;
+          }
+          internalPromise = this.moveFiles(filteredFiles, targetDrop, isCopy, goodCount, failedList);
+        }
+        if (internalPromise !== undefined) {
+          internalPromise.done(function(data) {
+            publicPromise.resolve(data);
+          }).fail(function(err) {
+            publicPromise.reject(err);
+          });
+        }
+        return publicPromise;
+      },
+
+      createMoveResultsNotification: function(succeededCount, failedList, isCopy, folderName, fileName) {
+        var msg = "";
+        var status;
+        var error;
+
+        if (succeededCount > 0) {
+          status = "NORMAL";
+        }
+        if (failedList.length > 0) {
+          status = "ERROR";
+        }
+
+        if (succeededCount + failedList.length === 1) {
+          if (succeededCount === 1) {
+            if (isCopy) {
+              msg = DojoString.substitute(MLDOStrings.fsCopiedFileTo, [fileName, folderName]);
+            } else {
+              msg = DojoString.substitute(MLDOStrings.fsMovedFileTo, [fileName, folderName]);
+            }
+          } else {
+            error = failedList[0];
+            if (error.errorCode === "AUTHORIZATION_ERROR") {
+              var problemFolder;
+              if (error.message.indexOf(error.destination) > 0) {
+                problemFolder = error.destination;
+              } else {
+                problemFolder = Util.getParentPath(error.originalPath);
+              }
+              msg = DojoString.substitute(MLDOStrings.fsNoMoveAccess, [problemFolder]);
+            }
+            if (!msg) {
+              if (isCopy) {
+                msg = DojoString.substitute(MLDOStrings.fsCopiedFileToFailed, [fileName, folderName]);
+              } else {
+                msg = DojoString.substitute(MLDOStrings.fsMovedFileToFailed, [fileName, folderName]);
+              }
+            }
+          }
+        } else {
+          if (succeededCount > 0) {
+            if (isCopy) {
+              msg += DojoString.substitute(MLDOStrings.fsMultiCopySuccess, [succeededCount, (succeededCount === 1 ? MLDOStrings.fsItem : MLDOStrings.fsItems), folderName]);
+            } else {
+              msg += DojoString.substitute(MLDOStrings.fsMultiMoveSuccess, [succeededCount, (succeededCount === 1 ? MLDOStrings.fsItem : MLDOStrings.fsItems), folderName]);
+            }
+          }
+          if (failedList.length > 0) {
+            if (isCopy) {
+              msg += DojoString.substitute(MLDOStrings.fsMultiCopyFailed, [failedList.length, (failedList.length === 1 ? MLDOStrings.fsItem : MLDOStrings.fsItems), folderName]);
+            } else {
+              msg += DojoString.substitute(MLDOStrings.fsMultiMoveFailed, [failedList.length, (failedList.length === 1 ? MLDOStrings.fsItem : MLDOStrings.fsItems), folderName]);
+            }
+          }
+        }
+        return {message: msg, status: status};
+      },
+
+      moveFiles: function(files, targetDrop, isCopy, succeededCount, failedList) {
+        if (!files || !Array.isArray(files) || !files.length) {
+          throw new TypeError("Invalid files argument");
+        }
+        if (!targetDrop || typeof targetDrop !== "object") {
+          throw new TypeError("Invalid targetDrop argument");
+        }
+        if (typeof isCopy !== "boolean") {
+          throw new TypeError("Invalid isCopy argument. Should be true or false.");
+        }
+        if (isNaN(succeededCount)) {
+          throw new TypeError("Invalid succeededCount argument");
+        }
+        if (!Array.isArray(failedList)) {
+          throw new TypeError("Invalid failedList argument");
+        }
+
+        var context = this;
+        var currentFolder =this.currentDirectory();
+        var publicPromise = $.Deferred();
+        var internalPromise;
+        var len = files.length;
+        if (len === 1) {
+          file = files[0];
+        } else {
+          file = files.pop();
+        }
+        var destinationFolderPath = this.getDestinationFolderPathFromTarget(targetDrop);
+        // Get the orig path (i.e. "from" location)
+        var originalPath = FileNameUtil.pathFromFileInfo(file);
+        var destinationFolderFullPath = destinationFolderPath;
+        // Get the destination path (i.e. "to" location)
+        var destinationFullPath = (destinationFolderPath === '/' ? '' : destinationFolderPath) + '/' + file.name;
+        // Adjust paths for current folder value to make complete full paths
+        if (currentFolder !== "/") {
+          originalPath = currentFolder + originalPath;
+          destinationFolderFullPath = currentFolder + destinationFolderFullPath;
+          destinationFullPath = currentFolder + destinationFullPath;
+        }
+        var postPastePath = Util.getRelativePath(destinationFullPath, currentFolder);
+        var focusRowData = {path: postPastePath};
+
+        if (isCopy) {
+          internalPromise = this.copy(originalPath, destinationFullPath);
+        } else {
+          internalPromise = this.move(originalPath, destinationFullPath);
+        }
+        internalPromise.done(function() {
+          succeededCount++;
+        })
+        .fail(function(e) {
+          if (e.errorCode === "RESOURCE_ALREADY_EXISTS") {
+            context.fileNameConflicts.push({
+                                  name: file.name,
+                                  destinationFolderFullPath: destinationFolderFullPath,
+                                  originalPath: originalPath
+                                });
+          }
+          if (e.errorCode === "RESOURCE_DOES_NOT_EXIST") {
+            ++succeededCount;
+          } else {
+            failedList.push({name: file.name, destination: destinationFolderFullPath, originalPath: originalPath, errorCode: e.errorCode, message: e.message});
+          }
+        })
+        .always(function() {
+          if (len === 1) {
+            var resultsNotification = context.createMoveResultsNotification(succeededCount,
+                                               failedList,
+                                               isCopy,
+                                               Util.getFolderNameFromPath(context.getDestinationFolderPathFromTarget(targetDrop), context.gdsDAO.getApplicationId()),
+                                               file.name );
+            if (succeededCount + failedList.length >= 1) {
+              if (destinationFolderPath !== "/") {
+                context.dispatchCanonicalizedTreeEvent("focusrow:treecontroller", {path: destinationFolderPath, parentFolder: destinationFolderPath, shouldExpand: true});
+              }
+              if (succeededCount + failedList.length === 1) {
+                $(document).on("query-complete:mldo", focusRowData, context.doAfterGridRefresh);
+              }
+              context.refreshGrid();
+              if (isCopy) {
+                $.event.trigger("quotachange:mldo");
+              }
+              if (context.fileNameConflicts.length > 0) {
+                context.showFileNameConflictDialog(destinationFolderPath, isCopy);
+              }
+            }
+            if (context.fileNameConflicts.length === 0) {
+              context.notify(resultsNotification.message, resultsNotification.status);
+            }
+            if (failedList.length > 0) {
+              publicPromise.reject({});
+            } else {
+              publicPromise.resolve({});
+            }
+          } else {
+            context.moveFiles(files, targetDrop, isCopy, succeededCount, failedList);
+          }
+        });
+
+        return publicPromise;
+      },
+
+      folderOpened: function (fileInfo) {
+          if (fileInfo.isDirectory) {
+              fileInfo.opened = true;
+          }
+      },
+
+      getBreadcrumbContainer: function() {
+        var breadcrumbsContainer = null;
+        if (this.getBreadCrumbsSelector()) {
+          var selector = this.getBreadCrumbsSelector() + ' div.breadcrumbContainer';
+          breadcrumbsContainer = document.querySelector(selector);
+        }
+        return breadcrumbsContainer;
+      },
+
+      updateBreadcrumbs: function(path) {
+        if (this.getBreadCrumbsSelector()) {
+          var updateBreadcrumbsEvent = new CustomEvent("update:breadcrumbs", {
+                                                           detail: { folderpath: path }
+                                                         });
+          var breadcrumbsContainer = this.getBreadcrumbContainer();
+          if (breadcrumbsContainer) {
+            breadcrumbsContainer.dispatchEvent(updateBreadcrumbsEvent);
+          }
+        }
+      },
+
+      updateSharedFolderIconBreadcrumb: function(path) {
+        if (this.getBreadCrumbsSelector()) {
+          var sharedParentRoot = this.currentWorkingFolder.sharedParentPath || '';
+          var updateBreadcrumbsEvent = new CustomEvent("updateshared:breadcrumbs", {
+                                                           detail: {
+                                                             folderpath: path,
+                                                             sharedparentroot: sharedParentRoot
+                                                           }
+                                                         });
+          var breadcrumbsContainer = this.getBreadcrumbContainer();
+          if (breadcrumbsContainer) {
+            breadcrumbsContainer.dispatchEvent(updateBreadcrumbsEvent);
+          }
+        }
+      },
+
+      removeIconForFiles: function() {
+          var listOfBreadcrumbs;
+          var breadcrumbList = $('.generalToolbar > div.breadcrumbContainer > ol.breadcrumb');
+          if (breadcrumbList && breadcrumbList[0] && breadcrumbList[0].children) {
+              listOfBreadcrumbs = breadcrumbList[0].children;
+          }
+          //the last child is the file
+          if(listOfBreadcrumbs) {
+              $(listOfBreadcrumbs[listOfBreadcrumbs.length-1]).addClass("isFile");
+          }
+      },
+
+      getDecodedAndEscapedPath: function(path) {
+        var processedPath = path;
+        if (path && typeof path === "string" && path.length && path !== "/") {
+          var decodedPath;
+          try {
+            decodedPath = decodeURI(path);
+          } catch (e) {
+            decodedPath = path;
+          }
+          processedPath = _.escape(decodedPath);
+        }
+        return processedPath;
+      },
+
+      onExpandOrCollapse: function(rowId, isExpanding) {
+
+      },
+
+      isValidSharePermission: function(permission) {
+        return this.gdsDAO.isValidSharePermission(permission);
+      },
+
+      createPersonalSharingInvitation: function(path, invitee, permission, comments) {
+        return this.gdsDAO.createPersonalSharingInvitation(path, invitee, permission, comments);
+      },
+
+      createOpenSharingInvitation: function(path, permission) {
+        return this.gdsDAO.createOpenSharingInvitation(path, permission);
+      },
+
+      getOpenSharingInvitations: function(path, permission) {
+        return this.gdsDAO.getOpenSharingInvitations(path, permission);
+      },
+
+      getInvitation: function(invitationId) {
+        return this.gdsDAO.getInvitation(invitationId);
+      },
+
+      getPreviewInvitation: function(invitationId) {
+        return this.gdsDAO.getPreviewInvitation(invitationId);
+      },
+
+      revokeOpenSharingInvitation: function(sharedLinkId) {
+        return this.gdsDAO.revokeOpenSharingInvitation(sharedLinkId);
+      },
+
+      getPendingSharingInvitations: function() {
+        return this.gdsDAO.getPendingSharingInvitations();
+      },
+
+      getSharingCollaborators: function(path, onlyAccepted) {
+        return this.gdsDAO.getSharingCollaborators(path, onlyAccepted);
+      },
+
+      revokeSharingPermission: function(invitationId) {
+        return this.gdsDAO.revokeSharingPermission(invitationId);
+      },
+
+      previewInvitation: function(invitationId, path) {
+        var promise = this.gdsDAO.previewInvitation(invitationId, path);
+        return promise;
+      },
+
+      createPersonalFromOpenSharingInvitation: function(invitationId) {
+        var promise = this.gdsDAO.createPersonalFromOpenSharingInvitation(invitationId);
+        return promise;
+      },
+
+      acceptSharingInvitation: function(invitationId, path) {
+        var promise = this.gdsDAO.acceptSharingInvitation(invitationId, path);
+        return promise;
+      },
+
+      declineSharingInvitation: function(invitationId) {
+        var promise = this.gdsDAO.declineSharingInvitation(invitationId);
+        return promise;
+      },
+
+      previewFile: function(invitationId, path) {
+        var promise = this.gdsDAO.previewFile(invitationId, path);
+        return promise;
+      },
+
+      copyFolderFromInvitation: function(invitationId, originalPath, newPath, overwrite) {
+        return this.gdsDAO.copyFolderFromInvitation(invitationId, originalPath, newPath, overwrite);
+      },
+
+      getFolderSettings: function(folderPath) {
+        var promise = this.gdsDAO.getFolderSettings(folderPath);
+        return promise;
+      },
+
+      updateRecipientInvitations: function(path, invitations) {
+        return this.gdsDAO.updateRecipientInvitations(path, invitations);
+      },
+
+      isThrowErrorOnMessageTranslationEnabled: function() {
+        return (("isThrowTranslationErrorEnabled" in this.gdsDAO.config) && (typeof this.gdsDAO.config.isThrowTranslationErrorEnabled === "function") && (this.gdsDAO.config.isThrowTranslationErrorEnabled() === true));
+      },
+
+      getUserProfileSettings: function() {
+        return this.gdsDAO.getUserProfileSettings();
+      },
+
+      saveUrlAsFile: function(url, folderFullPath, fileName) {
+        return this.gdsDAO.saveUrlAsFile(folderFullPath, fileName, url);
+      },
+
+      getTreeEventId: function() { return this.treeEventId; },
+
+      getCanonicalTreeEventName: function(eventName, pageId) {
+        var name = '';
+        if (eventName && typeof eventName === 'string') {
+          if (pageId && typeof pageId === 'string') {
+            name = eventName + pageId;
+          } else {
+            name = eventName + this.getTreeEventId();
+          }
+        }
+        return name;
+      },
+
+      dispatchCanonicalizedTreeEvent: function(eventName, data, pageId) {
+        var canonicalizedEvent;
+        if (eventName && typeof eventName === 'string') {
+          canonicalizedEvent = this.getCanonicalTreeEventName(eventName, pageId);
+          $.event.trigger(canonicalizedEvent, data);
+        }
+      },
+
+      getRootFolderName: function() {
+        return Util.getApplicationNameFromId(this.gdsDAO.getApplicationId());
+      }
+
+  };
+
+  return MLDOFileServiceController;
+});

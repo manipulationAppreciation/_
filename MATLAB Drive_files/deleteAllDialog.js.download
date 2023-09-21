@@ -1,0 +1,5 @@
+define(function(){
+
+  return function(obj) {obj || (obj = {});var __t, __p = '', __e = _.escape;with (obj) {__p += '<div id="deleteItemDialog" class="modal fade" role="dialog" tabindex="-1">\n    <div class="modal-dialog" role="document">\n        <div class="modal-content">\n            <div class="modal-header">\n                <button type="button" class="close cancelDeleteItem" data-dismiss="modal">&times;</button>\n                <h4 class="modal-title">' +((__t = ( deleteAllTitle )) == null ? '' : __t) +'</h4>\n            </div>\n            <div class="modal-body">\n                <p>' +((__t = ( deleteAllPrompt )) == null ? '' : __t) +'</p>\n            </div>\n            <div class="modal-footer">\n                <button type="button" class="btn btn-primary deleteItem" data-dismiss="modal" tabindex="2">' +((__t = ( deleteButtonLabel )) == null ? '' : __t) +'</button>\n                <button type="button" class="btn btn-default cancelDeleteItem" data-dismiss="modal" tabindex="1">' +((__t = ( cancelButtonLabel )) == null ? '' : __t) +'</button>\n            </div>\n        </div>\n    </div>\n</div>\n';}return __p}
+
+});

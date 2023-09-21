@@ -1,0 +1,81 @@
+define([
+  "underscore",
+  "jquery",
+  "dojo/_base/Deferred",
+  "dojo/store/util/QueryResults",
+  "mldofileservice",
+  "dojo/i18n!nls/mldoStringResource",
+  "dojo/string",
+  "util"
+], function( _, $, Deferred, QueryResults, MLDOFileService, MLDOStrings, DojoString, Util ) {
+
+  var SharingFileService = function(options) {};
+  SharingFileService.prototype = Object.create(MLDOFileService.prototype);
+  SharingFileService.prototype.constructor = SharingFileService;
+  SharingFileService.prototype.query = function(parent, options) {
+    var def = new Deferred();
+    var context = this;
+    var folderPromise = this.listContent();
+    var treeNode = null;
+    var children = [];
+    var currentUserData = this.getCurrentUserData();
+    var currentUserEmail = (currentUserData && ("emailAddress" in currentUserData) && currentUserData.emailAddress.length)? currentUserData.emailAddress : "";
+    folderPromise.done(function(invitationsData) {
+      if (!invitationsData || typeof invitationsData !== "object") {
+        throw new Error("Invalid invitationsData returned by listContentsMethod");
+      }
+      // sanity check the result. Throw error if not good.
+      if (!invitationsData.invitations) {
+        throw new Error("Unexpected service call results from listContentsMethod: " + JSON.stringify(invitationsData));
+      }
+      treeNode = new ShareNodeData(invitationsData);
+      if (treeNode && treeNode.contents) {
+        children = treeNode.contents;
+        if (currentUserEmail) {
+          var childrenLength = children.length;
+          for (var childIndex = 0; childIndex < childrenLength; childIndex++) {
+            if (children[childIndex].initiator.emailAddress === currentUserEmail) {
+              children[childIndex].initiator.displayValue = MLDOStrings.meMyself;
+            }
+          }
+        }
+        if (options && options.sort) {
+          children.sort(options.sort);
+        }
+      }
+      def.resolve(children);
+      context.sendQueryCompleteNotification();
+    }).fail(function(err) {
+      var severity = "ERROR";
+      var message = "";
+      if (err && typeof err === "object") {
+        message = Util.getErrorMessageTranslator().getTranslatedMessage(err, "sharingFileService.query");
+        if ( (err.errorCode === "SERVICE_ERROR") || (!err.errorCode && err.message === "Action aborted.") ) {
+          severity = "SEVERE";
+        }
+      }
+      context.notify(message, severity);
+      def.resolve(children);
+    });
+    var results = QueryResults(def.promise);
+    return results;
+  };
+
+  SharingFileService.prototype.acceptSharingInvitation = function(invitationId, path) {
+    var promise = this.gdsDAO.acceptSharingInvitation(invitationId, path);
+    return promise;
+  };
+
+  SharingFileService.prototype.declineSharingInvitation = function(invitationId) {
+    var promise = this.gdsDAO.declineSharingInvitation(invitationId);
+    var context = this;
+    return promise;
+  };
+
+  SharingFileService.prototype.createPersonalFromOpenSharingInvitation = function(invitationId) {
+    var promise = this.gdsDAO.createPersonalFromOpenSharingInvitation(invitationId);
+    return promise;
+  };
+
+  return SharingFileService;
+}); // require

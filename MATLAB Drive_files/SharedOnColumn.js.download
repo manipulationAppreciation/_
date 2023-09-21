@@ -1,0 +1,85 @@
+//Copyright 2016 MathWorks, Inc.
+
+define([
+    "dojo/_base/declare",
+    "mw-filebrowser/columns/helpers/NameComparator",
+    "mw-filebrowser/columns/helpers/DateComparator",
+    "dojo/i18n!nls/mldoStringResource",
+    "dojo/string"
+], function (declare, NameComparator, DateComparator, MLDOStrings, DojoString) {
+    function formatDate(utcDate) {
+        var date = new Date(utcDate);
+        return date.toLocaleDateString();
+    }
+
+    return declare([], {
+        constructor: function (args) {
+            args = args || {};
+            this.column = {
+                id: "sharedOnColumn",
+                label: MLDOStrings.sharedOnColumnLabel,
+                sortable: true,
+                field: "sharedDate",
+                renderHeaderCell: function (th) {
+                  if (!th || !th.appendChild || typeof th.appendChild !== "function") {
+                    throw new TypeError("Invalid th argument");
+                  }
+                  var sharedOnColumn = document.createElement("div");
+                  sharedOnColumn.className = "columnHeaderLabel";
+                  var labelNode = document.createTextNode(MLDOStrings.sharedOnColumnLabel);
+                  sharedOnColumn.appendChild(labelNode);
+                  th.appendChild(sharedOnColumn);
+                },
+                get: function (fileInfo) {
+                  var retVal = MLDOStrings.sharingPageUnknownSharedOnDate;
+                  if (!fileInfo) {
+                    throw new TypeError("Invalid fileInfo argument");
+                  }
+                  if (fileInfo.sharedDate) {
+                    retVal = formatDate(fileInfo.sharedDate);
+                  }
+                  return retVal;
+                },
+                sort: function (a, b) {
+                  if (!a || typeof a !== "object") {
+                    throw new TypeError("Invalid a argument");
+                  }
+                  if (!b || typeof b !== "object") {
+                    throw new TypeError("Invalid b argument");
+                  }
+                  var aDate = (a.sharedDate ? new Date(a.sharedDate) : null);
+                  var bDate = (b.sharedDate ? new Date(b.sharedDate) : null);
+                  if (a.isDirectory || b.isDirectory) {
+                      return this.separateFoldersFromFiles(a, b);
+                  } else if (!aDate || !bDate || (aDate === bDate)) {
+                      return NameComparator.caseSensitiveStringComparator(a.name, b.name);
+                  } else {
+                      return DateComparator.compareDate(aDate, bDate);
+                    }
+                },
+                separateFoldersFromFiles: function (aFileInfo, bFileInfo) {
+                  if (!aFileInfo || typeof aFileInfo !== "object") {
+                    throw new TypeError("Invalid aFileInfo argument");
+                  }
+                  if (!bFileInfo || typeof bFileInfo !== "object") {
+                    throw new TypeError("Invalid bFileInfo argument");
+                  }
+                  var aDate = (aFileInfo.sharedDate ? new Date(aFileInfo.sharedDate) : null);
+                  var bDate = (bFileInfo.sharedDate ? new Date(bFileInfo.sharedDate) : null);
+                  if ((aFileInfo.isDirectory && bFileInfo.isDirectory)) {
+                    if (!aDate || !bDate || (aDate === bDate)) {
+                      return NameComparator.caseSensitiveStringComparator(aFileInfo.name, bFileInfo.name);
+                    } else {
+                      return DateComparator.compareDate(aDate, bDate);
+                    }
+                  } else if (aFileInfo.isDirectory) {
+                      return -1;
+                  } else if (bFileInfo.isDirectory) {
+                      return 1;
+                  }
+                },
+                hidden: true
+            };
+        }
+    });
+});

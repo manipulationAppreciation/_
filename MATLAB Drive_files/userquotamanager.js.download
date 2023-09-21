@@ -1,0 +1,272 @@
+define([
+  "underscore",
+  "jquery",
+  "backbone",
+  "dojo/i18n!nls/mldoStringResource",
+  "dojo/string",
+  "util"
+], function( _, $, Backbone, MLDOStrings, DojoString, Util ) {
+
+  var SIZE_MEASURE = 1000;
+
+  var UserQuotaController = Backbone.View.extend({
+      template: _.template('<div class="quotaContainer">' +
+              '<div class="progress">' +
+                  '<div class="progress-bar" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" style="<%= progressBarStyle %>"></div>' +
+              '</div>' +
+       '<div class="quotaText"><span><%- quotaText %></span>' +
+       '<div class="quotaInfo notificationImageInfo text-info" data-toggle="tooltip" data-container=".myfilesTitlebar" data-placement="right" style="margin-left: 7px"></div>' +
+       '<div class="quotaInfoPerAppText"></div></div>' +
+    '</div>'),
+    // map event handlers to events that are for THIS component (not intercomponent)
+    events: {
+
+    },
+    // called by the constructor
+    initialize: function(options) {
+      if (options.isEmbedded && options.isEmbedded === true) {
+        this.isEmbedded = true;
+      }
+      this.embeddedName = (this.isEmbedded && options.embeddedName) ? options.embeddedName : "quota";
+      this.embeddedContainerId = "";
+      this.embeddedClientHost = "*";
+      this.gdsDAO = options.gdsDAO || null;
+      if (!this.gdsDAO) {
+          throw new Error("Missing GDS DAO argument. Failed to create UserQuotaController.");
+      }
+      // bind 'this' in the listed methods to the current 'this', even when called by other modules.
+      _.bindAll(this, "renderQuotaText", "quotaFailure");
+    },
+    unitsToUse: function(quotaSize) {
+      if (quotaSize === null || isNaN(quotaSize) || quotaSize < 0) {
+        throw new TypeError("Invalid quotaSize argument");
+      }
+      var units = 'KB';
+      var factor = 0;
+      var divisor = 1;
+      if (quotaSize && quotaSize >= SIZE_MEASURE) {
+        while(factor <= 4) {
+          divisor = Math.pow(SIZE_MEASURE, factor);
+          if (quotaSize / divisor < SIZE_MEASURE) {
+            break;
+          }
+          ++factor;
+        }
+      }
+      switch (factor) {
+        case 0:
+        case 1:
+          units = 'KB';
+          break;
+        case 2:
+          units = 'MB';
+          break;
+        case 3:
+          units = 'GB';
+          break;
+        default:
+          units = 'GB';
+      }
+      return units;
+    },
+    renderQuotaText: function(usageData) {
+      if(!usageData || typeof usageData !== 'object' || Object.keys(usageData).length === 0 || isNaN(usageData.storageUsage) || isNaN(usageData.usageQuota)) {
+          throw new TypeError("Unexpected service call results from getStorageUsage: " + (usageData ? JSON.stringify(usageData) : ""));
+      }
+      if (!usageData.storageUsagePerApplication || typeof usageData.storageUsagePerApplication !== 'object' || isNaN(usageData.storageUsagePerApplication.MATLAB_DRIVE) ||
+        typeof usageData.storageUsagePerApplication.THINGSPEAK === 'undefined' || typeof usageData.storageUsagePerApplication.INSTANT_ADDONS === 'undefined' ||
+        typeof usageData.storageUsagePerApplication.ADDONS === 'undefined' || typeof usageData.storageUsagePerApplication.MATLAB_GRADER === 'undefined') {
+        throw new TypeError("Unexpected service call results from getStorageUsage.storageUsagePerApplication: " + (usageData.storageUsagePerApplication ? JSON.stringify(usageData.storageUsagePerApplication) : ""));
+      }
+      let quotaUsed = this.calculateQuotaInPercentage(usageData.usageQuota, usageData.storageUsage);
+      let quotaText = this.calculateQuotaText(usageData.usageQuota, usageData.storageUsage);
+
+      let matlabDriveQuotaUsed = (usageData.storageUsagePerApplication.MATLAB_DRIVE / usageData.storageUsage ) * 100;
+      let thingspeakQuotaUsed = (usageData.storageUsagePerApplication.THINGSPEAK / usageData.storageUsage ) * 100;
+      let addOnsQuotaUsed = (usageData.storageUsagePerApplication.ADDONS / usageData.storageUsage ) * 100;
+      let instantAddOnsQuotaUsed = (usageData.storageUsagePerApplication.INSTANT_ADDONS / usageData.storageUsage ) * 100;
+      let graderQuotaUsed = (usageData.storageUsagePerApplication.MATLAB_GRADER / usageData.storageUsage ) * 100;
+
+      let progressBarStyle = "";
+      if (this.gdsDAO.config.isAdditionalApplicationsEnabled()) {
+        progressBarStyle = `background:linear-gradient(to right, #0072BD ${matlabDriveQuotaUsed}%, #D95319 0%, #D95319 ${(matlabDriveQuotaUsed + thingspeakQuotaUsed)}%,
+                    #EDB120 0%, #EDB120 ${(matlabDriveQuotaUsed + thingspeakQuotaUsed + addOnsQuotaUsed)}% , #7E2F8E 0, #7E2F8E ${(matlabDriveQuotaUsed + thingspeakQuotaUsed + addOnsQuotaUsed + instantAddOnsQuotaUsed)}%,
+                    #77AC30 0%, #77AC30 ${(matlabDriveQuotaUsed + thingspeakQuotaUsed+  addOnsQuotaUsed + instantAddOnsQuotaUsed + graderQuotaUsed)}%)`;
+      } else {
+        progressBarStyle = `background:linear-gradient(to right, #0072BD ${matlabDriveQuotaUsed}%, #D95319 0%, #D95319 ${(matlabDriveQuotaUsed + thingspeakQuotaUsed + addOnsQuotaUsed + instantAddOnsQuotaUsed + graderQuotaUsed)}%);`;
+      }
+      let storageUsagePerAppTooltipText = this.calculatePerApplicationUsageText(usageData.storageUsagePerApplication.MATLAB_DRIVE, usageData.storageUsagePerApplication.THINGSPEAK,
+        usageData.storageUsagePerApplication.ADDONS, usageData.storageUsagePerApplication.INSTANT_ADDONS, usageData.storageUsagePerApplication.MATLAB_GRADER);
+
+      this.$el.html(this.template({quotaText: quotaText, progressBarStyle: progressBarStyle}));
+      var quotaDiv = this.$el.find('div.progress-bar');
+      quotaDiv.attr('aria-valuenow', quotaUsed).css('width', quotaUsed + '%');
+      let quotaInfoPerAppText = this.$el.find('div.quotaInfoPerAppText');
+      quotaInfoPerAppText.html(storageUsagePerAppTooltipText);
+
+      if (quotaUsed > 99) {
+        this.notify("INFO", MLDOStrings.userQuotaStorageFull);
+      }
+      this.notifyEmbeddedContainerOfResize();
+    },
+    quotaFailure: function(err) {
+      var severity = "ERROR";
+      var message = "";
+      if (err && typeof err === "object") {
+        message = Util.getErrorMessageTranslator().getTranslatedMessage(err, "quota.quotaFailure");
+        if ( (!err.errorCode && err.message === "Action aborted.") || (err.errorCode === 'SERVICE_ERROR')) {
+          severity = "SEVERE";
+        }
+      }
+      this.notify(severity, message);
+      this.$el.html(this.template({quotaText: MLDOStrings.userQuotaUnableToFetchData, progressBarStyle: ""}));
+    },
+    render: function() {
+      var quotaPromise = this.gdsDAO.getStorageUsage();
+      quotaPromise.done(this.renderQuotaText).fail(this.quotaFailure);
+    },
+    /**
+     * Calculate user's quota text to be displayed in quota widget
+     * @param usageQuota
+     * @param storageUsage
+     * @returns {string}
+     */
+    calculateQuotaText: function(usageQuota, storageUsage) {
+      if(isNaN(storageUsage) || isNaN(usageQuota)) {
+        throw new TypeError("Invalid argument");
+      }
+      return DojoString.substitute(MLDOStrings.userQuotaAmountUsed, [
+        this.calculateQuotaInUnits(storageUsage).toFixed(1),
+        this.unitsToUse(storageUsage),
+        this.calculateQuotaInUnits(usageQuota).toFixed(0),
+        this.unitsToUse(usageQuota)
+      ]);
+    },
+
+    /**
+     * Calculate user's application usage text to be displayed in quota widget tooltip
+     * @returns {string}
+     */
+    calculatePerApplicationUsageText: function(mlDriveStorageUsage, thingspeakStorageUsage, addOnsStorageUsage, instantAddonsStorageUsage, graderStorageUsage) {
+      let text = `<span style='background: #0072BD;'></span>` + `MATLAB Drive: ` + this.calculateQuotaInUnits(mlDriveStorageUsage).toFixed(1) + ` ` + this.unitsToUse(mlDriveStorageUsage);
+      if (this.gdsDAO.config.isAdditionalApplicationsEnabled()) {
+          text += (thingspeakStorageUsage !== 0) ? `<br/><span style='background: #D95319;'></span>` + MLDOStrings.thingspeakApplicationLabel + `: ` + this.calculateQuotaInUnits(thingspeakStorageUsage).toFixed(1) + ` ` + this.unitsToUse(thingspeakStorageUsage) : ``;
+          text += (addOnsStorageUsage !== 0) ? `<br/><span style='background: #EDB120;'></span>` + MLDOStrings.addonApplicationLabel + `: ` + this.calculateQuotaInUnits(addOnsStorageUsage).toFixed(1) + ` ` + this.unitsToUse(addOnsStorageUsage) : ``;
+          text += (instantAddonsStorageUsage !== 0) ? `<br/><span style='background: #7E2F8E;'></span>` + MLDOStrings.instantAddonsApplicationLabel + `: ` + this.calculateQuotaInUnits(instantAddonsStorageUsage).toFixed(1) + ` ` + this.unitsToUse(instantAddonsStorageUsage) : ``;
+          text += (graderStorageUsage !== 0) ? `<br/><span style='background: #77AC30;'></span>` + MLDOStrings.graderApplicationLabel + `: ` + this.calculateQuotaInUnits(graderStorageUsage).toFixed(1) + ` ` + this.unitsToUse(graderStorageUsage) : ``;
+      } else {
+        let otherAppsStorageUsed = thingspeakStorageUsage + addOnsStorageUsage + instantAddonsStorageUsage + graderStorageUsage;
+        text += (otherAppsStorageUsed !== 0) ? `<br/><span style='background: #D95319;'></span>` + MLDOStrings.otherApplicationLabel + `: ` + this.calculateQuotaInUnits(otherAppsStorageUsed).toFixed(1) + ` ` + this.unitsToUse(otherAppsStorageUsed) : ``;
+      }
+      return text;
+    },
+
+    /**
+     * Convert bytes to Gigabytes
+     * @param valueInBytes
+     * @returns {number}
+     */
+    calculateQuotaInUnits: function(valueInBytes) {
+      if (isNaN(valueInBytes)) {
+        throw new TypeError("Invalid argument");
+      }
+      if(valueInBytes < 0) {
+          throw new Error("calculateQuotaInUnits: cannot convert a negative number to gigabytes");
+      }
+      if (valueInBytes === 0) {
+        return 0;
+      }
+      var units = this.unitsToUse(valueInBytes);
+      var exponent = 1;
+      switch (units) {
+        case 'KB':
+          exponent = 1;
+          break;
+        case 'MB':
+          exponent = 2;
+          break;
+        case 'GB':
+          exponent = 3;
+          break;
+        default:
+          exponent = 3;
+      }
+      var divisor = Math.pow(SIZE_MEASURE, exponent);
+      return (valueInBytes/divisor);
+    },
+
+    /**
+     * Calculate the percentage value needed to feed the width of progress bar in quota widget
+     * @param storageUsageInBytes
+     * @param usageQuotaInBytes
+     * @returns {number}
+     */
+    calculateQuotaInPercentage: function(usageQuota, storageUsage) {
+      if(isNaN(storageUsage) || isNaN(usageQuota)) {
+        throw new TypeError("Invalid argument");
+      }
+      if (storageUsage <= 0) {
+        return 0;
+      }
+      if (usageQuota <= 0) {
+        return 100;
+      }
+      return Math.round((storageUsage * 100)/usageQuota);
+    },
+
+
+    /**
+     * trigger event to pass message text and severity indication
+     * @param severity: one of: ERROR, NORMAL, SEVERE
+     * @param message: text
+     */
+    notify: function(severity, message) {
+      $.event.trigger("message:quotacontroller", {severity: severity, message: message});
+    },
+
+    /**
+     * Start listening for quota controller events
+     */
+    start: function(fnMsgHandler) {
+      if (!fnMsgHandler || typeof fnMsgHandler !== "function") {
+          throw new TypeError("fnMsgHandler unexpected type.");
+      }
+      $(document).on("message:quotacontroller", function(e, msgData) {
+        e.preventDefault();
+        fnMsgHandler(msgData);
+      });
+    },
+
+    /**
+     * Stop listening for quota controller events
+     */
+    stop: function() {
+        $(document).off("message:quotacontroller");
+    },
+
+    getEmbeddedContainerId: function() {
+      return this.embeddedContainerId;
+    },
+    setEmbeddedContainerId: function(id) {
+      if (this.isEmbedded) {
+        this.embeddedContainerId = id;
+      }
+    },
+    getEmbeddedClientHost: function() { return this.embeddedClientHost; },
+    setEmbeddedClientHost: function(host) { if (host && typeof host === "string" && host.length) { this.embeddedClientHost = host; } },
+    getEmbeddedName: function() { return this.embeddedName; },
+    setEmbeddedName: function(name) { this.embeddedName = name; },
+
+    notifyEmbeddedContainerOfResize: function() {
+      if (this.isEmbedded && this.getEmbeddedContainerId()) {
+        var height = this.$el.height();
+        var width = this.$el.width();
+        var msgName = "widgetresized:" + this.getEmbeddedName() + ":" + this.getEmbeddedContainerId();
+        var msg = JSON.stringify({name: msgName, height: height, width: width});
+        window.parent.postMessage(msg, this.getEmbeddedClientHost());
+      }
+    },
+
+});
+  return UserQuotaController;
+}); // require

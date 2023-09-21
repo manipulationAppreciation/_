@@ -1,0 +1,147 @@
+define([
+   "jquery",
+   "bootstrap",
+   "backbone",
+   "util",
+   "templates/OpenInMO",
+   "dojo/i18n!nls/mldoStringResource",
+   "dojo/string"
+ ], function( $, Bootstrap, Backbone, Util, OpenInMOTemplate, MLDOStrings, DojoString ) {
+
+    return Backbone.View.extend({
+
+        template: OpenInMOTemplate,
+
+        events: {
+            "click .addToDrive": "addToDrive",
+            "click .copyToDrive": "copyToDrive"
+        },
+
+        initialize: function(args) {
+          if (!args || Object.keys(args).length === 0) {
+            throw new TypeError("Invalid arguments");
+          }
+          if (!args.fileService || typeof args.fileService !== "object") {
+            throw new TypeError("Invalid fileService argument");
+          }
+          this.fileService = args.fileService;
+          if (!args.actionHandler || typeof args.actionHandler !== "object") {
+            throw new TypeError("Invalid actionHandler argument");
+          }
+          this.actionHandler = args.actionHandler;
+          if (!args.name && typeof args.name !== "string") {
+            throw new TypeError("Invalid name argument");
+          }
+          this.name = args.name;
+          if (!args.invitationId && typeof args.invitationId !== "string") {
+            throw new TypeError("Invalid invitationId argument");
+          }
+          this.invitationId = args.invitationId;
+          if (!args.invitationName || typeof args.invitationName !== "string") {
+            throw new TypeError("Invalid invitationName argument");
+          }
+          this.invitationName = args.invitationName;
+          if (!args.fileInfo || typeof args.fileInfo !== "object") {
+            throw new TypeError("Invalid fileInfo argument");
+          }
+          this.fileInfo = args.fileInfo;
+          this.authenticated = args.authenticated;
+          this.inline = false;
+        },
+
+        isInline: function() { return this.inline; },
+
+        render: function() {
+            let self = this;
+            this.$el.html(this.template({
+              modalTitle: DojoString.substitute(MLDOStrings.openInMOTitle, [self.name]),
+              openInMOLabel: MLDOStrings.openInMOLabel,
+              addToDriveButton: MLDOStrings.previewPageAddToDriveLabel,
+              copyToDriveButton: MLDOStrings.previewPageCopyToDriveLabel
+            }));
+            if (!this.isInline()) {
+              this.$el.on("shown.bs.modal", function(e) {
+                Util.disableTabbingOnPage(Util.getTabbableElements());
+                self.enableTabbingOnModal();
+                setTimeout(function() {
+                  self.notifyEmbeddedContainerOfResize();
+                }, 0);
+              });
+              this.$el.on("hidden.bs.modal", function() {
+                  Util.reEnableTabbingOnPage(Util.getTabbableElements());
+                  document.removeEventListener('keydown', Util.returnFocusToFirstElementInModal);
+                  self.remove();
+              });
+              this.$el.off('dragover'); // clear previous listeners
+              this.$el.on('dragover', this.dragNotAllowed);
+            }
+            if (!this.isInline()) {
+              $('#openInMODialog').modal({backdrop: 'static'});
+            }
+            return this;
+        },
+
+        dragNotAllowed: function(e) {
+          e.preventDefault();
+          e.originalEvent.dataTransfer.dropEffect = 'none';
+        },
+
+        notifyEmbeddedContainerOfResize: function() {
+          if (this.isEmbedded && this.getEmbeddedContainerId()) {
+            var height = $('div#openInMODialog .modal-dialog').height();
+            var width = $('div#openInMODialog .modal-dialog').width();
+            var msgName = "widgetresized:" + this.getEmbeddedName() + ":" + this.getEmbeddedContainerId();
+            var msg = JSON.stringify({name: msgName, height: height, width: width});
+            window.parent.postMessage(msg, this.getEmbeddedClientHost());
+          }
+        },
+
+        enableTabbingOnModal: function() {
+          Util.enableTabbingOnModal(Util.getTabbableElements());
+          const firstFocusableElement = document.querySelector('button.openInMOClose'); // get first element to be focused inside modal
+          const lastFocusableElement = document.querySelector('button.copyToDrive'); // get last element to be focused inside modal
+          document.addEventListener('keydown', Util.returnFocusToFirstElementInModal.bind(null, firstFocusableElement, lastFocusableElement), false);
+        },
+
+        addToDrive: function(e) {
+          if (e && e.preventDefault) {
+            e.preventDefault();
+          }
+          let context = this;
+          let deferred = $.Deferred();
+          if (!this.authenticated) {
+            $.event.trigger("changetosharingpage:mldo", {invitationId: this.invitationId, command: "acceptAndOpen", fileInfo: this.fileInfo});
+          } else {
+            let promise = this.actionHandler.handleAddToDriveAction(this.invitationId, this.authenticated, deferred);
+            promise.done(function(targetFolderPath) {
+              let newPath = targetFolderPath + context.fileInfo.path;
+              context.fileInfo.path = newPath;
+              context.actionHandler.callOpenWithService(newPath, context.fileInfo);
+            }).fail(function(err) {
+              context.fileService.notify(err.message, "ERROR");
+            });
+          }
+        },
+
+        copyToDrive: function(e) {
+          if (e && e.preventDefault) {
+            e.preventDefault();
+          }
+          let context = this;
+          if (!this.authenticated) {
+            $.event.trigger("changetofilespage:mldo", {invitationId: this.invitationId, invitationName: this.invitationName, command: "copyAndOpen", fileInfo: this.fileInfo});
+          } else {
+            let deferred = $.Deferred();
+            let promise = this.actionHandler.handleCopyToDriveAction(this.invitationId, this.invitationName, this.authenticated, deferred);
+            promise.done(function(targetFolderPath) {
+              let newPath = targetFolderPath + context.fileInfo.path;
+              context.fileInfo.path = newPath;
+              context.actionHandler.callOpenWithService(newPath, context.fileInfo);
+            }).fail(function(err) {
+              context.fileService.notify(err.message, "ERROR");
+            });
+          }
+        },
+
+    });
+});

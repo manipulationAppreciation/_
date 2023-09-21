@@ -1,0 +1,609 @@
+define([
+  "pages/AbstractPage",
+  "templates/filesPage",
+  "templates/viewFileInline",
+  "RestoreFolderView",
+  "dojo/i18n!nls/mldoStringResource",
+  "dojo/string",
+  "FileConflictView",
+  "util",
+  "filebrowser/BreadcrumbManager"
+], function( AbstractPage, PageTemplate, ViewInlineTemplate, RestoreFolderView, MLDOStrings, DojoString, FileConflictView, Util, BreadcrumbManager ) {
+
+  /**
+   * This subclass of MatlabDriveApplication uses
+   * Mathworks FileBrowser2 widget for the tree controller.
+   */
+  var FilesPage = AbstractPage.extend({
+    initialize: function (params) {
+
+      this.pageTemplate = PageTemplate;
+
+      this.events = {
+        "click #filesView div.facets-trash" : "goToTrashCan",
+        "click #filesViewHeader li.facets-trash" : "goToTrashCan",
+        "click #filesView div.facets-sharing" : "goToSharing",
+        "click #filesViewHeader li.facets-sharing" : "goToSharing",
+        "click #filesView.treeView .info-panel #sharedParentPathPanel a": "goToSharedParentRoot",
+        "click div.appTitle": "deSelectGrid",
+        "click div#filesView.treeView div.toolbar_container div.generalToolbar div.actionIconContainer": "deSelectGrid",
+        "click div#filesView.treeView div.wrapper": "deSelectGrid",
+        "click div.myfilesTitlebar":  "deSelectGrid",
+        "click #filesView div.facets": "deSelectGrid",
+        "click div#filesFooter": "deSelectGrid",
+        "click .matlabDriveUserName": "deSelectGrid",
+        "click .headerContainer .navbar": "deSelectGrid",
+        "click #filesView .info-panel .openCloseButton" : "openOrClosePanel",
+        "dragover div.facets": "dragoverNotAllowed",
+        "dragover div.generalToolbar": "dragoverNotAllowed",
+        "dragover div.headerContainer": "dragoverNotAllowed",
+        "dragover div.mainFooter": "dragoverNotAllowed",
+        "dragstart #filesView.treeView div.wrapper" : "doDragStart",
+        "dragenter #filesView.treeView div.wrapper" : "doDragEnter",
+        "dragleave #filesView.treeView div.wrapper" : "doDragLeave",
+        "dragend #filesView.treeView div.wrapper" : "doDragEnd",
+        "dragover #filesView.treeView div.wrapper" : "doDragOver",
+        "drop #filesView.treeView div.wrapper" : "doDrop",
+        "click li.dropdown-showhiddenfiles input" : "toggleShowHiddenFiles"
+      };
+
+      this.baseActionSelector = 'div#filesView.treeView div.toolbar_container';
+
+      this.goToFiles = function(e) { /* do nothing */ };
+
+      this.closeFileViewerAndShowTree = function() {
+        this.getTreeController().getActionHandler().closeFileViewerAndShowTree();
+      };
+      this.goToBreadcrumb = function(folderPath) {
+        this.closeFileViewerAndShowTree();
+        if (folderPath && typeof folderPath === 'string') {
+          this.changeTreeRoot(folderPath);
+          $.event.trigger('navupdate:mldo', {path: folderPath});
+        }
+      };
+
+      this.goToSharedParentRoot = function(e) {
+        var folderPath;
+        if (e.target && e.target.dataset) {
+          folderPath = e.target.dataset.folderpath;
+        }
+        if (folderPath && typeof folderPath === 'string') {
+          this.changeTreeRoot(folderPath);
+          $.event.trigger('navupdate:mldo', {path: folderPath});
+        }
+      };
+
+      this.getRootFolderName = function() {
+        return this.getTreeController().getRootFolderName();
+      };
+
+      this.breadcrumbManager = new BreadcrumbManager({
+        baseSelector: 'div#filesView.treeView div.toolbar_container div.generalToolbar ',
+        parentDisplayCount: 2,
+        visibleLongLength: 24,
+        visibleShortLength: 12,
+        alwaysUseShortTruncation: false,
+        rootFolderName: Util.getApplicationNameFromId(!localStorage.getItem("mldo:appId")?'':localStorage.getItem("mldo:appId")),
+        el: document,
+        goToMethod: this.goToBreadcrumb.bind(this),
+        deSelectMethod: this.deSelectGrid.bind(this),
+        getRootFolderNameMethod: this.getRootFolderName.bind(this),
+        updateSharedFolderBreadcrumb: true
+      });
+      this.getBreadcrumbManager = function() { return this.breadcrumbManager; };
+
+      this.getBaseActionSelector = function() { return this.baseActionSelector; };
+
+      this.setActionableInvitation = function(data) {
+        if (data && typeof data === "object" && data.hasOwnProperty("invitationId") && data.hasOwnProperty("action")) {
+          this.actionableInvitation = data;
+        } else {
+          this.actionableInvitation = null;
+        }
+      };
+
+      this.getActionableInvitation = function() {
+        return this.actionableInvitation;
+      };
+
+      this.handleDragAndDropFileUpload = function(e, sessionId, folder) {
+        this.getTreeController().getActionHandler().getUploadManager().dragAndDropSubmitHandler(e, sessionId, folder);
+      };
+
+      var mldoDragging = 0;
+
+      this.uploadFolderEnabled = function() {
+        return ((this.config.isDirectoryUploadEnabled && this.config.isDirectoryUploadEnabled()) && Util.isDirectoryUploadSupported());
+      };
+
+      this.moveEnabled = function() {
+        return (this.config.isMoveEnabled && this.config.isMoveEnabled());
+      };
+
+      this.inlineFileView = function() {
+        return (this.config.getInlineFileView && this.config.getInlineFileView());
+      };
+
+      this.doDragStart = function (event) {
+        if (this.oneOrNoTargetSelected()) {
+          event.stopPropagation();
+          event.preventDefault();
+        }
+      };
+
+      this.doDragEnter = function (event) {
+        if (this.oneOrNoTargetSelected()) {
+          event.stopPropagation();
+          event.preventDefault();
+          // firefox has a bug where dragenter is triggered twice when entering drop zone
+          if (navigator.userAgent.toLowerCase().indexOf('firefox') > -1) {
+            mldoDragging = 1;
+          } else {
+            mldoDragging++;
+          }
+          $("#filesView.treeView div.wrapper").addClass("fileBrowser2 indicateDropZone" );
+        }
+      };
+
+      this.doDragLeave = function (event) {
+        if (this.oneOrNoTargetSelected()) {
+          event.stopPropagation();
+          event.preventDefault();
+          --mldoDragging;
+          if (mldoDragging <= 0) {
+            $("#filesView.treeView div.wrapper.fileBrowser2.indicateDropZone").removeClass("fileBrowser2 indicateDropZone");
+          }
+        }
+      };
+
+      this.doDragOver = function (event) {
+        event.stopPropagation();
+        event.preventDefault();
+        if (this.oneOrNoTargetSelected()) {
+          event.originalEvent.dataTransfer.dropEffect = "copy";
+        } else {
+          event.originalEvent.dataTransfer.dropEffect = 'none';
+        }
+      };
+
+      this.doDragEnd = function (event) {
+        if (this.oneOrNoTargetSelected()) {
+          event.stopPropagation();
+          event.preventDefault();
+          mldoDragging = 0;
+        }
+      };
+
+      this.doDrop = function (event) {
+        if (this.oneOrNoTargetSelected()) {
+          event.preventDefault();
+          mldoDragging = 0;
+          $("#filesView.treeView div.wrapper.fileBrowser2.indicateDropZone").removeClass("fileBrowser2 indicateDropZone" );
+          this.getTreeController().fb.emit("fileBrowserDropEvent", event.originalEvent);
+        }
+      };
+
+      this.onKeyDown = function(e) {
+        var context = this;
+        var key = e.key; // EDGE and most modern browsers
+        var code = e.keyCode || e.which; // safari
+        var macPlatform = context.getTreeController().getActionHandler().isPlatformMac();
+        // there is no Paste action button if isMoveEnabled; there are only MoveTo and CopyTo
+        let isMoveEnabled = (this.config.isMoveEnabled && this.config.isMoveEnabled());
+        let modalContainer = document.querySelector('div#modalContainer');
+        let modalDialogDisplaying = false;
+        let modalDialogId = '';
+        if (modalContainer && modalContainer.innerHTML !== '') {
+          modalDialogDisplaying = true;
+          let dialog = modalContainer.querySelector('div > div.modal');
+          if (dialog) {
+            modalDialogId = dialog.id;
+          }
+        }
+        if ((!macPlatform && key === "v" && e.ctrlKey === true && !e.altKey && !e.shiftKey) ||
+            (!macPlatform && code === 86 && e.ctrlKey === true && !e.altKey && !e.shiftKey) ||
+            (macPlatform && (key === "v" || code ===86) && (e.metaKey === true || e.ctrlKey === true) && !e.altKey && !e.shiftKey)) {
+
+          if (modalDialogDisplaying) {
+            switch (modalDialogId) {
+              case 'createFolderDialog':
+                if (e.target.id === 'folderNameInput') {
+                  var newFolder = document.getElementById("folderNameInput").select();
+                  document.execCommand("paste");
+                }
+                break;
+
+              default:
+                return true;
+            }
+          } else {
+            let selectedRowCount = context.getTreeController().getActionHandler().getSelectedRowCount();
+            if (!isMoveEnabled && selectedRowCount <= 1) {
+              e.preventDefault();
+              $("div.action_icon.paste").click();
+            } else {
+              return true;
+            }
+          }
+
+        }
+      };
+
+      this.prefilterShowTooltip = function(el) {
+        if (el && el.target && el.target.parentElement && el.target.parentElement.className && el.target.parentElement.className.indexOf('share') < 0) {
+          $('.share a.dropdown-toggle').tooltip('hide');
+        }
+      };
+
+      this.showFileNameConflictDialog = function(e, data) {
+        var context = this;
+        var len = 0;
+        if (data && data.fileConflictArray && data.fileConflictArray.length > 0 && data.folder) {
+          len = data.fileConflictArray.length;
+          var fileConflictDialogContainer = document.createElement('div');
+          fileConflictDialogContainer.setAttribute("id", "fileConflictDialogContainer");
+          $('#modalContainer').append(fileConflictDialogContainer);
+          var fConflictDialog = new FileConflictView({
+            dialogBodyText: DojoString.substitute((len > 1 ? MLDOStrings.fconflictFolderHasConflicts : MLDOStrings.fconflictFolderHasConflict), [data.fileConflictArray.length]),
+            isMove: false,
+            filesArray: data.fileConflictArray,
+            targetFolder: data.folder,
+            currentFolder: context.getTreeController().getFileService().currentDirectory(),
+            replaceFileCallback: function(folder, fileName, file) {
+              return context.getTreeController().getFileService().uploadFile(folder, fileName, file, null, true);
+            },
+            keepFileSeparateCallback: function(folder, fileName, file) {
+              return context.getTreeController().getFileService().uploadFile(folder, fileName, file, null, false);
+            },
+            focusRowAfterGridRefreshCallback: function(args) {
+              return context.getTreeController().getFileService().focusRowAfterGridRefresh(args);
+            },
+            dispatchTreeEventMethod: function(eventName, data) {
+              context.getTreeController().getFileService().dispatchCanonicalizedTreeEvent(eventName, data);
+            }
+          });
+          fConflictDialog.setElement(fileConflictDialogContainer);
+          fConflictDialog.render();
+        }
+      };
+
+      this.oneOrNoTargetSelected = function() {
+        var okayToProceed = false;
+        var selectedTargets = this.getTreeController().getActionHandler().getSelectedRowCount();
+        if (selectedTargets === 1 || selectedTargets === 0) {
+          okayToProceed = true;
+        }
+        return okayToProceed;
+      };
+
+      this.goToMATLABDrive = function(e) {
+        if ($(this.getBreadCrumbsSelector() + " div.breadcrumbContainer > ol.breadcrumb li").length !== 1) {
+          e.preventDefault();
+          this.changeTreeRoot("/");
+          $.event.trigger('navupdate:mldo', {path: "/"});
+        }
+      };
+
+      this.resizeBreadcrumbs = function(e) {
+        console.log("files resizeBreadcrumbs");
+        if (this.getBreadcrumbManager()) {
+          const treeController = this.getTreeController();
+          let currentPath;
+          let isFile = false;
+          if (treeController.getActionHandler() && treeController.getActionHandler().isInlineFileViewOpen) {
+            currentPath = treeController.getActionHandler().currentFilePath;
+            isFile = true;
+          } else {
+            currentPath = treeController.getFileService().getStoredCurrentFolder();
+          }
+          this.getBreadcrumbManager().updateBreadcrumbs(currentPath);
+          var sharedParentRoot = treeController.getFileService().getCurrentFolderInfo().sharedParentPath;
+          if (currentPath !== "/" && sharedParentRoot) {
+            this.getBreadcrumbManager().updateSharedFolderIconBreadcrumb(currentPath, sharedParentRoot);
+          }
+          if(isFile) {
+            treeController.getFileService().removeIconForFiles();
+          }
+        }
+      }.bind(this);
+
+      this.startPage = function(msgHandler) {
+        this.stopPage(); // stop any previoius listeners before starting new listeners
+        if (!msgHandler || typeof msgHandler !== "function") {
+          throw new TypeError("Invalid message handler argument");
+        }
+        var context = this;
+        context.getTreeController().start(msgHandler);
+        if (context.getActionableInvitation()) {
+          var actionableInvitation = context.getActionableInvitation();
+          if (actionableInvitation && Util.isValidInvitationAction(actionableInvitation.action) && actionableInvitation.action === "copy") {
+            context.performInvitationCopy(null, actionableInvitation.invitationId, actionableInvitation.invitationName, actionableInvitation.invitationName);
+          } else if (actionableInvitation && Util.isValidInvitationAction(actionableInvitation.action) && actionableInvitation.action === "copyAndOpen") {
+            let deferred = $.Deferred();
+            let promise = this.getTreeController().getActionHandler().handleCopyToDriveAction(actionableInvitation.invitationId, actionableInvitation.invitationName, true, deferred);
+            promise.done(function(targetFolderPath) {
+              // Update fileInfo path after copy to drive operation completes
+              let newPath = targetFolderPath + actionableInvitation.fileInfo.path;
+              actionableInvitation.fileInfo.path = newPath;
+              context.getTreeController().getActionHandler().callOpenWithService(newPath, actionableInvitation.fileInfo);
+            }).fail(function(err) {
+              context.fileService.notify(err.message, "ERROR");
+            });
+          }
+          context.setActionableInvitation(null);
+        }
+        if (this.getBreadcrumbManager()) {
+          window.addEventListener("resize", this.resizeBreadcrumbs, false);
+        }
+        $(document).on("draganddropuploadfile:mldo", function(e, fileData) {
+          e.preventDefault();
+          var selectedFolder = context.getTreeController().getSelectedItemFullPath();
+          var selectedFolders = context.getTreeController().getSelectedFolderFullPaths();
+          if (selectedFolders.length === 1) {
+            selectedFolder = selectedFolders[0];
+          }
+          if (context.oneOrNoTargetSelected()) {
+            context.handleDragAndDropFileUpload(fileData, context.getAuthManager().getSessionId(), selectedFolder);
+          }
+        });
+        $(document).on("click", "li.headernav_login.dropdown:not(.open) a", context.updateUserQuota);
+        $(document).on("click", "li.headernav_login.dropdown:not(.open) a", context.updateSettings);
+        $(document).on("resolvenameconflict:mldo", context.showFileNameConflictDialog);
+        $(document).on("keydown", context.onKeyDown);
+        context.$el.on("click", "li.dropdown-additionalApplications input", context.changeApplication);
+        $(document).on("show.bs.tooltip", context.prefilterShowTooltip);
+        if (context.config.isInfoPanelEnabled && context.config.isInfoPanelEnabled()) {
+          $(document).on('infopanelupdateFiles:mldo', function(e, data) {
+            if (e && e.preventDefault) {
+              e.preventDefault();
+            }
+            if (data) {
+              var rootFolderName;
+              if (data.data.name === "/") {
+                rootFolderName = context.getRootFolderName();
+              }
+              context.updateInfoPanel(data, rootFolderName);
+            }
+          });
+          $(document).on('removeinfopanel:mldo', function() {
+            context.removeInfoPanel();
+          });
+        }
+      };
+
+      this.stopPage = function() {
+        var context = this;
+
+        if (this.getBreadcrumbManager()) {
+          window.removeEventListener("resize", this.resizeBreadcrumbs, false);
+          this.getBreadcrumbManager().stop();
+        }
+        context.getTreeController().stop();
+        $(document).off("move:mldo");
+        $(document).off("draganddropuploadfile:mldo");
+        $(document).off("click", "li.headernav_login.dropdown:not(.open) a", context.updateUserQuota);
+        $(document).off("click", "li.headernav_login.dropdown:not(.open) a", context.updateSettings);
+        $(document).off("resolvenameconflict:mldo", context.showFileNameConflictDialog);
+        $(document).off("keydown", context.onKeyDown);
+        context.$el.off("click", "li.dropdown-additionalApplications input", context.changeApplication);
+        $(document).off("show.bs.tooltip", context.prefilterShowTooltip);
+        if (context.config.isInfoPanelEnabled && context.config.isInfoPanelEnabled()) {
+          $(document).off("infopanelupdateFiles:mldo");
+          $(document).off("removepanelupdate:mldo");
+        }
+      };
+
+      this.render = function() {
+        var am = this.getAuthManager();
+        var touchevents = (('ontouchstart' in window )|| ("DocumentTouch" in window && window.DocumentTouch && document instanceof window.DocumentTouch));
+        var templateParameters = {};  // new object
+        templateParameters.headerNavigation = this.renderNavigationHeader();
+        templateParameters.facetsFiles = MLDOStrings.filesPageFacetsFiles;
+        templateParameters.facetsSharing = MLDOStrings.filesPageFacetsSharing;
+        templateParameters.facetsDeletedFiles = MLDOStrings.filesPageFacetsDeletedFiles;
+        templateParameters.renameActionLabel = MLDOStrings.filesPageRenameLabel;
+        templateParameters.moveActionLabel = MLDOStrings.filesPageMoveLabel;
+        templateParameters.deleteActionLabel = MLDOStrings.filesPageDeleteLabel;
+        templateParameters.viewInNewTabLabel = MLDOStrings.viewInNewTab;
+        templateParameters.cutActionLabel = MLDOStrings.filesPageCutLabel;
+        templateParameters.copyActionLabel = MLDOStrings.filesPageCopyLabel;
+        templateParameters.copyToActionLabel = MLDOStrings.filesPageCopyToLabel;
+        templateParameters.pasteActionLabel = MLDOStrings.filesPagePasteLabel;
+        templateParameters.uploadActionLabel = MLDOStrings.filesPageUploadLabel;
+        templateParameters.uploadFilesActionLabel = MLDOStrings.filesPageUploadFilesLabel;
+        templateParameters.uploadFolderActionLabel = MLDOStrings.filesPageUploadFolderLabel;
+        templateParameters.newFolderActionLabel = MLDOStrings.filesPageNewFolderLabel;
+        templateParameters.shareActionLabel = MLDOStrings.filesPageShareLabel;
+        templateParameters.manageActionLabel = MLDOStrings.filesPageManageLabel;
+        templateParameters.linkActionLabel = MLDOStrings.filesPageLinkLabel;
+        // TODO LEAVE
+        // templateParameters.leaveActionLabel = MLDOStrings.filesPageLeaveLabel;
+        templateParameters.downloadActionLabel = MLDOStrings.filesPageDownloadLabel;
+        templateParameters.pasteActionLabel = MLDOStrings.filesPagePasteLabel;
+        templateParameters.userFirstNameFiles = MLDOStrings.filesPageUserFirstNameFiles;
+        templateParameters.loginData = JSON.stringify(am.getLoginData() || '');
+        templateParameters.sessionId = am.getSessionId() || '';
+        templateParameters.reloginMinutes = (am.getMinutesBeforeRelogin() ? am.getMinutesBeforeRelogin() : 'unknown');
+        templateParameters.sharingEnabled = this.isSharingEnabled;
+        templateParameters.personalInvitationsEnabled = this.isPersonalInvitationsEnabled;
+        templateParameters.uploadToolTipText = MLDOStrings.uploadToolTipText;
+        templateParameters.uploadFolderToolTipText = MLDOStrings.uploadFolderToolTipText;
+        templateParameters.newFolderToolTipText = MLDOStrings.newFolderToolTipText;
+        templateParameters.downloadToolTipText = MLDOStrings.downloadToolTipText;
+        templateParameters.openToolTipText = MLDOStrings.openToolTipText;
+        templateParameters.viewToolTipText = MLDOStrings.viewToolTipText;
+        templateParameters.renameToolTipText = MLDOStrings.renameToolTipText;
+        templateParameters.moveToolTipText = MLDOStrings.moveToolTipText;
+        templateParameters.cutToolTipText = MLDOStrings.cutToolTipText;
+        templateParameters.copyToolTipText = MLDOStrings.copyToolTipText;
+        templateParameters.pasteToolTipText = MLDOStrings.pasteToolTipText;
+        templateParameters.deleteToolTipText = MLDOStrings.deleteToolTipText;
+        templateParameters.viewInNewTabToolTipText = MLDOStrings.viewInNewTabToolTipText;
+        templateParameters.shareToolTipText = MLDOStrings.shareToolTipText;
+        templateParameters.manageToolTipText = MLDOStrings.manageToolTipText;
+        templateParameters.linkToolTipText = MLDOStrings.linkToolTipText;
+        templateParameters.openLiveEditor = MLDOStrings.viewOpenLiveEditor;
+        templateParameters.viewFile = MLDOStrings.viewFile;
+        templateParameters.mockOpenwith = params.mockOpenwith || false;
+        templateParameters.viewerServiceEnabled = params.viewerServiceEnabled || false;
+        templateParameters.liveEditorSupported = (params.liveEditorSupported && Util.isBrowserValid()) || false;
+        // TODO LEAVE
+        // templateParameters.leaveToolTipText = MLDOStrings.leaveToolTipText;
+        templateParameters.previewBannerText = MLDOStrings.previewBannerText;
+        templateParameters.previewBannerEnabled = ((this.config.isPreviewBannerEnabled && this.config.isPreviewBannerEnabled()) ? true : false);
+        templateParameters.copyEnabled = (("isCopyEnabled" in this.config && this.config.isCopyEnabled()) ? true : false);
+        templateParameters.shouldShowUnshareOption = (this.config.shouldShowUnshareOption && this.config.shouldShowUnshareOption()) ? true : false;
+        templateParameters.supportDirectoryUpload = this.uploadFolderEnabled();
+        templateParameters.moveEnabled = this.moveEnabled();
+        templateParameters.panelInfoIcon = MLDOStrings.panelInfoIcon;
+        templateParameters.isInfoPanelEnabled = this.config.isInfoPanelEnabled();
+        templateParameters.panelOwnedBy = MLDOStrings.panelOwnedBy;
+        templateParameters.panelAccessType = MLDOStrings.panelAccessType;
+        templateParameters.panelSharedFolderRoot = MLDOStrings.panelSharedFolderRoot;
+        templateParameters.panelCreatedOn = MLDOStrings.panelCreatedOn;
+        templateParameters.panelModifiedOn = MLDOStrings.panelModifiedOn;
+        templateParameters.footerPatentsLabel = MLDOStrings.footerPatents;
+        templateParameters.footerTrademarksLabel = MLDOStrings.footerTrademarks;
+        templateParameters.footerPrivacyPolicyLabel = MLDOStrings.footerPrivacy;
+        templateParameters.footerPiracyLabel = MLDOStrings.footerPiracy;
+        templateParameters.copyrightYear = new Date().getFullYear();
+
+        var htmlResult = this.pageTemplate(templateParameters);
+        this.$el.empty().html(htmlResult);
+        // render subviews
+
+        $('.appContainer').removeClass('ff-delete');
+        $('.mainFooter').addClass('ff-delete');
+        $('#filesView.treeView').addClass('ff-delete');
+        $('.right-column').addClass('ff-delete');
+        $('.facets').addClass('ff-delete');
+        if (this.config.isInfoPanelEnabled && !this.config.isInfoPanelEnabled()) {
+          $('#filesView').addClass('no-info-panel');
+          $('#filesView .wrapper').addClass('no-info-panel');
+        }
+
+        var treeOptions = {
+          id: 'jstree',
+          authenticated: true,
+          // action bar buttons the tree needs to update
+          shareSelector : this.isSharingEnabled ? this.getBaseActionSelector() + ' .share' : '',
+          manageSelector : this.isSharingEnabled ? this.getBaseActionSelector() + ' .manage' : '',
+          linkSelector : this.isSharingEnabled ? this.getBaseActionSelector() + ' .link' : '',
+          // TODO LEAVE
+  //        leaveSelector : this.isSharingEnabled ? this.getBaseActionSelector() + ' .leave' : '',
+          downloadSelector : this.getBaseActionSelector() + ' .downloadFiles',
+          openSelector : this.getBaseActionSelector() + ' .open',
+          viewSelector : this.getBaseActionSelector() + ' .view',
+          viewInNewTabSelector : this.getBaseActionSelector() + ' .newTabWindow',
+          deleteSelector : this.getBaseActionSelector() + ' .deleteFile',
+          renameSelector : this.getBaseActionSelector() + ' .rename',
+          cutSelector : this.getBaseActionSelector() + ' .cut',
+          copySelector : ("isCopyEnabled" in this.config && this.config.isCopyEnabled()) ? this.getBaseActionSelector() + ' .copy' : '',
+          pasteSelector : this.getBaseActionSelector() + ' .paste',
+          uploadSelector : this.getBaseActionSelector() + ' .uploadFiles',
+          newFolderSelector : this.getBaseActionSelector() + ' .newFolder'
+        };
+        if (this.uploadFolderEnabled()) {
+          treeOptions.uploadSelector = this.getBaseActionSelector() + ' .upload';
+          treeOptions.uploadFilesSelector = this.getBaseActionSelector() + ' .uploadFiles';
+          treeOptions.uploadFolderSelector = this.getBaseActionSelector() + ' .uploadFolder';
+        }
+        if (this.moveEnabled()) {
+          treeOptions.moveSelector = this.getBaseActionSelector() + ' .move';
+        }
+
+        // start breadcrumbs before starting treeController
+        if (this.getBreadcrumbManager()) {
+          this.getBreadcrumbManager().render();
+        }
+
+        this.getTreeController().render(treeOptions);
+        this.getUserQuotaController().setElement($('.quotaListItem'));
+        this.getUserQuotaController().render();
+        this.updateSettings();
+
+        if (!touchevents) {
+          $('[data-toggle="tooltip"]').tooltip();
+          $('.share a.dropdown-toggle').tooltip({placement: "top", container: ".myfilesTitlebar"});
+        }
+        this.renderMatrix();
+      };
+
+      this.getTreeControllerOptions = function() {
+        return {
+          id: 'Files',
+          enableNavigation: true,
+          allowDnD: this.options.allowDnD,
+          showUploadDetails: true,
+          viewFileEnabled: (this.config.isFileViewEnabled && this.config.isFileViewEnabled()),
+          inlineFileView: (this.config.getInlineFileView && this.config.getInlineFileView()),
+          viewInNewTabEnabled: (this.config.isViewInNewTabEnabled && this.config.isViewInNewTabEnabled()),
+          viewerServiceEnabled: (this.config.isViewerServiceEnabled && this.config.isViewerServiceEnabled()),
+          viewerServiceURL: this.config.getViewerServiceURL(),
+          openWithEnabled: (this.config.isOpenWithEnabled && this.config.isOpenWithEnabled()),
+          directoryUploadEnabled: this.uploadFolderEnabled(),
+          moveEnabled: this.moveEnabled(),
+          mockOpenwith: (this.config.mockOpenwith && this.config.mockOpenwith()),
+          copyEnabled: ("isCopyEnabled" in this.config && this.config.isCopyEnabled()),
+          sharingEnabled: (this.config.isSharingEnabled && this.config.isSharingEnabled()),
+          personalInvitationsEnabled: (this.config.isSharingEnabled && this.config.isSharingEnabled() && this.config.isPersonalInvitationsEnabled && this.config.isPersonalInvitationsEnabled()),
+          editPermissionsEnabled: (this.config.isEditPermissionsEnabled && this.config.isEditPermissionsEnabled()),
+          listMethodName: "getFolderData",
+          shouldShowUnshareOption: (this.config.shouldShowUnshareOption && this.config.shouldShowUnshareOption()) ? true : false,
+          indentWidth: 25,
+          getMaxFileUploadSize: this.config.getMaxFileUploadSize(),
+          isInfoPanelEnabled: this.config.isInfoPanelEnabled(),
+          folderDownloadEnabled: (this.config.isFolderDownloadEnabled && this.config.isFolderDownloadEnabled() === true) ? true : false,
+          columns: {
+                     name: true,
+                     size: true,
+                     clientModifiedDate: true,
+                     ownedBy: true
+                   },
+          actions: {
+                     openInMatlabOnline: (this.config.isOpenWithEnabled && this.config.isOpenWithEnabled()),
+                     viewinbrowser: (this.config.isFileViewEnabled && this.config.isFileViewEnabled()),
+                     viewnewtab: (this.config.isFileViewEnabled && this.config.isFileViewEnabled()) && (this.config.isViewInNewTabEnabled && this.config.isViewInNewTabEnabled()),
+                     download: this.options.allowDownloads,
+                     upload: true,
+                     newfolder: true,
+                     rename: true,
+                     cut: !this.config.isMoveEnabled || !this.config.isMoveEnabled(),
+                     copy: ("isCopyEnabled" in this.config && this.config.isCopyEnabled()),
+                     paste: !this.config.isMoveEnabled || !this.config.isMoveEnabled(),
+                     move: this.config.isMoveEnabled && this.config.isMoveEnabled(),
+                     deleteitem: true,
+                     share: (this.config.isSharingEnabled && this.config.isSharingEnabled())
+                    },
+                    breadcrumbsBaseSelector: (this.getBreadcrumbManager() ? this.getBreadcrumbManager().getBreadcrumbsBaseSelector() : '')
+        };
+      };
+
+      this.constructor.__super__.initializeParams.apply(this, arguments);
+
+      this.createTreeController(this.getTreeControllerOptions());
+      // unset already set handlers
+      this.getTreeController().fb.fileBrowserContainer.ondragstart = null;
+      this.getTreeController().fb.fileBrowserContainer.ondragenter = null;
+      this.getTreeController().fb.fileBrowserContainer.ondragleave = null;
+      this.getTreeController().fb.fileBrowserContainer.ondragover = null;
+      this.getTreeController().fb.fileBrowserContainer.ondragend = null;
+      this.getTreeController().fb.fileBrowserContainer.ondrop = null;
+
+      // bind 'this' in the listed methods to the current 'this',
+      // even when called by other modules.
+      _.bindAll(this, "goToBreadcrumb", "logoutPage", "changeTreeRoot",
+                      "handleDragAndDropFileUpload", "deSelectGrid",
+                      "goToTrashCan", "refreshPage", "invalidate", "getBaseActionSelector",
+                      "updateUserQuota", "doDragStart", "doDragEnter",
+                      "doDragLeave", "doDragEnd", "doDragOver", "doDrop",
+                      "oneOrNoTargetSelected", "showFileNameConflictDialog",
+                      "toggleShowHiddenFiles", "changeApplication", "onKeyDown",
+                      "updateSettings", "goToSharing", "createTreeController",
+                      "getTreeControllerOptions", "needsRefresh", "goToMATLABDrive", "performInvitationCopy",
+                      "closeFileViewerAndShowTree");
+    }
+
+  });
+  return FilesPage;
+}); // require

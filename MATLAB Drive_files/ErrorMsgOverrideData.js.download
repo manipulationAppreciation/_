@@ -1,0 +1,80 @@
+/*jshint esversion: 6 */
+define([], function() {
+
+  /**
+   ** Add entry to override default error message for specific operation.
+   ** The operation name must be unique and whatever you like.
+   ** inverse means NOT.  For example inverse = true and errorCode = "ILLEGAL_MOVE_TARGET" means "where errorCode !== "ILLEGAL_MOVE_TARGET""
+   ** hasSubstitutionTokens = true if the string expects to do token substitution.
+   ** SPECIAL VALUES:  "NO_ERROR_CODE" - Used for regular javascript Errors, which do not have a "errorCode" property.
+   ** "ACTION_ABORTED" - Used when the browser operation is cancelled
+   */
+  const ERROR_MSG_OVERRIDE_DATA = [
+    {errorCode: "ACTION_ABORTED", inverse: false, operationName: "quota.quotaFailure", msgData: { stringId: "userQuotaServerError", hasSubstitutionTokens: false }},
+    {errorCode: "ACTION_ABORTED", inverse: false, operationName: "fileService.query", msgData: { stringId: "fsServerError", hasSubstitutionTokens: false }},
+    {errorCode: "ACTION_ABORTED", inverse: false, operationName: "sharingFileService.query", msgData: { stringId: "fsServerError", hasSubstitutionTokens: false }},
+    {errorCode: "ACTION_ABORTED", inverse: false, operationName: "fileUpload.recursiveUpload", msgData: { stringId: "simpleUploadUploadCancelled", hasSubstitutionTokens: false }},
+    {errorCode: "ALL_UNMATCHED_ERRORS", inverse: false, operationName: "actionHandler.performMultiSelectPermanentDelete", msgData: { stringId: "actionHandlerGeneralDeleteFailed", hasSubstitutionTokens: true }},
+    {errorCode: "ALL_UNMATCHED_ERRORS", inverse: false, operationName: "fileService.getPendingShareInvitations", msgData: { stringId: "fsFailedToGetPendingInvitations", hasSubstitutionTokens: true }},
+    {errorCode: "ALL_UNMATCHED_ERRORS", inverse: false, operationName: "fileService.declineSharingInvitation", msgData: { stringId: "fsDeclineInvitationFailed", hasSubstitutionTokens: true }},
+    {errorCode: "ALL_UNMATCHED_ERRORS", inverse: false, operationName: "actionHandler.getFolderSettings", msgData: { stringId: "fsFailedToGetFolderSettings", hasSubstitutionTokens: true }},
+    {errorCode: "AUTHORIZATION_ERROR", inverse: false, operationName: "initiateSharingView.createLink", msgData: { stringId: "initiateSharingDialogNoPermToCreateLink", hasSubstitutionTokens: false }},
+    {errorCode: "AUTHORIZATION_ERROR", inverse: false, operationName: "fileUpload.displayErrorOnDialog", msgData: { stringId: "simpleUploadAuthorizationError", hasSubstitutionTokens: false }},
+    {errorCode: "AUTHORIZATION_ERROR", inverse: false, operationName: "sharingPage.getSelectedLink", msgData: { stringId: "sharingPageInvitationAuthorizationError", hasSubstitutionTokens: false }},
+    {errorCode: "AUTHORIZATION_ERROR", inverse: false, operationName: "initiateSharingView.deleteLink", msgData: { stringId: "initiateSharingDialogNoPermToDeleteLink", hasSubstitutionTokens: false }},
+    {errorCode: "AUTHORIZATION_ERROR", inverse: false, operationName: "initiateSharingView.revokeSharingPermission", msgData: { stringId: "initiateSharingDialogNoPermToUpdateInvitation", hasSubstitutionTokens: false }},
+    {errorCode: "AUTHORIZATION_ERROR", inverse: false, operationName: "sharingPage.declineInvitation", msgData: { stringId: "initiateSharingDialogNoPermToUpdateInvitation", hasSubstitutionTokens: false }},
+    {errorCode: "AUTHORIZATION_ERROR", inverse: false, operationName: "invitationPreview.declineInvitation", msgData: { stringId: "initiateSharingDialogNoPermToUpdateInvitation", hasSubstitutionTokens: false }},
+    {errorCode: "AUTHORIZATION_ERROR", inverse: false, operationName: "sharingPage.acceptInvitation", msgData: { stringId: "initiateSharingDialogNoPermToUpdateInvitation", hasSubstitutionTokens: false }},
+    {errorCode: "AUTHORIZATION_ERROR", inverse: false, operationName: "invitationPreview.acceptInvitation", msgData: { stringId: "initiateSharingDialogNoPermToUpdateInvitation", hasSubstitutionTokens: false }},
+    {errorCode: "FILE_TOO_LARGE", inverse: false, operationName: "fileUpload.displayErrorOnDialog", msgData: { stringId: "simpleUploadFileTooLarge", hasSubstitutionTokens: false }},
+    {errorCode: "INVITATION_ALREADY_EXISTS", inverse: false, operationName: "initiateSharingView.createLink", msgData: { stringId: "initiateSharingDialogCreateLinkFailed", hasSubstitutionTokens: false }},
+    {errorCode: "INVITATION_ALREADY_EXISTS", inverse: false, operationName: "initiateSharingView.initiateMultipleShares", msgData: { stringId: "initiateSharingDailogInviteeAlreadyInList", hasSubstitutionTokens: false }},
+    {errorCode: "INVITATION_DOES_NOT_EXIST", inverse: false, operationName: "initiateSharingView.deleteLink", msgData: { stringId: "initiateSharingDialogInvitationDoesNotExist", hasSubstitutionTokens: false }},
+    {errorCode: "INVITATION_DOES_NOT_EXIST", inverse: false, operationName: "sharingPage.getSelectedLink", msgData: { stringId: "sharingPageInvitationNotFound", hasSubstitutionTokens: false }},
+    {errorCode: "INVITATION_DOES_NOT_EXIST", inverse: false, operationName: "sharingPage.getSelectedLink", msgData: { stringId: "sharingPageInvitationNotFound", hasSubstitutionTokens: false }},
+    {errorCode: "ILLEGAL_MOVE_TARGET", inverse: false, operationName: "actionHandler.performSinglePasteCopy", msgData: { stringId: "actionHandlerCopyFailed", hasSubstitutionTokens: true }},
+    {errorCode: "ILLEGAL_MOVE_TARGET", inverse: false, operationName: "actionHandler.performSinglePasteMove", msgData: { stringId: "actionHandlerPasteFailed", hasSubstitutionTokens: true }},
+    {errorCode: "ILLEGAL_PATH_ELEMENT", inverse: false, operationName: "fbTreeController.rename", msgData: { stringId: "fbTreeIllegalPath", hasSubstitutionTokens: false }},
+    {errorCode: "ILLEGAL_PATH_ELEMENT", inverse: false, operationName: "fileUpload.displayErrorOnDialog", msgData: { stringId: "simpleUploadIllegalPathElement", hasSubstitutionTokens: false }},
+    {errorCode: "ILLEGAL_PATH_ELEMENT", inverse: false, operationName: "initiateSharingView.createLink", msgData: { stringId: "initiateSharingDialogIllegalFolderName", hasSubstitutionTokens: true }},
+    {errorCode: "ILLEGAL_PATH_ELEMENT", inverse: false, operationName: "initiateSharingView.updateCollaboratorList", msgData: { stringId: "initiateSharingDialogIllegalFolderName", hasSubstitutionTokens: true }},
+    {errorCode: "ILLEGAL_PATH_ELEMENT", inverse: false, operationName: "initiateSharingView.revokeSharingPermission", msgData: { stringId: "initiateSharingDialogIllegalFolderName", hasSubstitutionTokens: true }},
+    {errorCode: "NO_ERROR_CODE", inverse: false, operationName: "actionHandler.performMultiSelectPermanentDelete", msgData: { stringId: "actionHandlerGeneralDeleteFailed", hasSubstitutionTokens: true }},
+    {errorCode: "PARENT_RESOURCE_DOES_NOT_EXIST", inverse: false, operationName: "fileUpload.displayErrorOnDialog", msgData: { stringId: "simpleUploadResourceDoesNotExist", hasSubstitutionTokens: false }},
+    {errorCode: "PERMISSION_ALREADY_EXISTS", inverse: false, operationName: "fileService.createPersonalFromOpenSharingInvitation", msgData: { stringId: "fsFollowLinkFailed", hasSubstitutionTokens: true }},
+    {errorCode: "RESOURCE_ALREADY_EXISTS", inverse: false, operationName: "actionHandler.performSinglePasteCopy", msgData: { stringId: "actionHandlerCopyFailed", hasSubstitutionTokens: true }},
+    {errorCode: "RESOURCE_ALREADY_EXISTS", inverse: false, operationName: "actionHandler.performSinglePasteMove", msgData: { stringId: "actionHandlerPasteFailed", hasSubstitutionTokens: true }},
+    {errorCode: "RESOURCE_ALREADY_EXISTS", inverse: false, operationName: "fbTreeController.rename", msgData: { stringId: "fbTreeResourceAlreadyExists", hasSubstitutionTokens: true }},
+    {errorCode: "RESOURCE_ALREADY_EXISTS", inverse: true, operationName: "fileService.acceptSharingInvitation", msgData: { stringId: "fsAcceptInvitationFailed", hasSubstitutionTokens: true }},
+    {errorCode: "RESOURCE_ALREADY_EXISTS", inverse: false, operationName: "fileUpload.displayErrorOnDialog", msgData: { stringId: "simpleUploadResourceAlreadyExists", hasSubstitutionTokens: false }},
+    {errorCode: "RESOURCE_DOES_NOT_EXIST", inverse: true, operationName: "actionHandler.performSingleDelete", msgData: { stringId: "actionHandlerSingleDelectFailed", hasSubstitutionTokens: true }},
+    {errorCode: "RESOURCE_DOES_NOT_EXIST", inverse: true, operationName: "actionHandler.performSinglePermanentDelete", msgData: { stringId: "actionHandlerSinglePermanentDeleteFailed", hasSubstitutionTokens: true }},
+    {errorCode: "RESOURCE_DOES_NOT_EXIST", inverse: true, operationName: "actionHandler.performMultiSelectPermanentDelete", msgData: { stringId: "actionHandlerMultiPermanentDeleteFailed", hasSubstitutionTokens: true }},
+    {errorCode: "RESOURCE_DOES_NOT_EXIST", inverse: false, operationName: "actionHandler.getDownloadURI", msgData: { stringId: "actionHandlerViewFileDownloadTimeOut", hasSubstitutionTokens: false }},
+    {errorCode: "RESOURCE_DOES_NOT_EXIST", inverse: false, operationName: "actionHandler.openFileView", msgData: { stringId: "actionHandlerViewFileFileNotExists", hasSubstitutionTokens: false }},
+    {errorCode: "RESOURCE_DOES_NOT_EXIST", inverse: false, operationName: "initiateSharingView.createLink", msgData: { stringId: "initiateSharingDialogLinkFolderDoesNotExist", hasSubstitutionTokens: true }},
+    {errorCode: "RESOURCE_DOES_NOT_EXIST", inverse: false, operationName: "initiateSharingView.updateCollaboratorList", msgData: { stringId: "initiateSharingDialogLinkFolderDoesNotExist", hasSubstitutionTokens: true }},
+    {errorCode: "RESOURCE_DOES_NOT_EXIST", inverse: false, operationName: "sharingPage.declineInvitation", msgData: { stringId: "initiateSharingDialogLinkFolderDoesNotExist", hasSubstitutionTokens: true }},
+    {errorCode: "RESOURCE_DOES_NOT_EXIST", inverse: false, operationName: "invitationPreview.declineInvitation", msgData: { stringId: "initiateSharingDialogLinkFolderDoesNotExist", hasSubstitutionTokens: true }},
+    {errorCode: "RESOURCE_DOES_NOT_EXIST", inverse: false, operationName: "sharingPage.acceptInvitation", msgData: { stringId: "initiateSharingDialogLinkFolderDoesNotExist", hasSubstitutionTokens: true }},
+    {errorCode: "RESOURCE_DOES_NOT_EXIST", inverse: false, operationName: "invitationPreview.acceptInvitation", msgData: { stringId: "initiateSharingDialogLinkFolderDoesNotExist", hasSubstitutionTokens: true }},
+    {errorCode: "RESOURCE_DOES_NOT_EXIST", inverse: false, operationName: "initiateSharingView.revokeSharingPermission", msgData: { stringId: "initiateSharingDialogLinkFolderDoesNotExist", hasSubstitutionTokens: true }},
+    {errorCode: "RESOURCE_DOES_NOT_EXIST", inverse: true, operationName: "fileService.query", msgData: { stringId: "fsFolderNotFoundResetting", hasSubstitutionTokens: true }},
+    {errorCode: "RESOURCE_DOES_NOT_EXIST", inverse: true, operationName: "sharingFileService.query", msgData: { stringId: "fsFolderNotFoundResetting", hasSubstitutionTokens: true }},
+    {errorCode: "RESOURCE_NOT_SHAREABLE", inverse: false, operationName: "initiateSharingView.createLink", msgData: { stringId: "initiateSharingDialogResourceNotSharable", hasSubstitutionTokens: true }},
+    {errorCode: "RESOURCE_NOT_SHAREABLE", inverse: false, operationName: "initiateSharingView.initiateMultipleShares", msgData: { stringId: "initiateSharingDialogResourceNotSharable", hasSubstitutionTokens: true }},
+    {errorCode: "SERVICE_ERROR", inverse: false, operationName: "fileService.query", msgData: { stringId: "fsServerError", hasSubstitutionTokens: false }},
+    {errorCode: "SERVICE_ERROR", inverse: false, operationName: "sharingFileService.query", msgData: { stringId: "fsServerError", hasSubstitutionTokens: false }},
+    {errorCode: "SERVICE_ERROR", inverse: false, operationName: "quota.quotaFailure", msgData: { stringId: "userQuotaServerError", hasSubstitutionTokens: false }},
+    {errorCode: "SESSION_NOT_FOUND", inverse: false, operationName: "fileUpload.displayErrorOnDialog", msgData: { stringId: "simpleUploadSessionNotFound", hasSubstitutionTokens: false }},
+    {errorCode: "SESSION_ID_CANNOT_BE_EMPTY", inverse: false, operationName: "fileService.query", msgData: { stringId: "fsNotAuthorized", hasSubstitutionTokens: false }},
+    {errorCode: "USAGE_QUOTA_EXCEEDED", inverse: false, operationName: "fileUpload.displayErrorOnDialog", msgData: { stringId: "simpleUploadQuotaExceeded", hasSubstitutionTokens: false }},
+    {errorCode: "USER_INVITATION_LIMIT_EXCEEDED", inverse: false, operationName: "initiateSharingView.initiateMultipleShares", msgData: { stringId: "personalInvitationLimitExceeded", hasSubstitutionTokens: false }},
+    {errorCode: "USER_INVITATION_LIMIT_EXCEEDED", inverse: false, operationName: "initiateSharingView.createLink", msgData: { stringId: "personalInvitationLimitExceeded", hasSubstitutionTokens: false }},
+    {errorCode: "USER_INVITATION_LIMIT_EXCEEDED", inverse: false, operationName: "sharingPage.acceptInvitation", msgData: { stringId: "personalInvitationLimitExceeded", hasSubstitutionTokens: false }},
+    {errorCode: "RESOURCE_INVITATION_LIMIT_EXCEEDED", inverse: false, operationName: "initiateSharingView.initiateMultipleShares", msgData: { stringId: "resourceInvitationLimitExceeded", hasSubstitutionTokens: false }},
+    {errorCode: "RESOURCE_INVITATION_LIMIT_EXCEEDED", inverse: false, operationName: "initiateSharingView.createLink", msgData: { stringId: "linkResourceInvitationLimitExceeded", hasSubstitutionTokens: false }}
+  ];
+  return ERROR_MSG_OVERRIDE_DATA;
+});

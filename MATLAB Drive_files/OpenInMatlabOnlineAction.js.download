@@ -1,0 +1,77 @@
+define([
+    "dojo/_base/declare",
+    "mw-filebrowser/actions/Action",
+    "mw-keybindings/DefaultKeys",
+    "mw-filename-utils/FileNameUtil",
+    "dojo/i18n!nls/mldoStringResource",
+    "dojo/string"
+], function (declare, Action, DefaultKeys, FileNameUtil, MLDOStrings, DojoString) {
+    return declare(Action, {
+        constructor: function (args) {
+            args = args || {};
+            var context = args.context;
+            var makeActionAvailable = args.showAction || false;
+            this.name =  "openInMatlabOnlineAction";
+            this.label = MLDOStrings.contextMenuOpenWithLabel;
+            this.enabled = makeActionAvailable;
+            this.section = {
+                id: "MISC",
+                name: "MISC",
+                allowSubMenu: false,
+                forceSubMenu: false
+            };
+            this.isApplicableTo = function (path) {
+                var selectedFileCount = context.getSelectedRowCount();
+                if (selectedFileCount > 1) {
+                    this.enabled = false;
+                } else {
+                    var fileInfos = context.getSelectedItemFileInfos();
+                    var fileInfo = fileInfos[0];
+                    // Enable action if nothing selected, for folders and applicable files
+                    if (!fileInfo || fileInfo.isDirectory || context.canOpenInMatlabOnline(FileNameUtil.getFileNameExtension(fileInfo.name))) {
+                        this.enabled = makeActionAvailable && true;
+                    } else {
+                        this.enabled = false;
+                    }
+                }
+                return this.enabled;
+            };
+            this.callback = function (action) {
+                var fileInfos = context.getSelectedItemFileInfos();
+                var fileInfo = fileInfos[0];
+                if (this.isApplicableTo(fileInfo)) {
+                    if(context.mockOpenwith()) {
+                        let name = fileInfo ? fileInfo.name : this.getCurrentFolderInfo().name;
+                        if (name === "/") {
+                          name = MLDOStrings.rootFolderNameMatlabDrive;
+                        }
+                        var msg1 = DojoString.substitute(MLDOStrings.viewOpenLiveEditorMock, [_.escape(name)]);
+                        var msg2 = MLDOStrings.viewOpenLiveEditorNotSupported;
+                        alert(msg1 + "\n" + msg2);
+                    } else if (fileInfo) {
+                        var currentFolder = context.getCurrentFolder();
+                        var path = FileNameUtil.pathFromFileInfo(fileInfo);
+                        if (currentFolder !== "/") {
+                            path = currentFolder + path;
+                        }
+                        let invitationDetails;
+                        if (this.getInvitationDetailsMethod && typeof this.getInvitationDetailsMethod === "function" && this.getInvitationDetailsMethod()) {
+                          invitationDetails = this.getInvitationDetailsMethod();
+                        }
+                        if (invitationDetails && typeof invitationDetails === "object") {
+                          context.handleLiveEditAction(path, fileInfo, invitationDetails.authenticated, invitationDetails.invitationId, invitationDetails.invitationName,
+                            invitationDetails.invitationStatus, invitationDetails.invitationFullPath);
+                        } else {
+                          context.handleLiveEditAction(path, fileInfo, true);
+                        }
+                    } else {
+                        let currentFolderInfo = context.getCurrentFolderInfo();
+                        context.handleLiveEditAction(context.getCurrentFolder(), currentFolderInfo, true);
+                    }
+
+                }
+            };
+        }
+    });
+
+});

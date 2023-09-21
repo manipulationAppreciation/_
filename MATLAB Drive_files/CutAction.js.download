@@ -1,0 +1,79 @@
+define([
+    "dojo/_base/declare",
+    "mw-filebrowser/actions/Action",
+    "mw-keybindings/DefaultKeys",
+    "mw-filename-utils/FileNameUtil",
+    "util",
+    "dojo/i18n!nls/mldoStringResource",
+    "dojo/string"
+], function (declare, Action, DefaultKeys, FileNameUtil, Util, MLDOStrings, DojoString) {
+  return declare(Action, {
+    constructor: function (args) {
+        args = args || {};
+        var context = args.context;
+        var makeActionAvailable = args.showAction || false;
+        this.name =  "cutAction";
+        this.label = MLDOStrings.contextMenuCutLabel;
+        this.enabled = makeActionAvailable;
+        this.section = {
+            id: "MISC",
+            name: "MISC",
+            allowSubMenu: false,
+            forceSubMenu: false
+        };
+        this.shortcut = "Ctrl + X";
+        this.keyCode = DefaultKeys.X;
+        this.requiresCtrl = true;
+        this.supportsKeyBinding = true;
+        this.isApplicableTo = function (path) {
+          var selectedFileCount = context.getSelectedRowCount();
+          var parentWritable = true;
+          if (selectedFileCount < 1) {
+            this.enabled = false;
+          } else {
+            var fileInfos = context.getSelectedItemFileInfos();
+            for (var i = 0; i < fileInfos.length; i++) {
+              fileInfo = fileInfos[i];
+              if (!fileInfo.filePermissions.parentCanWrite) {
+                parentWritable = false;
+              }
+            }
+            this.enabled = makeActionAvailable && parentWritable && FileNameUtil.isFileInfo(fileInfo);
+          }
+          return this.enabled;
+        };
+        this.callback = function (action) {
+          var fileInfos = context.getSelectedItemFileInfos();
+          var sortedFileInfos = Util.sortFileInfosByPath(fileInfos);
+          var fileInfo = fileInfos[0];
+          if (this.isApplicableTo(fileInfo)) {
+            var path = FileNameUtil.pathFromFileInfo(fileInfo);
+            var currentFolder = context.getCurrentFolder();
+            if (currentFolder !== "/" && path) {
+              path = currentFolder + path;
+            }
+            var fullPathFileInfo = null;
+            if (!fileInfo) {
+                fullPathFileInfo = FileNameUtil.folderInfoFromPath(path);
+            } else {
+                if(fileInfo.isDirectory) {
+                    fullPathFileInfo = FileNameUtil.folderInfoFromPath(path);
+                } else {
+                    fullPathFileInfo = FileNameUtil.fileInfoFromPath(path);
+                }
+            }
+            if (fullPathFileInfo && fullPathFileInfo.location && fullPathFileInfo.name) {
+              fullPathFileInfo.path = fullPathFileInfo.location + fullPathFileInfo.name;
+              fullPathFileInfo.parent = FileNameUtil.getParentPath(fullPathFileInfo.path);
+            }
+            if (fileInfos.length === 1 && fileInfo && fullPathFileInfo) {
+              context.handleCutAction(fullPathFileInfo);
+            } else if (fileInfos.length > 1) {
+              context.handleMultiSelectCut(sortedFileInfos);
+            }
+          }
+        };
+    }
+  });
+
+});

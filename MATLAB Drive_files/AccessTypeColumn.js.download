@@ -1,0 +1,64 @@
+define([
+    "dojo/_base/declare",
+    "dgrid/editor",
+    "dgrid/tree",
+    "dijit/form/ValidationTextBox",
+    "mw-filebrowser/columns/helpers/FileIconUtils",
+    "mw-filebrowser/columns/helpers/NameComparator",
+    "dojo/i18n!nls/mldoStringResource",
+    "dojo/string"
+], function (declare, editor, tree, ValidationTextBox, FileIconUtils, NameComparator, MLDOStrings, DojoString) {
+    return declare([], {
+      constructor: function (args) {
+          args = args || {};
+          this.column = {
+              id: "accessTypeColumn",
+              label: MLDOStrings.accessTypeColumnLabel,
+              renderHeaderCell: function (th) {
+                if (!th || !th.appendChild || typeof th.appendChild !== "function") {
+                  throw new TypeError("Invalid th argument");
+                }
+                var accessTypeColumn = document.createElement("div");
+                accessTypeColumn.className = "columnHeaderLabel";
+                var labelNode = document.createTextNode(MLDOStrings.accessTypeColumnLabel);
+                accessTypeColumn.appendChild(labelNode);
+                th.appendChild(accessTypeColumn);
+              },
+              field: "accessType",
+              get: function (fileInfo) {
+                var accessTypeName = "";
+                if (!fileInfo || !fileInfo.accessType) {
+                  throw new TypeError("Invalid fileInfo argument");
+                }
+                switch(fileInfo.accessType) {
+                  case "READ_WRITE":
+                    accessTypeName = MLDOStrings.initiateSharingDialogPermission_read_write;
+                    break;
+                  case "READ_ONLY":
+                    accessTypeName = MLDOStrings.initiateSharingDialogPermission_read_only;
+                    break;
+                  case "MANAGE_ACCESS":
+                    accessTypeName = MLDOStrings.initiateSharingDialogPermission_manage_access;
+                    break;
+                  case "OWNER":
+                    accessTypeName = MLDOStrings.initiateSharingDialogPermission_owner;
+                    break;
+                  default:
+                    accessTypeName = fileInfo.accessType;
+                    break;
+                }
+                return accessTypeName;
+              },
+              sortable: true,
+              sort: function (a, b) {
+                if (a.accessType === b.accessType) {
+                  return NameComparator.caseSensitiveStringComparator(a.name, b.name);
+                } else {
+                  return NameComparator.caseSensitiveStringComparator(a.accessType, b.accessType);
+                }
+              },
+              hidden: true
+          };
+      }
+    });
+});

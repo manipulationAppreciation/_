@@ -1,0 +1,79 @@
+define([
+    "dojo/_base/declare",
+    "mw-filebrowser/actions/Action",
+    "mw-keybindings/DefaultKeys",
+    "mw-filename-utils/FileNameUtil",
+    "dojo/i18n!nls/mldoStringResource",
+    "dojo/string"
+], function (declare, Action, DefaultKeys, FileNameUtil, MLDOStrings, DojoString) {
+  return declare(Action, {
+    constructor: function (args) {
+        args = args || {};
+        var context = args.context;
+        var makeActionAvailable = args.showAction || false;
+        this.name = "pasteAction";
+        this.label = MLDOStrings.contextMenuPasteLabel;
+        this.section = {
+            id: "MISC",
+            name: "MISC",
+            allowSubMenu: false,
+            forceSubMenu: false
+        };
+        this.enabled = true;
+        this.shortcut = "Ctrl + V";
+        this.keyCode = DefaultKeys.V;
+        this.requiresCtrl = true;
+        this.supportsKeyBinding = true;
+        this.isApplicableTo = function () {
+          this.enabled = !this.disabled();
+          /* Ctrl + v triggers this piece of code on Mac systems as well, avoid pasting when Ctrl + v is pressed in Mac
+          Currently both Ctrl and Cmd keys are allowed
+          var macPlatform = context.isPlatformMac();
+           */
+          var currentFolder = context.getCurrentFolderInfo();
+          var selectedFileCount = context.getSelectedRowCount();
+          var fileInfos = context.getSelectedItemFileInfos();
+          var fileInfo = fileInfos[0];
+          if (!fileInfo) {
+            fileInfo = currentFolder;
+          }
+          var isPastable = ( (fileInfo.isDirectory && fileInfo.filePermissions && fileInfo.filePermissions.canWrite) ||
+            (!fileInfo.isDirectory && fileInfo.filePermissions && fileInfo.filePermissions.parentCanWrite) );
+          return makeActionAvailable &&
+          (selectedFileCount === 0 && isPastable) ||
+          (!!FileNameUtil.isFileInfo(fileInfo) && isPastable &&  (selectedFileCount < 2));
+        };
+        this.disabled = function () {
+          return context.clipboardContainsData() ? false : true;
+        };
+        this.callback = function (action) {
+          var fileInfos = context.getSelectedItemFileInfos();
+          var fileInfo = (fileInfos && fileInfos.length) ? fileInfos[0] : null;
+          var path;
+          if (this.isApplicableTo()) {
+            if (!!fileInfo) {
+              path = FileNameUtil.pathFromFileInfo(fileInfo);
+              if (!fileInfo.isDirectory) {
+                path = FileNameUtil.locationFromPath(path);
+              } else {
+                if (path !== '/') {
+                  path = path + "/";
+                }
+              }
+              var currentFolder = context.getCurrentFolder();
+              if (currentFolder !== "/" && path) {
+                path = currentFolder + path;
+              }
+            } else {
+              path = context.getCurrentFolder();
+              if (path !== '/') {
+                path = path + "/";
+              }
+            }
+            context.handlePasteAction(path);
+          }
+        };
+    }
+  });
+
+});

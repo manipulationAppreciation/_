@@ -1,0 +1,1490 @@
+define([
+  "underscore",
+  "jquery",
+  "dao/abstractdao",
+  "dojo/i18n!nls/mldoStringResource",
+  "dojo/string"
+], function( _, $, AbstractDAO, MLDOStrings, DojoString ) {
+
+  var originalCopy = AbstractDAO.copy;
+  /**
+   * Implementation of AbstractDAO interface using GDS service.
+   * Uses config object to get needed URL Parameters
+   *
+   * throws TypeError if config is missing or not what is expected.
+   */
+  GDSDAO = function(config) {
+    if (!config || typeof config !== 'object' || !config.getGdsURL || typeof config.getGdsURL !== "function") {
+      throw new TypeError("Incompatible config file parameter.");
+    }
+    this.config = config;
+    this.authToken = null;
+    this.sessionId = null;
+    this.loginData = null;
+    this.minutesBeforeRelogin = null;
+    this.originId = null;
+    this.sessionListener = null;
+    this.gdsBaseUrl = config.getGdsURL();
+    this.sessionExpiredCallQueue = [];
+    this.queryQueue = [];
+    this.queryWaiting = false;
+    this.showHidden = false;
+    this.emailUrlPrefix = ("getEmailUrlPrefix" in this.config) ? this.config.getEmailUrlPrefix() : "";
+    this.showShared = true;
+    this.includeInvitation = (("isSharingEnabled" in this.config) && this.config.isSharingEnabled());
+    this.applicationId = '';
+    this.copyEnabled = (('isCopyEnabled' in this.config) && this.config.isCopyEnabled());
+    this.gdsClientType = "MLDO";
+    this.clientString = "MLDO";
+    this.SHARED_PERMISSIONS = {
+      read_only: "read_only",
+      read_write: "read_write",
+      manage_access: "manage_access",
+      admin_access: "admin_access"
+    };
+    this.initialize();
+  };
+
+  GDSDAO.prototype = Object.create(AbstractDAO); // inherit from AbstactDAO
+  GDSDAO.prototype.constructor = GDSDAO;  // reset the contructor to the correct class.
+  GDSDAO.prototype.initialize = function() {
+    _.bindAll(this, "processNextQueryInQueue",
+                    "getFilteredOptions",
+                    "handleAjaxError",
+                    "retryQueuedCalls",
+                    "getAjaxArgs",
+                    "toEscapedURL");
+    // Right now we only use HTML5 local storage. If that's not supported, we do no storing of values.
+    this.htmlLocalStorage = (typeof(Storage) !== "undefined")? true : false;  // can we use HTML5 local (or session) storage?
+    // test and turn off if browser settings doen't allow access.
+    if (this.htmlLocalStorage) {
+      try {
+        localStorage.getItem("mldo.currentFolder");
+      } catch (e) {
+        if (window.console && console.log) {
+          console.log("Incompatible browser setting. Turning localStorage access off: " + e.message);
+        }
+        this.htmlLocalStorage = false;
+      }
+    }
+  };
+  GDSDAO.prototype.setSessionListener = function(listener) { this.sessionListener = listener; };
+  GDSDAO.prototype.setAuthToken = function(authToken) { this.authToken = authToken; };
+  GDSDAO.prototype.setSessionId = function(sessionId) { this.sessionId = sessionId; };
+  GDSDAO.prototype.getAuthToken = function() { return this.authToken; };
+  GDSDAO.prototype.setOriginId = function(originId) { this.originId = originId; };
+  GDSDAO.prototype.getSessionId = function() { return this.sessionId; };
+  GDSDAO.prototype.getOriginId = function() { return this.originId; };
+  GDSDAO.prototype.getMinutesBeforeRelogin = function() { return this.minutesBeforeRelogin; };
+  GDSDAO.prototype.setMinutesBeforeRelogin = function(minutes) { this.minutesBeforeRelogin = minutes; };
+  GDSDAO.prototype.getLoginData = function() { return this.loginData; };
+  GDSDAO.prototype.setLoginData = function(data) { this.loginData = data; };
+  GDSDAO.prototype.getUserId = function() { return (this.getLoginData()) ? this.getLoginData().userID : ""; };
+  GDSDAO.prototype.enqueue = function(item) { return this.sessionExpiredCallQueue.push(item); };
+  GDSDAO.prototype.dequeue = function() { return this.sessionExpiredCallQueue.shift(); };
+  GDSDAO.prototype.queueSize = function() { return this.sessionExpiredCallQueue.length; };
+  GDSDAO.prototype.setQueryFlag = function() { this.queryWaiting = true; };
+  GDSDAO.prototype.clearQueryFlag = function() { this.queryWaiting = false; };
+  GDSDAO.prototype.resetQueryQueue = function() { this.queryQueue = []; };
+  GDSDAO.prototype.queryFlagIsSet = function() { if (this.queryWaiting) { return true; } else { return false; } };
+  GDSDAO.prototype.setGdsClientType = function(clientType) { this.gdsClientType = clientType; };
+  GDSDAO.prototype.getGdsClientType = function() { return this.gdsClientType; };
+  GDSDAO.prototype.setClientString = function(clientString) { this.clientString = clientString; };
+  GDSDAO.prototype.getClientString = function() { return this.clientString; };
+  GDSDAO.prototype.useHtmlLocalStorage = function() {
+    return this.htmlLocalStorage;
+  };
+  GDSDAO.prototype.setShowHidden = function(showHidden) {
+    this.showHidden = showHidden;
+    if (this.useHtmlLocalStorage()) {
+      localStorage.setItem("mldo:showHidden", showHidden);
+    }
+  };
+  GDSDAO.prototype.getShowHidden = function() {
+    if (this.useHtmlLocalStorage()) {
+      this.setShowHidden(localStorage.getItem("mldo:showHidden") == "true");
+    }
+    return this.showHidden;
+  };
+  GDSDAO.prototype.getShowShared = function() {
+    return this.showShared;
+  };
+  GDSDAO.prototype.getIncludeInvitation = function() {
+    return this.includeInvitation;
+  };
+  GDSDAO.prototype.setApplicationId = function(appId) {
+    // Don't allow null to be stored as "null"
+    if (!appId) {
+      appId = "";
+    }
+    this.applicationId = appId;
+    if (this.useHtmlLocalStorage()) {
+      localStorage.setItem("mldo:appId", appId);
+    }
+  };
+  GDSDAO.prototype.getApplicationId = function() {
+    if (this.useHtmlLocalStorage()) {
+      this.setApplicationId(!localStorage.getItem("mldo:appId")?'':localStorage.getItem("mldo:appId"));
+    }
+    return this.applicationId;
+  };
+  GDSDAO.prototype.isCopyEnabled = function() { return this.copyEnabled; };
+  GDSDAO.prototype.processNextQueryInQueue = function() {
+    if (this.queryQueueSize() > 0) {
+      var nextItem = this.dequeueQuery();
+      $.ajax(nextItem.ajaxArgs);
+    } else {
+      this.clearQueryFlag();
+    }
+  };
+  GDSDAO.prototype.enqueueQuery = function(item) {
+    if (!this.queryQueue.some(function(x) { return x === item;})) {
+      item.promise.always(this.processNextQueryInQueue);
+      this.queryQueue.push(item);
+    }
+    return this.queryQueueSize();
+  };
+  GDSDAO.prototype.dequeueQuery = function() { return this.queryQueue.shift(); };
+  GDSDAO.prototype.queryQueueSize = function() { return this.queryQueue.length; };
+
+  GDSDAO.prototype.toEscapedURL = function(url, path, queryParams) {
+    if (!url) {
+      throw new TypeError("Invalid url argument");
+    }
+    var encodedPath = (path? encodeURIComponent(path) : '');
+    if (encodedPath) {
+      encodedPath = encodedPath.replace(/%2F/gi,'/');
+      if (encodedPath.charAt(0) !== "/") {
+        encodedPath = "/" + encodedPath;
+      }
+    }
+    var fullURL = encodeURI(url);
+    if (encodedPath) {
+      fullURL = fullURL + encodedPath;
+    }
+
+    queryParams = queryParams || {};
+    // Add usage metrics support
+    queryParams.gdsClientType = this.getGdsClientType();
+    queryParams.clientString = this.getClientString();
+    // Turn each property of queryParams into list of "[key]=[value]" strings, where both [key] and [value]
+    // have been URL encoded
+    var parts = _.map(_.pairs(queryParams), function(pair) {
+        return encodeURIComponent(pair[0]) + "=" + encodeURIComponent(pair[1]);
+    });
+    // Join the list together, delimiting each pair with a "&"
+    var queryString = parts.join("&");
+
+    if (queryString) {
+        fullURL = fullURL + "?" + queryString;
+    }
+    return fullURL;
+  };
+
+  GDSDAO.prototype.getFilteredOptions = function(options) {
+    var filteredOptions = null;
+    /* setup options */
+    // options are either passed in, or use the default values
+    var defaults = {
+        url: null,
+        useHeaders: true,
+        typeValue: 'get',
+        dataType: 'json',
+        timeout: 180000,
+        data: {},
+        cache: false,
+        queryParams: {},
+        contentType: 'application/json',
+        accepts: 'application/json; charset=utf-8'
+    };
+    if (typeof options == 'object') {
+      filteredOptions = $.extend(defaults, options); // jQuery call to merge to objects, override defaults with any passed in values
+    } else {
+      filteredOptions = defaults;
+    }
+    // Add client APS originId
+    if (this.getOriginId()) {
+      filteredOptions.queryParams.originId = this.getOriginId();
+    }
+    return filteredOptions;
+  };
+
+  GDSDAO.prototype.setupAjaxHeadersAndOptions = function(ajaxArgs, rawOptions) {
+    if (!ajaxArgs || typeof ajaxArgs !== "object" || Object.keys(ajaxArgs).length === 0) {
+      throw new TypeError("Invalid ajax argument object parameter");
+    }
+    var options = rawOptions || {};
+    /* setup headers */
+    var headers = {};
+    if ('accepts' in options && options.accepts) {
+      headers.Accept = options.accepts;
+    }
+    if ('customHeaderName' in options && 'customHeaderValue' in options) {
+      headers[options.customHeaderName] = options.customHeaderValue;
+    }
+    if ('invitationEmailUrlPrefix' in options) {
+      headers['x-mw-gds-email-url-prefix'] = options.invitationEmailUrlPrefix;
+    }
+    if ('invitationEmailComments' in options) {
+      headers['x-mw-gds-email-comments'] = options.invitationEmailComments;
+    }
+    if('authToken' in options) {
+      headers['x-mw-authentication-token'] = options.authToken;
+    }
+    if (this.getApplicationId()) {
+      headers['x-mw-gds-application-id'] = this.getApplicationId(); //Include GDS application-id in all the calls to GDS.
+    }
+    if (options.useHeaders) {
+      ajaxArgs.headers = headers;
+    }
+    if (options.dataType) {
+      ajaxArgs.dataType = options.dataType;
+    }
+    if ('processData' in options) {
+      ajaxArgs.processData = options.processData;
+    }
+    if ('cache' in options) {
+      ajaxArgs.cache = options.cache;
+    }
+    if ('xhr' in options) {
+      ajaxArgs.xhr = options.xhr ;
+    }
+  };
+
+  GDSDAO.prototype.extractErrorInfo = function(errObj, errType, errText) {
+    var errorInfo = {errorCode: '', message: ''};
+
+    // Extraact the GDS error object from the GDS server response.
+    // It contains an error code and a text message.
+    // If not error object, use the more generic passed in error text.
+    var text = errText || '';
+    var gdsErrorCode = null;
+    var wasAborted = false;
+    if (errObj && typeof errObj === "object" && Object.keys(errObj).length !== 0 && errObj.getAllResponseHeaders) {
+      wasAborted = !errObj.getAllResponseHeaders();
+    }
+
+    try {
+      var responseJson = (errObj && errObj.responseText) ? errObj.responseText : null;
+      var errorObj = null;
+      if (responseJson && typeof responseJson === "string") {
+        errorObj = JSON.parse(responseJson);
+        if (errorObj && errorObj.errors && errorObj.errors.length > 0) {
+          var error = errorObj.errors[0];
+          text = error.message;
+          gdsErrorCode = error.code;
+        }
+      }
+    } catch(parseError) {
+      gdsErrorCode = 'CLIENT_PARSE_ERROR';
+      text = "Response parse error: " + parseError;
+    } finally {
+      errorInfo.errorCode = gdsErrorCode;
+      if(gdsErrorCode !== 'SESSION_EXPIRED' && gdsErrorCode !== 'SESSION_NOT_FOUND' && !text && wasAborted) {
+        errorInfo.message = MLDOStrings.actionAborted;
+      } else if (gdsErrorCode === "USAGE_QUOTA_EXCEEDED") {
+        errorInfo.message = MLDOStrings.userQuotaStorageFull;
+      } else {
+        errorInfo.message = text;
+      }
+    }
+    return errorInfo;
+  };
+
+  GDSDAO.prototype.retryQueuedCalls = function() {
+    var callItem = null;
+    var currentSessionId = this.getSessionId();
+    while (currentSessionId && (callItem = this.dequeue())) {
+      if (callItem && callItem.ajaxArgs && Object.keys(callItem.ajaxArgs).length !== 0 && callItem.ajaxArgs.headers) {
+        // update sessionId in headers before resending
+        if (callItem.ajaxArgs.headers["x-mw-gds-session-id"]) {
+          callItem.ajaxArgs.headers["x-mw-gds-session-id"] = currentSessionId;
+        }
+        // rerun failed call with updated headers
+        $.ajax(callItem.ajaxArgs);
+      }
+    }
+  };
+
+  GDSDAO.prototype.updateLoginInformation = function(sessionRenewalData) {
+    if (sessionRenewalData && (typeof sessionRenewalData === "object")) {
+      if (sessionRenewalData.sessionId) {
+        this.setSessionId(sessionRenewalData.sessionId);
+      }
+      if (sessionRenewalData.minutesBeforeRelogin) {
+        this.setMinutesBeforeRelogin(sessionRenewalData.minutesBeforeRelogin);
+      }
+      if (("loginProfile" in sessionRenewalData) && sessionRenewalData.loginProfile) {
+        if (sessionRenewalData.loginProfile.mwaToken) {
+          this.setAuthToken(sessionRenewalData.loginProfile.mwaToken);
+        }
+        this.setLoginData({
+          firstName: sessionRenewalData.loginProfile.firstName,
+          lastName: sessionRenewalData.loginProfile.lastName,
+          userID: sessionRenewalData.loginProfile.userId,
+          emailAddress: sessionRenewalData.loginProfile.emailAddress,
+          token: sessionRenewalData.loginProfile.mwaToken
+        });
+      }
+    }
+  };
+
+  GDSDAO.prototype.clearLoginInformation = function() {
+    this.setAuthToken(null); // assume authToken no good.
+    this.setSessionId(null);
+    this.setLoginData(null);
+    this.setMinutesBeforeRelogin(null);
+  };
+
+  /**
+   * The sessionId value used in the headers of the supplied ajaxArgs is no longer valid.
+   * If we can, try to renew the session and update the sessionId value in the header and where it's stored.
+   * Then, if we did the above sucessfully, retry the failed operation using the new sessionId value.
+   * If this fails, notify listeners that our auth token is no good.
+   **/
+  GDSDAO.prototype.renewSession = function(authToken, ajaxArgs, promise, originalErrorInfo) {
+    if (!authToken) {
+      throw new TypeError("Invalid auth token argument");
+    }
+    if (!ajaxArgs || typeof ajaxArgs !== "object" || Object.keys(ajaxArgs).length === 0) {
+      throw new TypeError("Invalid ajaxArgs argument");
+    }
+    if (!promise || typeof promise !== "object" || !promise.reject) {
+      throw new TypeError("Invalid promise argument");
+    }
+    if (!originalErrorInfo || typeof originalErrorInfo !== "object" || !("errorCode" in originalErrorInfo) || !("message" in originalErrorInfo)) {
+      throw new TypeError("Invalid errorInfo argument");
+    }
+    var context = this;
+    var originalSessionId = ajaxArgs.headers ? ajaxArgs.headers["x-mw-gds-session-id"] : '';
+    // Only attempt a session renewal if we actually have an authToken and the sessionId value
+    // being used in the failed attempt matches our currently stored sessionId value.
+    if (this.getSessionId() === originalSessionId) {
+      // set a flag, so to speak, to prevent multiple calls to renewSession by clearing the current sessionId.
+      this.setSessionId(null);
+      this.enqueue({ajaxArgs: ajaxArgs, promise: promise, originalErrorInfo: originalErrorInfo});
+      var sessionPromise = this.serviceHandshake(authToken);
+      // renew success
+      sessionPromise.done(function(result) {
+        // update our stored value
+        context.updateLoginInformation(result);
+        context.retryQueuedCalls();
+      }).fail(function() {  // renew attempt failed.
+        context.clearLoginInformation();
+        promise.reject(originalErrorInfo);
+        // Notify those interested that our auth token is probably expired (auth manager)
+        if (context.sessionListener) {
+          context.sessionListener.trigger('AUTH_TOKEN_EXPIRED');
+        }
+      });
+      // Perhaps another call already renewed the session.
+      // If so, use the new updated value and try again
+    } else if (this.getSessionId() !== originalSessionId) {
+      if (this.getSessionId()) { // the sessionId was already updated
+        if (ajaxArgs && ajaxArgs.headers && ajaxArgs.headers.hasOwnProperty("x-mw-gds-session-id")) {
+          // update the sessionId value in the headers with current value
+          ajaxArgs.headers["x-mw-gds-session-id"] = this.getSessionId();
+        }
+        // retry
+        $.ajax(ajaxArgs);
+      } else { // we're waiting for a renewSession call to finish
+        // add ajaxArgs to the queue
+        this.enqueue({ajaxArgs: ajaxArgs, promise: promise, originalErrorInfo: originalErrorInfo});
+      }
+    }
+  };
+
+  GDSDAO.prototype.handleAjaxError = function (errObj, errType, errText, promise, ajaxArgs) {
+    if (!ajaxArgs || typeof ajaxArgs !== "object" || Object.keys(ajaxArgs).length === 0) {
+      throw new TypeError("Invalid ajaxArgs argument");
+    }
+    if (!promise || typeof promise !== "object" || !promise.reject) {
+      throw new TypeError("Invalid promise argument");
+    }
+    var errorInfo = this.extractErrorInfo(errObj, errType, errText);
+    if (errorInfo && (errorInfo.errorCode === 'AUTH_TOKEN_EXPIRED')) {
+      this.clearLoginInformation();
+      promise.reject(errorInfo);
+      // Notify those interested that our auth token is probably expired (auth manager)
+      // cause a login to happen
+      if (this.sessionListener) {
+        this.sessionListener.trigger('AUTH_TOKEN_EXPIRED');
+      }
+    } else if (errorInfo && (errorInfo.errorCode === 'SESSION_EXPIRED' || errorInfo.errorCode === 'SESSION_NOT_FOUND')) {
+      // try to renew session and if successful, retry original request.
+      // If not successful, reject original request.
+      if (this.getAuthToken()) {
+        this.renewSession(this.getAuthToken(), ajaxArgs, promise, errorInfo);
+      } else { // no auth token -- shouldn't happen
+        promise.reject(errorInfo);
+        // Notify those interested that our auth token is probably expired (auth manager)
+        // cause a login to happen
+        if (this.sessionListener) {
+          this.sessionListener.trigger('AUTH_TOKEN_EXPIRED');
+        }
+      }
+    } else {
+      promise.reject(errorInfo);
+    }
+  };
+
+  GDSDAO.prototype.getAjaxArgs = function(rawOptions, promise) {
+    var context = this;
+    if (!rawOptions || typeof rawOptions !== "object" || Object.keys(rawOptions).length === 0) {
+      throw new TypeError("Invalid options argument");
+    }
+    if (!promise || typeof promise !== "object" || typeof promise.resolve !== "function") {
+      throw new TypeError("Invalid promise argument");
+    }
+    var options = this.getFilteredOptions(rawOptions);
+    var ajaxArgs = {
+      url: this.toEscapedURL(options.url, options.path, options.queryParams),
+      type: options.typeValue,
+      data: options.data,
+      contentType: options.contentType,
+      xhrFields: { withCredentials:true },
+      success: function (responseData, status, xhr) {
+        promise.resolve(responseData, xhr);
+      },
+      error: function(errObj, errType, errText) { context.handleAjaxError(errObj, errType, errText, promise, ajaxArgs); }
+    };
+    this.setupAjaxHeadersAndOptions(ajaxArgs, options);
+    return ajaxArgs;
+  };
+
+  /*
+   * Does the actual AJAX call and handles Promises
+   */
+  GDSDAO.prototype.doAjaxCall = function(rawOptions, prepOnly) {
+    if (!rawOptions || typeof rawOptions !== "object" || Object.keys(rawOptions).length === 0) {
+      throw new TypeError("Invalid options argument");
+    }
+    var promise = $.Deferred();
+    var ajaxArgs = this.getAjaxArgs(rawOptions, promise);
+    if (!prepOnly) {
+      $.ajax(ajaxArgs);
+    }
+    return {
+              promise: promise,
+              ajaxArgs: ajaxArgs
+            };
+  };
+
+  /*
+   * Do File upload via AJAX
+   */
+   GDSDAO.prototype.uploadFile = function(folder, fileName, file, getXHR, overwrite) {
+     var formDataSupported = (typeof FormData !== 'undefined');
+     var ajaxOptions = null;
+     if (!formDataSupported) {
+       throw new Error('FormData not supported. Unable to perform asynchronous file upload.');
+     }
+     var uploadUrl = this.gdsBaseUrl + "/upload";
+     var formData = new FormData();
+     if (file && fileName && typeof fileName === "string" && folder && typeof folder === "string") {
+       var clientLastModified = file.lastModified;
+       if (! clientLastModified) {
+         if (file.lastModifiedDate) {
+           clientLastModified = file.lastModifiedDate.getTime();
+         }
+       }
+       formData.append("x-mw-gds-session-id", this.getSessionId());
+       formData.append("x-mw-gds-application-id", this.getApplicationId());
+       if (this.originId) {
+         formData.append("originId", this.originId);
+       }
+       // these fields must be before file field
+       if (overwrite) {
+         formData.append("overwrite", "true");
+       }
+       formData.append("folder", folder);
+       formData.append("clientLastModified", clientLastModified);
+       // file field must be last
+       formData.append("file", file, fileName);
+     } else {
+       throw new Error('Invalid form data. Unable to perform asynchronous file upload.');
+     }
+     ajaxOptions = {  url: uploadUrl,
+                      typeValue: 'post',
+                      processData: false, // important!
+                      contentType: false, // important!
+                      cache: false,
+                      data: formData,
+                      useHeaders: false
+                  };
+    if (getXHR) {
+      ajaxOptions.xhr = getXHR;  // control progress bar if possible
+    }
+    var ajaxCallResults = this.doAjaxCall(ajaxOptions);
+    return ajaxCallResults.promise;
+   };
+
+  /**
+   * Do the GDS login handshake
+   */
+  GDSDAO.prototype.serviceHandshake = function(authToken) {
+    this.setAuthToken(authToken);
+    var fullUrl = this.gdsBaseUrl + "/login";
+    var ajaxCallResults;
+    if (authToken) {
+      ajaxCallResults = this.doAjaxCall({ url: fullUrl, authToken: authToken, typeValue: 'GET', cache: false });
+    } else {
+      ajaxCallResults = this.doAjaxCall({ url: fullUrl, typeValue: 'GET', cache: false });
+    }
+    var promise = ajaxCallResults.promise;
+    var context = this;
+    // load profile settings after getting login data
+    promise.done(function(result) {
+      context.updateLoginInformation(result);
+    });
+    return promise;
+  };
+
+  /**
+   * Do GDS logout to make sessionId obsolete on server
+   */
+  GDSDAO.prototype.logout = function() {
+    var context = this;
+    var fullUrl = this.gdsBaseUrl + "/logout";
+    var ajaxCallResults = this.doAjaxCall({ url: fullUrl,  customHeaderName: "x-mw-gds-session-id", customHeaderValue: this.getSessionId(), typeValue: 'GET', cache: false });
+    var promise = ajaxCallResults.promise;
+    promise.always( function() {
+      context.resetQueryQueue();
+      context.clearQueryFlag();
+    });
+  };
+  /**
+   * Get the folder data
+   */
+  GDSDAO.prototype.getFolderData = function(relativePath) {
+    var fullUrl = this.gdsBaseUrl + "/folders";
+    var path = null;
+    if (!relativePath || relativePath === "/") {
+      path = '/';
+    } else {
+      path = relativePath;
+    }
+    var ajaxCallResults =  this.doAjaxCall({
+        url: fullUrl,
+        path: path,
+        queryParams: {includeSharedParentPath: true, showChildCount: true, showHidden: this.getShowHidden(), showShared: this.getShowShared(), includeInvitations: this.getIncludeInvitation()},//Set the showHidden param for AJAX call to GDS to retrieve hidden files as well
+        customHeaderName: "x-mw-gds-session-id",
+        customHeaderValue: this.getSessionId(),
+        cache: false,
+        typeValue: 'GET' },
+        true
+    );
+    var ajaxArgs = ajaxCallResults.ajaxArgs;
+    var promise = ajaxCallResults.promise;
+    if (this.queryFlagIsSet()) {
+      this.enqueueQuery(ajaxCallResults);
+    } else {
+      this.setQueryFlag();
+      ajaxCallResults.promise.always(this.processNextQueryInQueue);
+      $.ajax(ajaxArgs);
+    }
+    return promise;
+  };
+
+  /**
+   * Get folder data, excluding any files from the results
+   */
+  GDSDAO.prototype.getFolderOnlyData = function(relativePath) {
+    var promise = this.getFolderData(relativePath);
+    promise.done(function(results) {
+      results.files = [];
+    });
+    return promise;
+  };
+
+  /**
+   * Get the user's quota
+   */
+  GDSDAO.prototype.getStorageUsage = function() {
+      var fullUrl = this.gdsBaseUrl + "/config/storage";
+      var ajaxCallResults = this.doAjaxCall({url: fullUrl, customHeaderName: "x-mw-gds-session-id", customHeaderValue: this.getSessionId(), typeValue: 'GET' });
+      return ajaxCallResults.promise;
+  };
+
+  /**
+   * Get URI for use in downloading file without authentication (short lived)
+   */
+   GDSDAO.prototype.getDownloadURI = function(relativePath, invitationId) {
+     var fullUrl = this.gdsBaseUrl + "/downloads";
+     var downloadUri = "";
+     var publicPromise = $.Deferred();
+
+     var params = {
+       url: fullUrl,
+       path: relativePath,
+       typeValue: 'POST',
+       dataType: 'html',
+       cache: false,
+       accepts: ''
+     };
+     if (this.getSessionId()) {
+       params.customHeaderName = "x-mw-gds-session-id";
+       params.customHeaderValue = this.getSessionId();
+     }
+     if (invitationId && typeof invitationId === "string") {
+       params.queryParams = {invitationId: invitationId};
+     }
+     var ajaxCallResults = this.doAjaxCall(params);
+      var internalPromise = ajaxCallResults.promise;
+      internalPromise.done(function(responseData, xhr) {
+        var parsedData = {};
+        var results = {};
+        var $a = $('<a>', { href:fullUrl } )[0];
+        var protocol = $a.protocol;
+        var host = $a.origin;  // works in chrome
+        var hostname = $a.hostname;
+        var port = $a.port;
+        // if not chrome, host will be undefined.
+        // Make up the host from the other parts that do exist in IE and FireFox
+        if (!host) {
+          host = protocol + "//" + hostname + ":" + port;
+        }
+        downloadUri = host + xhr.getResponseHeader('Location');
+        if (responseData) {
+          if (typeof responseData === "string") {
+            try {
+              parsedData = JSON.parse(responseData);
+            } catch (e) {
+              parsedData = {};
+            }
+          } else if (typeof responseData === "object") {
+            parsedData = responseData;
+          }
+        }
+        results.downloadUrl = downloadUri;
+        results.name = parsedData.name;
+        results.contentType = parsedData.contentType;
+        results.size = parsedData.size;
+        publicPromise.resolve(results);
+      })
+      .fail(function(err) {
+        publicPromise.reject(err);
+      });
+    return publicPromise;
+   };
+
+  /**
+   * Create a new folder
+   * @param path
+   */
+  GDSDAO.prototype.createFolder = function(path) {
+    if (!path || !path.length || typeof path !== "string") {
+      throw new TypeError("Invalid path argument");
+    }
+    var ajaxCallResults = this.doAjaxCall({
+        url: this.gdsBaseUrl + "/folders",
+        path: path,
+        customHeaderName: "x-mw-gds-session-id",
+        customHeaderValue: this.getSessionId(),
+        cache: false,
+        typeValue: "PUT"
+    });
+    return ajaxCallResults.promise;
+  };
+
+   /**
+   * Copy an item
+   * @param originalFilePath
+   * @param newFilePath
+   */
+   GDSDAO.prototype.copy = function(originalFilePath, newFilePath, overwrite) {
+     if (this.isCopyEnabled()) {
+       // var fullUrl = this.gdsBaseUrl + "/filesystem" + originalFilePath + "?targetPath=" + encodeURIComponent(newFilePath);
+       if (!originalFilePath || typeof originalFilePath !== "string" || !newFilePath || typeof newFilePath !== "string") {
+         throw new Error("Invalid arguments. Unable to perform copy.");
+       }
+       var ajaxCallResults = this.doAjaxCall({
+           url: this.gdsBaseUrl + "/filesystem",
+           path: originalFilePath,
+           queryParams: overwrite ? {targetPath: newFilePath, overwrite: true, fileOperation: "copy"} : {targetPath: newFilePath, fileOperation: "copy"},
+           customHeaderName: "x-mw-gds-session-id",
+           customHeaderValue: this.getSessionId(),
+           cache: false,
+           typeValue: 'PUT'
+       });
+       return ajaxCallResults.promise;
+     } else {
+       return originalCopy();
+     }
+   };
+
+  /**
+   * Copy shared folder from a pending invitation to user's Drive
+   * @param invitationId
+   * @param newFilePath
+   */
+  GDSDAO.prototype.copyFolderFromInvitation = function (invitationId, originalFilePath, newFilePath, overwrite) {
+    if (!this.config.isCopyToDriveEnabled || !this.config.isCopyToDriveEnabled()) {
+      return;
+    }
+    if (!invitationId || typeof invitationId !== "string" || !originalFilePath || typeof originalFilePath !== "string" ||
+      !newFilePath || typeof newFilePath !== "string") {
+      throw new Error("Invalid arguments. Unable to perform copy.");
+    }
+    var params = {
+      url: this.gdsBaseUrl + "/preview/folder",
+      path: invitationId + originalFilePath,
+      queryParams: overwrite ? {targetPath: newFilePath, overwrite: true} : {targetPath: newFilePath},
+      cache: false,
+      typeValue: 'PUT'
+    };
+    if (this.getSessionId()) {
+      params.customHeaderName = "x-mw-gds-session-id";
+      params.customHeaderValue = this.getSessionId();
+    }
+    var ajaxCallResults = this.doAjaxCall(params);
+    return ajaxCallResults.promise;
+  };
+
+   /**
+    * Move an item
+    * @param originalFilePath
+    * @param newFilePath
+    */
+    GDSDAO.prototype.move = function(originalFilePath, newFilePath, overwrite) {
+      // var fullUrl = this.gdsBaseUrl + "/filesystem" + originalFilePath + "?targetPath=" + encodeURIComponent(newFilePath);
+      if (!originalFilePath || typeof originalFilePath !== "string" || !newFilePath || typeof newFilePath !== "string") {
+        throw new Error("Invalid arguments. Unable to perform move.");
+      }
+      var ajaxCallResults = this.doAjaxCall({
+          url: this.gdsBaseUrl + "/filesystem",
+          path: originalFilePath,
+          queryParams: overwrite ? {targetPath: newFilePath, overwrite: true, fileOperation: "move"} : {targetPath: newFilePath, fileOperation: "move"},
+          customHeaderName: "x-mw-gds-session-id",
+          customHeaderValue: this.getSessionId(),
+          cache: false,
+          typeValue: 'PUT'
+      });
+      return ajaxCallResults.promise;
+    };
+
+    /**
+     * Rename a file
+     * @param originalFilePath
+     * @param newFilePath
+     */
+     GDSDAO.prototype.rename = function(originalFilePath, newFilePath) {
+       if (!originalFilePath || typeof originalFilePath !== "string" || !newFilePath || typeof newFilePath !== "string") {
+         throw new Error("Invalid arguments. Unable to perform rename.");
+       }
+       return this.move(originalFilePath, newFilePath);
+     };
+
+
+    /**
+     * Delete a file or folder
+     * @param fileInfo
+     * @param isFolder
+     */
+    GDSDAO.prototype.delete = function(filePath, isFolder) {
+        params = {
+            customHeaderName: "x-mw-gds-session-id",
+            customHeaderValue: this.getSessionId(),
+            cache: false,
+            typeValue: 'DELETE'
+        };
+
+        //add validation to check filepath
+        var isFolderValid = (isFolder === true || isFolder === false);
+        if(!filePath || typeof filePath !== "string" || !isFolderValid) {
+            throw new TypeError("Invalid arguments. Unable to perform delete.");
+        }
+        if(isFolder === true) {
+            //make a folder delete api call to gds (folderaccessresource)
+            //forceRecursive deletes a non empty folder
+            params.url = this.gdsBaseUrl + "/folders";
+            params.path = filePath;
+            params.queryParams = {forceRecursive: "true"};
+        } else {
+            //make a file delete api call to gds (fileaccessresource)
+            params.url = this.gdsBaseUrl + "/files";
+            params.path = filePath;
+        }
+        var ajaxCallResults = this.doAjaxCall(params);
+        return ajaxCallResults.promise;
+    };
+
+    /**
+     * Permanently delete a file or folder from trash can
+     * @param tombstoneId
+     */
+    GDSDAO.prototype.permanentlyDelete = function(tombstoneId, shouldUnshare) {
+      if (!tombstoneId || !tombstoneId.length || typeof tombstoneId !== "string") {
+        throw new TypeError("Invalid tombstoneId argument");
+      }
+      params = {
+          url: this.gdsBaseUrl + "/trash",
+          path: tombstoneId,
+          customHeaderName: "x-mw-gds-session-id",
+          customHeaderValue: this.getSessionId(),
+          cache: false,
+          typeValue: 'delete'
+      };
+      if(shouldUnshare) {
+        params.queryParams = {permDeleteOption: "UNSHARE"};
+      }
+      var ajaxCallResults = this.doAjaxCall(params);
+      return ajaxCallResults.promise;
+    };
+
+    /**
+     * Permanently delete all contents from trash can
+     */
+    GDSDAO.prototype.permanentlyDeleteAll = function() {
+      params = {
+          url: this.gdsBaseUrl + "/trash",
+          customHeaderName: "x-mw-gds-session-id",
+          customHeaderValue: this.getSessionId(),
+          cache: false,
+          typeValue: 'delete'
+      };
+      var ajaxCallResults = this.doAjaxCall(params);
+      return ajaxCallResults.promise;
+    };
+
+    /**
+     * Restore a file or folder from trash can to its original location
+     * @param tombstoneId
+     */
+    GDSDAO.prototype.restore = function(tombstoneId, alternatePath) {
+      if (!tombstoneId || !tombstoneId.length || typeof tombstoneId !== "string") {
+        throw new TypeError("Invalid tombstoneId argument");
+      }
+      params = {
+          url: this.gdsBaseUrl + "/trash",
+          path: tombstoneId,
+          customHeaderName: "x-mw-gds-session-id",
+          customHeaderValue: this.getSessionId(),
+          cache: false,
+          typeValue: 'put'
+      };
+      if (alternatePath) {
+        if (typeof alternatePath !== "string" || !alternatePath.length || alternatePath.charAt(0) !== "/") {
+          throw new TypeError("Invalid alternate Path argument");
+        }
+        params.queryParams = {targetPath: alternatePath};
+      }
+
+      var ajaxCallResults = this.doAjaxCall(params);
+      return ajaxCallResults.promise;
+    };
+
+    /**
+     * Get the list of trash can items
+     */
+    GDSDAO.prototype.getTrashData = function() {
+      params = {
+          url: this.gdsBaseUrl + "/trash",
+          customHeaderName: "x-mw-gds-session-id",
+          customHeaderValue: this.getSessionId(),
+          cache: false,
+          typeValue: 'get',
+          queryParams: {showHidden: this.getShowHidden(), showShared: this.getShowShared(), includeInvitations: this.getIncludeInvitation()}//Set the showHidden param for AJAX call to GDS to retrieve hidden files as well
+      };
+      var ajaxCallResults = this.doAjaxCall(params, true);
+      var ajaxArgs = ajaxCallResults.ajaxArgs;
+      var promise = ajaxCallResults.promise;
+      if (this.queryFlagIsSet()) {
+        this.enqueueQuery(ajaxCallResults);
+      } else {
+        this.setQueryFlag();
+        ajaxCallResults.promise.always(this.processNextQueryInQueue);
+        $.ajax(ajaxArgs);
+      }
+      return promise;
+    };
+
+    GDSDAO.prototype.isValidSharePermission = function(permission) {
+      return (permission && typeof permission === "string" && (permission.toLowerCase() in this.SHARED_PERMISSIONS));
+    };
+
+    GDSDAO.prototype.createPersonalSharingInvitation = function(path, invitee, permission, comments) {
+      if (!this.config.isSharingEnabled || !this.config.isSharingEnabled()) {
+        return;
+      }
+      if (!path || typeof path !== "string") {
+        throw new TypeError("Invalid path argument");
+      }
+      if (!invitee || typeof invitee !== "string") {
+        throw new TypeError("Invalid invitee argument");
+      }
+      if (!this.isValidSharePermission(permission)) {
+        throw new TypeError("Invalid permission argument");
+      }
+      params = {
+        url: this.gdsBaseUrl + "/invitations",
+        customHeaderName: "x-mw-gds-session-id",
+        customHeaderValue: this.getSessionId(),
+        invitationEmailUrlPrefix: this.emailUrlPrefix,
+        invitationEmailComments: comments,
+        cache: false,
+        typeValue: 'put',
+        queryParams: {
+          path: path,
+          recipient: invitee,
+          accessType: permission.toUpperCase(),
+          updateInvitation: this.config.isEditPermissionsEnabled && this.config.isEditPermissionsEnabled()
+    }
+      };
+      var ajaxCallResults = this.doAjaxCall(params);
+      return ajaxCallResults.promise;
+    };
+
+    GDSDAO.prototype.createOpenSharingInvitation = function(path, permission) {
+      if (!this.config.isSharingEnabled || !this.config.isSharingEnabled()) {
+        return;
+      }
+      if (!path || typeof path !== "string") {
+        throw new TypeError("Invalid path argument");
+      }
+      if (!this.isValidSharePermission(permission)) {
+        throw new TypeError("Invalid permission argument");
+      }
+      params = {
+        url: this.gdsBaseUrl + "/invitations",
+        customHeaderName: "x-mw-gds-session-id",
+        customHeaderValue: this.getSessionId(),
+        cache: false,
+        typeValue: 'put',
+        queryParams: {
+          path: path,
+          accessType: permission.toUpperCase(),
+        }
+      };
+      var ajaxCallResults = this.doAjaxCall(params);
+      return ajaxCallResults.promise;
+    };
+
+    GDSDAO.prototype.getOpenSharingInvitations = function(path, permission) {
+      if (!this.config.isSharingEnabled || !this.config.isSharingEnabled()) {
+        return;
+      }
+      if (!path || typeof path !== "string") {
+        throw new TypeError("Invalid path argument");
+      }
+      if (permission && !this.isValidSharePermission(permission)) {
+        throw new TypeError("Invalid permission argument");
+      }
+      params = {
+        url: this.gdsBaseUrl + "/invitations",
+        customHeaderName: "x-mw-gds-session-id",
+        customHeaderValue: this.getSessionId(),
+        cache: false,
+        typeValue: 'get',
+        queryParams: {
+          path: path,
+          invitationType: "OPEN",
+          includeInvitationCounts: true
+        }
+      };
+      if (permission) {
+        params.queryParams.operation = permission.toUpperCase();
+        params.queryParams.accessType = permission.toUpperCase();
+      }
+      var ajaxCallResults = this.doAjaxCall(params);
+      return ajaxCallResults.promise;
+    };
+
+    GDSDAO.prototype.revokeOpenSharingInvitation = function(invitationId) {
+      if (!this.config.isSharingEnabled || !this.config.isSharingEnabled()) {
+        return;
+      }
+      if (!invitationId || typeof invitationId !== "string") {
+        throw new TypeError("Invalid invitationId argument");
+      }
+      params = {
+        url: this.gdsBaseUrl + "/invitations",
+        path: invitationId,
+        customHeaderName: "x-mw-gds-session-id",
+        customHeaderValue: this.getSessionId(),
+        cache: false,
+        typeValue: 'delete'
+      };
+      var ajaxCallResults = this.doAjaxCall(params);
+      return ajaxCallResults.promise;
+    };
+
+    GDSDAO.prototype.getPendingSharingInvitations = function() {
+      if (!this.config.isSharingEnabled || !this.config.isSharingEnabled()) {
+        return;
+      }
+      params = {
+        url: this.gdsBaseUrl + "/invitations",
+        customHeaderName: "x-mw-gds-session-id",
+        customHeaderValue: this.getSessionId(),
+        cache: false,
+        typeValue: 'get',
+        queryParams: {
+          status: "PENDING"
+        }
+      };
+      var ajaxCallResults = this.doAjaxCall(params);
+      return ajaxCallResults.promise;
+    };
+
+    GDSDAO.prototype.getAcceptedSharingInvitations = function() {
+      if (!this.config.isSharingEnabled || !this.config.isSharingEnabled()) {
+        return;
+      }
+      params = {
+        url: this.gdsBaseUrl + "/invitations",
+        customHeaderName: "x-mw-gds-session-id",
+        customHeaderValue: this.getSessionId(),
+        cache: false,
+        typeValue: 'get',
+        queryParams: {
+          status: "ACCEPTED"
+        }
+      };
+      var ajaxCallResults = this.doAjaxCall(params);
+      return ajaxCallResults.promise;
+    };
+
+    GDSDAO.prototype.getSharingCollaborators = function(path, onlyAccepted) {
+      if (!this.config.isSharingEnabled || !this.config.isSharingEnabled()) {
+        return;
+      }
+      if (!path || typeof path !== "string") {
+        throw new TypeError("Invalid path argument");
+      }
+      params = {
+        url: this.gdsBaseUrl + "/invitations",
+        customHeaderName: "x-mw-gds-session-id",
+        customHeaderValue: this.getSessionId(),
+        cache: false,
+        typeValue: 'get',
+        queryParams: {
+          path: path,
+          invitationType: "PERSONAL"
+        }
+      };
+      if(onlyAccepted) {
+        params.queryParams.status = "ACCEPTED";
+      }
+      var ajaxCallResults = this.doAjaxCall(params);
+      return ajaxCallResults.promise;
+    };
+
+    GDSDAO.prototype.revokeSharingPermission = function(invitationId) {
+      if (!this.config.isSharingEnabled || !this.config.isSharingEnabled()) {
+        return;
+      }
+      if (!invitationId || typeof invitationId !== "string") {
+        throw new TypeError("Invalid invitationId argument");
+      }
+      params = {
+        url: this.gdsBaseUrl + "/invitations",
+        path: invitationId,
+        customHeaderName: "x-mw-gds-session-id",
+        customHeaderValue: this.getSessionId(),
+        cache: false,
+        typeValue: 'delete'
+      };
+      var ajaxCallResults = this.doAjaxCall(params);
+      return ajaxCallResults.promise;
+    };
+
+    GDSDAO.prototype.updateRecipientInvitations = function(path, invitations) {
+      var isIE11 = !!window.MSInputMethodContext && !!document.documentMode;
+
+      if (!this.config.isSharingEnabled || !this.config.isSharingEnabled()) {
+        return;
+      }
+      if (!this.config.isEditPermissionsEnabled || !this.config.isEditPermissionsEnabled()) {
+        return;
+      }
+      if (!path || typeof path !== "string") {
+        throw new TypeError("Invalid path argument");
+      }
+      if (!invitations || typeof invitations !== "object" || invitations.length === 0) {
+        throw new TypeError("Invalid invitations argument");
+      }
+      var params = {
+        url: this.gdsBaseUrl + "/invitations/update",
+        customHeaderName: "x-mw-gds-session-id",
+        customHeaderValue: this.getSessionId(),
+        invitationEmailUrlPrefix: this.emailUrlPrefix,
+        cache: false,
+        typeValue: 'put',
+        processData: false,
+        data: JSON.stringify(invitations),
+        contentType: "application/json; "
+      };
+      var ajaxCallResults = this.doAjaxCall(params);
+      return ajaxCallResults.promise;
+    };
+
+    GDSDAO.prototype.acceptSharingInvitation = function(invitationId, path) {
+      if (!this.config.isSharingEnabled || !this.config.isSharingEnabled()) {
+        return;
+      }
+      if (!invitationId || typeof invitationId !== "string") {
+        throw new TypeError("Invalid invitationId argument");
+      }
+      params = {
+        url: this.gdsBaseUrl + "/invitations",
+        path: invitationId,
+        customHeaderName: "x-mw-gds-session-id",
+        customHeaderValue: this.getSessionId(),
+        cache: false,
+        typeValue: 'put',
+        queryParams: {
+          status: "ACCEPTED"
+        }
+      };
+      if (path && typeof path === "string" && path.length) {
+        params.queryParams.targetPath = path;
+      }
+      var ajaxCallResults = this.doAjaxCall(params);
+      return ajaxCallResults.promise;
+    };
+
+    GDSDAO.prototype.declineSharingInvitation = function(invitationId) {
+      if (!this.config.isSharingEnabled || !this.config.isSharingEnabled()) {
+        return;
+      }
+      if (!invitationId || typeof invitationId !== "string") {
+        throw new TypeError("Invalid invitationId argument");
+      }
+      params = {
+        url: this.gdsBaseUrl + "/invitations",
+        path: invitationId,
+        customHeaderName: "x-mw-gds-session-id",
+        customHeaderValue: this.getSessionId(),
+        cache: false,
+        typeValue: 'put',
+        queryParams: {
+          status: "DECLINED"
+        }
+      };
+      var ajaxCallResults = this.doAjaxCall(params);
+      return ajaxCallResults.promise;
+    };
+
+    GDSDAO.prototype.createPersonalFromOpenSharingInvitation = function(invitationId) {
+      if (!this.config.isSharingEnabled || !this.config.isSharingEnabled()) {
+        return;
+      }
+      if (!invitationId || typeof invitationId !== "string") {
+        throw new TypeError("Invalid invitationId argument");
+      }
+      params = {
+        url: this.gdsBaseUrl + "/invitations",
+        path: invitationId,
+        customHeaderName: "x-mw-gds-session-id",
+        customHeaderValue: this.getSessionId(),
+        cache: false,
+        typeValue: 'get'
+      };
+      var ajaxCallResults = this.doAjaxCall(params);
+      return ajaxCallResults.promise;
+    };
+
+    GDSDAO.prototype.getFolderSettings = function(folderPath) {
+      if (!this.config.isSharingEnabled || !this.config.isSharingEnabled()) {
+        return;
+      }
+      if (!folderPath || typeof folderPath !== "string") {
+        throw new TypeError("Invalid folderPath argument");
+      }
+      params = {
+        url: this.gdsBaseUrl + "/filesystem",
+        path: folderPath,
+        customHeaderName: "x-mw-gds-session-id",
+        customHeaderValue: this.getSessionId(),
+        cache: false,
+        typeValue: 'get',
+        queryParams: {
+          includeSharingMetadata: true
+        }
+      };
+      var ajaxCallResults = this.doAjaxCall(params);
+      return ajaxCallResults.promise;
+    };
+
+    GDSDAO.prototype.getUserProfileSettings = function() {
+      params = {
+        url: this.gdsBaseUrl + "/userprofile/settings",
+        customHeaderName: "x-mw-gds-session-id",
+        customHeaderValue: this.getSessionId(),
+        cache: false,
+        typeValue: 'get'
+      };
+      var authToken = this.getAuthToken();
+      if(authToken) {
+        params.authToken = authToken;
+      }
+      var ajaxCallResults = this.doAjaxCall(params);
+      return ajaxCallResults.promise;
+    };
+
+    GDSDAO.prototype.search = function(params) {
+      var now = new Date();
+      var minuteMillis = 60 * 1000;
+      var hourMillis = 60 * minuteMillis;
+      var dayMillis = 24 * hourMillis;
+      // default search options
+      var searchOptions = {
+        criteriaName: "lastModifiedDate",
+        fromCriteria: new Date(now.getTime() - (1 * dayMillis)),
+        toCriteria: new Date(now.getTime()),
+        maxSearchResultSize: "20",
+        includeFolders: false,
+        showHidden: this.getShowHidden(),
+        showShared: this.getShowShared()
+      };
+      // override defaults with passed in values
+      if (params === null) {
+        throw new TypeError("Invalid search params");
+      }
+      if (params && typeof params === "object") {
+        if (params.criteriaName) {
+          searchOptions.criteriaName = params.criteriaName;
+        }
+        if (params.fromCriteria) {
+          if (searchOptions.criteriaName === "lastModifiedDate") {
+            if (!isNaN(params.fromCriteria)) {
+              searchOptions.fromCriteria = params.fromCriteria;
+            }
+          } else {
+            searchOptions.fromCriteria = params.fromCriteria;
+          }
+        }
+        if (params.toCriteria) {
+          if (searchOptions.criteriaName === "lastModifiedDate") {
+            if (!isNaN(params.toCriteria)) {
+              searchOptions.toCriteria = params.toCriteria;
+            }
+          } else {
+            searchOptions.toCriteria = params.toCriteria;
+          }
+        }
+        if (params.maxSearchResultSize && !isNaN(params.maxSearchResultSize)) {
+          searchOptions.maxSearchResultSize = params.maxSearchResultSize;
+        }
+        if ("includeFolders" in params && typeof params.includeFolders === "boolean") {
+          searchOptions.includeFolders = params.includeFolders;
+        }
+        if ("showHidden" in params && typeof params.showHidden === "boolean") {
+          searchOptions.showHidden = params.showHidden;
+        }
+        if ("showShared" in params && typeof params.showShared === "boolean") {
+          searchOptions.showShared = params.showShared;
+        }
+      }
+      // Set the search URL
+      var searchUrl = this.gdsBaseUrl + "/search/";
+      // Append crieriaName to searchURL, currently we have only lastModifiedDate
+      searchUrl += "lastModifiedDate";
+
+      params = {
+        url: searchUrl,
+        customHeaderName: "x-mw-gds-session-id",
+        customHeaderValue: this.getSessionId(),
+        cache: false,
+        typeValue: 'get',
+        queryParams: {
+          fromCriteria: searchOptions.fromCriteria,
+          toCriteria: searchOptions.toCriteria,
+          maxSearchResultSize: searchOptions.maxSearchResultSize,
+          includeFolders: searchOptions.includeFolders,
+          showHidden: searchOptions.showHidden,
+          showShared: searchOptions.showShared
+        }
+      };
+      var ajaxCallResults = this.doAjaxCall(params);
+      return ajaxCallResults.promise;
+    };
+
+    GDSDAO.prototype.saveUrlAsFile = function(folderPath, fileName, url) {
+      var isIE11 = !!window.MSInputMethodContext && !!document.documentMode;
+
+      if (!folderPath || typeof folderPath !== "string") {
+        throw new TypeError("Invalid folderPath argument");
+      }
+      if (!fileName || typeof fileName !== "string") {
+        throw new TypeError("Invalid fileName argument");
+      }
+      if (!url || typeof url !== "string") {
+        throw new TypeError("Invalid URL argument");
+      }
+      var context = this;
+      var promise = $.Deferred();
+      var xhr = new XMLHttpRequest();
+      var mimeType;
+      // IE11 (Only) does not allow setting responseType before open
+      if (! isIE11) {
+        xhr.responseType = 'arraybuffer';
+      }
+      xhr.open('GET', url , true);
+      if (isIE11) {
+        xhr.responseType = 'arraybuffer';
+      }
+      xhr.onreadystatechange = function () {
+          if (xhr.readyState == xhr.DONE && xhr.status === 200) {
+            mimeType = this.getResponseHeader("Content-Type");
+            if (!mimeType) {
+              mimeType = "application/octet-stream";  // default value
+            }
+            //When request is done
+            //xhr.response will be an ArrayBuffer
+            var file = new Blob([xhr.response], {type: mimeType});
+            file.name = fileName;
+            file.lastModifiedDate = new Date();
+            var internalPromise = context.uploadFile(folderPath, fileName, file, undefined, false);
+            internalPromise.done(function() {
+              promise.resolve({});
+            })
+            .fail(function(e) {
+              promise.reject({errorCode: e.errorCode, message: e.message});
+            });
+          }
+      };
+      xhr.onerror = function(e) {
+        promise.reject({errorCode: "FAILED_URL_ACCESS", message: "Failed to load specified URL."});
+      };
+      xhr.send();
+
+      // folder, fileName, file, getXHR, overwrite
+      return promise;
+    };
+
+    GDSDAO.prototype.previewInvitation = function(invitationId, folderPath) {
+      if (!this.config.isInvitationPreviewEnabled || !this.config.isInvitationPreviewEnabled()) {
+        return;
+      }
+      if (!invitationId || typeof invitationId !== "string") {
+        throw new TypeError("Invalid invitationId");
+      }
+      if (!folderPath) {
+        folderPath = "/";
+      }
+      if (typeof folderPath !== "string" || folderPath.charAt(0) !== "/") {
+        throw new TypeError("Invalid folderPath");
+      }
+
+      var params = {
+        url: this.gdsBaseUrl + "/preview/folder",
+        path: invitationId + folderPath,
+        //Set the showHidden param for AJAX call to GDS to retrieve hidden files as well
+        queryParams: {showHidden: this.getShowHidden(), showShared: this.getShowShared()},
+        cache: false
+      };
+      if (this.getSessionId()) {
+        params.customHeaderName = "x-mw-gds-session-id";
+        params.customHeaderValue = this.getSessionId();
+      }
+      var ajaxCallResults = this.doAjaxCall(params);
+      return ajaxCallResults.promise;
+    };
+
+    GDSDAO.prototype.getPreviewInvitation = function(invitationId) {
+      if (!this.config.isInvitationPreviewEnabled || !this.config.isInvitationPreviewEnabled()) {
+        return;
+      }
+      if (!invitationId || typeof invitationId !== "string") {
+        throw new TypeError("Invalid invitationId");
+      }
+      var params = {
+        url: this.gdsBaseUrl + "/preview/invitation",
+        path: invitationId,
+        cache: false
+      };
+      if (this.getSessionId()) {
+        params.customHeaderName = "x-mw-gds-session-id";
+        params.customHeaderValue = this.getSessionId();
+      }
+      var ajaxCallResults = this.doAjaxCall(params);
+      return ajaxCallResults.promise;
+    };
+
+    GDSDAO.prototype.previewFile = function(invitationId, relativePath) {
+      if (!this.config.isInvitationPreviewEnabled || !this.config.isInvitationPreviewEnabled()) {
+        return;
+      }
+      if (!invitationId || typeof invitationId !== "string") {
+        throw new TypeError("Invalid invitationId");
+      }
+      if (typeof relativePath !== "string" || relativePath.charAt(0) !== "/") {
+        throw new TypeError("Invalid path");
+      }
+      var fullUrl = this.gdsBaseUrl + "/downloads";
+      var downloadUri = "";
+      var publicPromise = $.Deferred();
+      var params = {
+        url: this.gdsBaseUrl + "/preview/file",
+        path: invitationId + "/" + relativePath,
+        typeValue: 'POST',
+        dataType: 'html',
+        cache: false,
+        accepts: ''
+      };
+      if (this.getSessionId()) {
+        params.customHeaderName = "x-mw-gds-session-id";
+        params.customHeaderValue = this.getSessionId();
+      }
+      var ajaxCallResults = this.doAjaxCall(params);
+       var internalPromise = ajaxCallResults.promise;
+       internalPromise.done(function(responseData, xhr) {
+         var parsedData = {};
+         var results = {};
+         var $a = $('<a>', { href:fullUrl } )[0];
+         var protocol = $a.protocol;
+         var host = $a.origin;  // works in chrome
+         var hostname = $a.hostname;
+         var port = $a.port;
+         // if not chrome, host will be undefined.
+         // Make up the host from the other parts that do exist in IE and FireFox
+         if (!host) {
+           host = protocol + "//" + hostname + ":" + port;
+         }
+         downloadUri = host + xhr.getResponseHeader('Location');
+         if (responseData) {
+           if (typeof responseData === "string") {
+             try {
+               parsedData = JSON.parse(responseData);
+             } catch (e) {
+               parsedData = {};
+             }
+           } else if (typeof responseData === "object") {
+             parsedData = responseData;
+           }
+         }
+         results.downloadUrl = downloadUri;
+         results.name = parsedData.name;
+         results.contentType = parsedData.contentType;
+         results.size = parsedData.size;
+         publicPromise.resolve(results);
+       })
+       .fail(function(err) {
+         publicPromise.reject(err);
+       });
+     return publicPromise;
+    };
+
+    GDSDAO.prototype.getInvitation = function(invitationId) {
+      if (!this.config.isSharingEnabled || !this.config.isSharingEnabled()) {
+        return;
+      }
+      if (!invitationId || typeof invitationId !== "string") {
+        throw new TypeError("Invalid invitationId argument");
+      }
+      params = {
+        url: this.gdsBaseUrl + "/invitations",
+        path: invitationId,
+        customHeaderName: "x-mw-gds-session-id",
+        customHeaderValue: this.getSessionId(),
+        cache: false,
+        typeValue: 'get',
+      };
+      var ajaxCallResults = this.doAjaxCall(params);
+      return ajaxCallResults.promise;
+    };
+
+  return GDSDAO;
+}); // require

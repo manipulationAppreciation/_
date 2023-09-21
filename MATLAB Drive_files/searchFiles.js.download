@@ -1,0 +1,73 @@
+define([
+  "underscore",
+  "widgets/abstractWidget"
+], function(_, AbstractWidget) {
+  var SearchFilesWidget = function(args) {
+    var initializeArgs = {
+      widgetName: "searchfiles",
+      embeddedCore: (args && (typeof args === "object") && args.embeddedCore) ? args.embeddedCore : null,
+      apsType: "FILES"
+    };
+    this.initialize(initializeArgs);
+  };
+  SearchFilesWidget.prototype = Object.create(AbstractWidget.prototype);
+  SearchFilesWidget.prototype.constructor = SearchFilesWidget;
+  SearchFilesWidget.prototype.initialize = function(args) {
+    // super
+    Object.getPrototypeOf(SearchFilesWidget.prototype).initialize.call(this, args);
+    _.bindAll(this, "getInstance");
+  };
+  /*
+   *  List the contents of the folder path specified in configOptions.folderPath,
+   *  if any.  If the folder path is not specified then the root folder "/" is
+   *  used.  When this method is called without a sessionId (e.g. when used as
+   *  the "src" value in a iframe), a message of "folderpathcontents" is posted
+   *  to the parent window.  It's a signal that the app is loaded.  If the
+   *  embedding page then posts another message with the "configOptions" and
+   *  "sessionId" values specified, we render the widget using data associated
+   *  with that sessionID.
+   */
+  SearchFilesWidget.prototype.getInstance = function(containerId, sessionId, configOptions) {
+    containerId = containerId || "";
+    configOptions = configOptions || {};
+    var context = this;
+    var treeViewId = "embeddedSearchFilesTree";
+    var listWidgetId = "EmbeddedSearchFiles";
+    var embeddedWidgetName = this.getName();
+    // Override MLDOFileService useHtmlLocalStorage method to
+    // prevent using local storage for embedded widgets.
+    var searchMethod = function() {
+      return context.getEmbeddedCore().getDAO().search(configOptions.searchOptions);
+    };
+    // Override MLDOFileService useHtmlLocalStorage method to
+    // prevent using local storage for embedded widgets.
+    configOptions = configOptions || { includeActions: null, includeColumns: null };
+    // super
+    Object.getPrototypeOf(SearchFilesWidget.prototype).getInstance.call(this, containerId, sessionId, configOptions);
+    if (sessionId) {
+      this.setController( this.getEmbeddedCore().createFilesTypeWidget( sessionId,
+                                                                      configOptions,
+                                                                      treeViewId,
+                                                                      listWidgetId,
+                                                                      searchMethod,
+                                                                      embeddedWidgetName,
+                                                                      containerId ) );
+      this.getController().getFileService().useHtmlLocalStorage = this.getEmbeddedCore().embeddedUseHtmlLocalStorage;
+      this.getEmbeddedCore().setListWidgetName(this.getName());
+    } else {
+      // signal we are ready
+      window.parent.postMessage(JSON.stringify({ name: "widgetinit:" + embeddedWidgetName + ":" + containerId }), this.getEmbeddedCore().getClientHost());
+    }
+  };
+
+  SearchFilesWidget.prototype.clean = function () {
+    if (this.getController() && this.getController().fb) {
+      this.getController().stop();
+      this.getController().fb.actionServices[0].destroy();
+      this.getController().fb.destroyRecursive();
+    }
+    this.setController(null);
+  };
+
+  return SearchFilesWidget;
+});

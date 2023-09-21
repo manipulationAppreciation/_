@@ -1,0 +1,567 @@
+define([
+  "underscore",
+  "jquery",
+  "backbone",
+  "filebrowser/FbTreeController",
+  "RenamePrompt",
+  "dojo/i18n!nls/mldoStringResource",
+  "dojo/string",
+  "util",
+  "templates/pageNavHeader"
+], function( _, $, Backbone, FbTreeController, RenamePrompt, MLDOStrings, DojoString, Util, PageNavigationHeader ) {
+
+  var abstractMethod = function () { throw new Error("Abstract method."); };
+
+  var AbstractPage = Backbone.View.extend({
+
+    // called by the constructor
+    initialize: abstractMethod,
+
+    initializeParams: function(params) {
+      if (!params || typeof params !== "object" || Object.keys(params).length === 0) {
+        throw new TypeError("Invalid initialize argument");
+      }
+      if (!params.config || typeof params.config !== "object" || Object.keys(params.config).length === 0) {
+        throw new TypeError("Invalid config argument in initialize params");
+      }
+      var config = params.config;
+      if (!params.pageOptions || typeof params.pageOptions !== "object") {
+        throw new TypeError("Invalid initialize argument: invalid pageOptions");
+      }
+      var options = params.pageOptions;
+      if (!options.authmanager || typeof options.authmanager !== "object" || !options.authmanager.getDAO || typeof options.authmanager.getDAO !== "function") {
+        throw new TypeError("Invalid authorization manager argument in pageOptions");
+      }
+      this.authMgr = options.authmanager;
+      if (!options.quotamanager || typeof options.quotamanager !== "object" || !options.quotamanager.render || typeof options.quotamanager.render !== "function") {
+        throw new TypeError("Invalid quotamanager argument in pageOptions");
+      }
+      this.isSharingEnabled = (config.isSharingEnabled && config.isSharingEnabled());
+      this.isPersonalInvitationsEnabled = (this.isSharingEnabled && config.isPersonalInvitationsEnabled && config.isPersonalInvitationsEnabled());
+      this.quotaMgr = options.quotamanager;
+      this.originId = null;
+      this.config = config;
+      this.options = options;
+      this.notificationMgr = null;
+      this.treeController = null;
+      this.navigationTemplate = PageNavigationHeader;
+      this.matrixHost = (config.getMatrixHost && typeof config.getMatrixHost === 'function') ? config.getMatrixHost() : "https://www-integ1.mathworks.com";
+      this.matrixEnvironment = (config.getMatrixEnv && typeof config.getMatrixEnv === 'function') ? config.getMatrixEnv() : "integ1";
+    },
+
+    getMatrixHost: function() {
+      return this.matrixHost;
+    },
+
+    getMatrixEnvironment: function() {
+      return this.matrixEnvironment;
+    },
+
+    setOriginId: function(originId) {
+      this.originId = originId;
+      if (this.getTreeController().getFileService()) {
+        this.getTreeController().getFileService().setOriginId(originId);
+      }
+    },
+
+    getOriginId: function() {
+      return this.getTreeController().getFileService().getOriginId();
+    },
+
+    setAuthManager: function(authMgr) {
+      this.authMgr = authMgr;
+    },
+
+    getAuthManager: function() {
+      return this.authMgr;
+    },
+
+    setNotificationManager: function(mgr) {
+      if (mgr && typeof mgr !== "object") {
+        throw new TypeError("Invalid notification handler argument");
+      }
+      this.notificationMgr = mgr;
+    },
+
+    getNotificationManager: function() {
+      return this.notificationMgr;
+    },
+
+    setUserQuotaController: function(quotaMgr) {
+      this.quotaMgr = quotaMgr;
+    },
+
+    getUserQuotaController: function() {
+      return this.quotaMgr;
+    },
+
+    createTreeController: function(options) {
+      if (!this.treeController && options && typeof options === "object") {
+        options.gdsDAO = this.getAuthManager().getDAO();
+        options.listContentsMethod = this.getAuthManager().getDAO()[options.listMethodName];
+        this.treeController = new FbTreeController(options);
+      }
+    },
+
+    setTreeController: function(treeController) {
+      this.treeController = treeController;
+    },
+
+    getTreeController: function() {
+      return this.treeController;
+    },
+
+    refreshPage: function() {
+      this.getTreeController().refresh();
+    },
+
+    invalidate: function() {
+      this.getTreeController().invalidate();
+    },
+
+    deSelectGrid: function(e) {
+      var className = e.target.className;
+      if ((className.indexOf("facets") >= 0 && className.indexOf("ff-delete") >= 0) ||
+           className.indexOf("breadcrumb") >= 0 ||
+           className === "actionIconContainer" ||
+           className === "myfilesTitle" ||
+           className.indexOf("col-") >= 0 ||
+           className === "logoWrapper" ||
+           className === "appTitle" ||
+           className === "row" ||
+           className.indexOf("matlabDriveUserName") >= 0 ||
+           className.indexOf("mainFooter") >= 0 ||
+           className === "copyright" ||
+           className === "footernav" ||
+           className.indexOf("dgrid-scroller") >= 0 ||
+           className === "pendingInvitationContainer" ||
+           className === "pendingInvitationsContainer" ||
+           className === "pendingInvitationsGroupBox" ||
+           className === "pendingInvitations" ||
+           className === "pendingInvitationEntry" ||
+           className === "pendingInvitationName" ||
+           className === "pendingInvitationNameHeader" ||
+           className === "sharingInitiator" ||
+           className === "sharedDate" ||
+           className === "pendingInvitationPermission" ||
+           className === "noContents" ) {
+        e.preventDefault();
+        this.getTreeController().deSelectAll();
+      }
+    },
+
+    dragoverNotAllowed: function(event) {
+      var className = event.target.className;
+      if (className !== "fileBrowser2 indicateDropZone") {
+        event.preventDefault();
+        event.originalEvent.dataTransfer.dropEffect = 'none';
+      }
+    },
+
+    goToFiles: function(e) {
+      $.event.trigger("changetofilespage:mldo");
+    },
+
+    goToSharing: function(e) {
+      if (this.isSharingEnabled) {
+        $.event.trigger("changetosharingpage:mldo");
+      }
+    },
+
+    goToTrashCan: function(e) {
+      $.event.trigger("changetotrashpage:mldo");
+    },
+
+    updateUserQuota: function(e) {
+      this.getUserQuotaController().render();
+    },
+
+    getStoredCurrentFolder: function() {
+      return this.getTreeController().getCurrentFolder();
+    },
+
+    changeStoredCurrentFolder: function(path, onlyStore) {
+      if (!path || typeof path !== "string") {
+        throw new TypeError("Invalid path argument");
+      }
+      this.getTreeController().setRoot(path, onlyStore);
+    },
+
+    changeTreeRoot: function(path, onlyStore) {
+      if (!path || typeof path !== "string") {
+        throw new TypeError("Invalid path argument");
+      }
+      this.changeStoredCurrentFolder(path, onlyStore);
+      if (!onlyStore) {
+        this.getTreeController().resetActionButtons();
+      }
+    },
+
+    logoutPage: function() {
+      this.stopPage();
+      this.changeTreeRoot('/', true);
+      this.getTreeController().getFileService().unsetCurrentUserData();
+      this.getTreeController().getActionHandler().clearClipboard();
+    },
+
+    updateSettings: function(){
+      if(this.config.isShowHiddenFilesEnabled && this.config.isShowHiddenFilesEnabled()){
+        var showHiddenFiles = this.getTreeController().gdsDAO.getShowHidden();
+        $.each($('.dropdown-showhiddenfiles input'), function(){
+            $(this).prop('checked',showHiddenFiles);
+        });
+      }
+
+      if(this.config.isAdditionalApplicationsEnabled && this.config.isAdditionalApplicationsEnabled()){
+        var currentAppId = this.getTreeController().gdsDAO.getApplicationId();
+        $.each($('.dropdown-additionalApplications input[value=\''+currentAppId+'\']'), function(){
+            $(this).prop('checked',true);
+        });
+      }
+    },
+
+    toggleShowHiddenFiles: function(e) {
+      if (this.config.isShowHiddenFilesEnabled && this.config.isShowHiddenFilesEnabled()){
+        //Defer setting show hidden property in gdsdao to 'matlabdriveapp'
+        $.event.trigger("toggleshowhiddenfiles:mldo",e.currentTarget.checked);
+      }
+      this.updateSettings();
+    },
+
+    changeApplication: function(e){
+      if (this.config.isAdditionalApplicationsEnabled && this.config.isAdditionalApplicationsEnabled()){
+        this.getTreeController().getActionHandler().clearClipboard();
+        this.getTreeController().resetActionButtons();
+        $.event.trigger("changeapplication:mldo",{ newAppId: e.currentTarget.value, page: this.getTreeControllerOptions().id.toLowerCase() });
+      }
+      this.updateSettings();
+    },
+
+    needsRefresh: function(folderPath) {
+      var shouldRefresh = false;
+      var currentFolder = this.getStoredCurrentFolder();
+      var relativePath = Util.getRelativePath(folderPath, currentFolder);
+      var temp = relativePath.split("/");
+      var len = temp.length;
+      var subFolders = [];
+      var rowId;
+      var isVisible = false;
+      var isOpened = false;
+      var showHiddenFiles = this.getTreeController().gdsDAO.getShowHidden();
+      for (i = 0; i < len; i++) {
+        if (temp[i]) {
+          subFolders.push(temp[i]);
+        }
+      }
+      len = subFolders.length;
+      if (folderPath && typeof folderPath === "string" && folderPath.length) {
+        if ((folderPath === currentFolder) || (folderPath.indexOf(currentFolder) === 0)) {
+          shouldRefresh = true;
+        }
+        if (!shouldRefresh && folderPath.indexOf(currentFolder) === 0) {
+          var subPath = "";
+          var isLastSubFolder = (i === (len - 1));
+          isOpened = true;
+          for (i = 0; i < len && isOpened; i++) {
+            subPath += "/" + subFolders[i];
+            isVisible = (this.getTreeController().getVisibleFolderRowId(subPath) !== null);
+            isOpened = this.getTreeController().folderIsVisibleAndOpened(subPath);
+            if (subPath === relativePath) {
+              shouldRefresh = isVisible && isOpened;
+            } else { // Not last sub folder
+              if (!isVisible) {
+                shouldRefresh = true;
+                break;
+              }
+            }
+          }
+        }
+        if (shouldRefresh) {
+          if ( !showHiddenFiles && ((folderPath.indexOf("/.training") === 0) || (folderPath.indexOf("/.session") === 0)) ) {
+            shouldRefresh = false;
+          }
+        }
+      }
+      return shouldRefresh;
+    },
+
+    performInvitationCopy: function(pendingEntry, invitationId, originalName, name) {
+    var context = this;
+    if (invitationId) {
+      var promise = this.getTreeController().getFileService().copyFolderFromInvitation(invitationId, "/", "/" + name);
+      promise.done(function() {
+        context.onCopyToDriveSuccess(pendingEntry, name);
+      })
+        .fail(function(err) {
+          context.onCopyToDriveFailure(err, pendingEntry, invitationId, originalName, name);
+        });
+    }
+    },
+
+    onCopyToDriveSuccess: function(pendingEntry, name) {
+      if (pendingEntry) {
+        pendingEntry.remove();
+      }
+      $.event.trigger("changetofilespage:mldo", {destination:  "/" + name});
+      this.getTreeController().getFileService().refreshGrid();
+      var message = DojoString.substitute(MLDOStrings.actionHandlerCopiedTo, [name, MLDOStrings.defaultApplicationLabel]);
+      this.getTreeController().getFileService().dispatchCanonicalizedTreeEvent("message:treecontroller", {message: message, severity: "NORMAL"}, "Files");
+    },
+
+    onCopyToDriveFailure: function(err, pendingEntry, invitationId, originalName, name) {
+      var context = this;
+      if (err.errorCode === "RESOURCE_ALREADY_EXISTS") {
+        var renamePrompt = new RenamePrompt({
+          initialText: name,
+          promptTitle: DojoString.substitute(MLDOStrings.sharingPageCopyInvitationNameConflictDialogTitle, [originalName]),
+          promptLabel: DojoString.substitute(MLDOStrings.sharingPageCopyInvitationNameConflictDialogLabel, [name]),
+          itemType: "folder",
+          promptAsInfo: false,
+          callback: function(newName) {
+            context.performInvitationCopy.call(context, pendingEntry, invitationId, originalName, newName);
+          }
+        });
+        var renamePromptDialogContainer = document.createElement('div');
+        renamePromptDialogContainer.setAttribute("id", "renamePromptDialogContainer");
+        $('#modalContainer').append(renamePromptDialogContainer);
+        renamePrompt.setElement(renamePromptDialogContainer);
+        renamePrompt.render();
+      } else if (err.errorCode === "PERMISSION_DOES_NOT_EXIST") {
+        this.refreshPendingInvitationsList();
+      } else {
+        var msg = Util.getErrorMessageTranslator().getTranslatedMessage(err, "sharingPage.copyInvitation");
+        this.getTreeController().getFileService().notify(msg, "ERROR");
+      }
+    },
+
+    openOrClosePanel: function (e) {
+      if (e && e.preventDefault) {
+        e.preventDefault();
+      }
+      let panelClass = e.currentTarget.parentElement.classList;
+      let buttonClass = e.currentTarget.classList;
+      let wrapper = document.getElementsByClassName("wrapper")[0];
+      let wrapperClass = wrapper ? wrapper.classList : null;
+      let inlineFileView = document.getElementById("viewFileInlineContainer");
+      let inlineFileViewClass = inlineFileView ? inlineFileView.classList : null;
+      if (panelClass && buttonClass && wrapperClass) {
+        if (panelClass.contains("collapsed")) {
+          if (wrapperClass) {
+            wrapperClass.remove("info-panel-collapsed");
+          }
+          if (panelClass) {
+            panelClass.remove("collapsed");
+          }
+          if (buttonClass) {
+            buttonClass.remove("openInfoPanelButton");
+          }
+          if (inlineFileViewClass) {
+            inlineFileViewClass.remove("info-panel-collapsed");
+          }
+        } else {
+          if (wrapperClass) {
+            wrapperClass.add("info-panel-collapsed");
+          }
+          if (panelClass) {
+            panelClass.add("collapsed");
+          }
+          if (buttonClass) {
+            buttonClass.add("openInfoPanelButton");
+          }
+          if (inlineFileViewClass) {
+            inlineFileViewClass.add("info-panel-collapsed");
+          }
+        }
+      }
+    },
+
+    updateInfoPanel: function (data, rootFolderName, status) {
+      if (!data || typeof data !== "object" || !data.data || typeof data.data !== "object") {
+        throw new Error("Missing required folderdata argument.");
+      }
+
+      let infoPanel = document.getElementsByClassName("info-panel");
+      if (infoPanel.length === 0) {
+        this.removeInfoPanel();
+      } else {
+        // ensure that info-panel is enabled
+        infoPanel[0].classList.remove("removePanel");
+        // ensure that file preview elements are updated
+        let inlineFileViewContainer = document.getElementById("inlineFileViewContainer");
+        if (this.config.getInlineFileView && this.config.getInlineFileView()) {
+          inlineFileViewContainer.classList.add("info-panel-enabled");
+        }
+      }
+
+      let folderData = data.data;
+      let folderIcon = document.getElementsByClassName("infoPanelFolderIcon")[0];
+      if (folderIcon) {
+        if (folderData.isSharedFolder || (rootFolderName && rootFolderName !== MLDOStrings.defaultApplicationLabel)) {
+          folderIcon.classList.add("shared");
+        } else {
+          folderIcon.classList.remove("shared");
+        }
+      }
+      let folderName = document.getElementById("folderNamePanel");
+      if (folderName) {
+        folderName.innerHTML = rootFolderName ? this.getBreadcrumbManager().truncatePath(rootFolderName) : this.getBreadcrumbManager().truncatePath(folderData.name);
+      }
+      let ownedBy = document.getElementById("ownedByPanel");
+      if (ownedBy) {
+        ownedBy.innerHTML = folderData.initiator && folderData.accessType !== "OWNER" ? folderData.initiator : MLDOStrings.meMyself;
+      }
+      let createdOn = document.getElementById("createdOnPanel");
+      if (createdOn) {
+        let date = new Date(folderData.createdOnUtc);
+        createdOn.innerHTML = date.toLocaleDateString(navigator.language, {weekday: "short", year: "numeric", month: "short", day: "2-digit"}).replace(/,/g, '');
+      }
+      let modifiedOn = document.getElementById("modifiedByPanel");
+      if (modifiedOn) {
+        let date = new Date(folderData.clientLastModifiedUtc);
+        modifiedOn.innerHTML = date.toLocaleDateString(navigator.language, {year: "numeric", month: "short", day: "2-digit", weekday: "short"}).replace(/,/g, '');
+      }
+      this.updateAccessTypeInInfoPanel(folderData.accessType);
+      if (folderData.hasOwnProperty("sharedParentPath")) {
+        this.updateSharedParentPathIfExists(folderData.sharedParentPath, folderData.isSharedFolder);
+      }
+      // Currently, only top-level shared folder on the Preview page have this field displayed
+      let folderSize = document.getElementById("folderSizePanel");
+      if (folderData.hasOwnProperty("folderSize")) {
+        if (folderSize && folderData.name === "/") {
+          folderSize.parentElement.hidden = false;
+          folderSize.innerHTML = Util.getReadableFileSizeString(folderData.folderSize);
+        } else if (folderSize && folderData.name !== "/") {
+          folderSize.parentElement.hidden = true;
+        }
+      } else if (folderSize) {
+        folderSize.parentElement.hidden = true;
+      }
+    },
+
+    updateAccessTypeInInfoPanel: function (folderAccessType) {
+      let editAccessInfo = document.getElementsByClassName("editAccessInfo")[0];
+      let viewAccessInfo = document.getElementsByClassName("viewAccessInfo")[0];
+      let ownerAccessInfo = document.getElementsByClassName("ownerAccessInfo")[0];
+      let accessType = document.getElementById("accessTypePanel");
+      if (!accessType || accessType.length === 0) {
+        return;
+      }
+      if (folderAccessType === "READ_WRITE") {
+        accessType.innerHTML = MLDOStrings.initiateSharingDialogPermission_read_write;
+        if (editAccessInfo) {
+          editAccessInfo.style.display = 'inline-block';
+        }
+        if (viewAccessInfo) {
+          viewAccessInfo.style.display = 'none';
+        }
+        if (ownerAccessInfo) {
+          ownerAccessInfo.style.display = 'none';
+        }
+      } else if (folderAccessType === "READ_ONLY") {
+        accessType.innerHTML = MLDOStrings.initiateSharingDialogPermission_read_only;
+        if (editAccessInfo) {
+          editAccessInfo.style.display = 'none';
+        }
+        if (viewAccessInfo) {
+          viewAccessInfo.style.display = 'inline-block';
+        }
+        if (ownerAccessInfo) {
+          ownerAccessInfo.style.display = 'none';
+        }
+      } else if (folderAccessType === "OWNER") {
+        accessType.innerHTML = MLDOStrings.initiateSharingDialogPermission_owner;
+        if (editAccessInfo) {
+          editAccessInfo.style.display = 'none';
+        }
+        if (viewAccessInfo) {
+          viewAccessInfo.style.display = 'none';
+        }
+        if (ownerAccessInfo) {
+          ownerAccessInfo.style.display = 'inline-block';
+        }
+      }
+    },
+
+    updateSharedParentPathIfExists: function(sharedParentPath, isSharedFolder) {
+      if (document.getElementById("sharedParentPathPanel")) {
+        if (sharedParentPath !== "" && !isSharedFolder) { // displayed for sub-folders of a share
+          document.getElementById("sharedParentPathPanel").parentElement.style.display = 'block';
+          document.getElementById("sharedParentPathPanel").innerHTML = '<a data-folderpath=\"' + _.escape(sharedParentPath) + '\">' +
+            _.escape(Util.getFolderNameFromPath(sharedParentPath)) + '<span data-folderpath=\"' + _.escape(sharedParentPath) + '\"></span></a>';
+        } else {
+          document.getElementById("sharedParentPathPanel").parentElement.style.display = 'none';
+        }
+      }
+    },
+
+    removeInfoPanel: function() {
+      let panel = document.getElementsByClassName("info-panel")[0];
+      if (panel) {
+        panel.classList.add("removePanel");
+      }
+      let inlineFileViewContainer = document.getElementById("inlineFileViewContainer");
+      if (this.config.getInlineFileView && this.config.getInlineFileView() && inlineFileViewContainer) {
+        inlineFileViewContainer.classList.remove("info-panel-enabled");
+      }
+    },
+
+    getTreeControllerOptions: abstractMethod,
+
+    startPage: abstractMethod,
+
+    stopPage: abstractMethod,
+
+    render: abstractMethod,
+
+    renderNavigationHeader: function() {
+      var am = this.getAuthManager();
+      let templateParameters = {
+        userFirstName: am.getLoginData() ? am.getLoginData().firstName : 'unknown',
+        userLastName: am.getLoginData()? am.getLoginData().lastName : 'unknown',
+        userEmailAddress: am.getLoginData()? am.getLoginData().emailAddress : 'unknown',
+        showHiddenFilesEnabled: ((this.config.isShowHiddenFilesEnabled && this.config.isShowHiddenFilesEnabled()) ? true : false),
+        additionalApplicationsEnabled: ((this.config.isAdditionalApplicationsEnabled && this.config.isAdditionalApplicationsEnabled()) ? true : false),
+        showHiddenFilesLabel: MLDOStrings.showHiddenFilesLabel,
+        chooseApplicationLabel: MLDOStrings.chooseApplicationLabel,
+        defaultApplicationLabel: MLDOStrings.defaultApplicationLabel,
+        addonApplicationLabel: MLDOStrings.addonApplicationLabel,
+        thingspeakApplicationLabel: MLDOStrings.thingspeakApplicationLabel,
+        graderApplicationLabel: MLDOStrings.graderApplicationLabel,
+        toggleNavigationLabel: MLDOStrings.filesPageToggleNavigation,
+        connectorDownloadText: MLDOStrings.filesPageDownloadConnectorLinkText,
+        logoutLabel: MLDOStrings.filesPageLogoutLabel,
+        helpLabel: MLDOStrings.filesPageHelpLabel,
+        isUserAuthenticated: !!this.getAuthManager().getSessionId(),
+        loginLabel: MLDOStrings.previewPageLoginLabel
+      };
+      return this.navigationTemplate(templateParameters);
+    },
+
+    renderMatrix: function() {
+      if (typeof matrix !== 'undefined' && matrix && typeof matrix === 'object' &&
+        "show" in matrix && typeof matrix.show === 'function') {
+        matrix.show({
+          largeId: "headernav_matrix",
+          smallId: ["matrix_affordance_container_mobile", "matrix_menu_container_mobile"],
+          env: this.getMatrixEnvironment(),
+          tier: "PRODUCT",
+          lang: navigator.language,
+          host: this.getMatrixHost()
+        });
+        $('#matrix_collapse').on('show.bs.collapse', function () {
+          if ($('#topnav_collapse').hasClass('in')) {
+            $('#topnav_collapse').collapse('toggle');
+          }
+        });
+        $('#topnav_collapse').on('show.bs.collapse', function () {
+          if ($('#matrix_collapse').hasClass('in')) {
+            $('#matrix_collapse').collapse('toggle');
+          }
+        });
+      }
+    }
+
+  });
+
+  return AbstractPage;
+}); // require

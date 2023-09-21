@@ -1,0 +1,196 @@
+/*
+  All of the methods in this file would normally go into FbTreeController.
+  However, due to some browsers not supporting these new JavaScript features
+  (e.g. async, await, let, const, etc.), those browsers would fail to load.
+  So, we put them in this separate file and try to load dynamically into a
+  variable.  If that fails, the variable is undefined.  Check the variable
+  and use it if defined or revert to older way if undefined.  See this used
+  in FbTreeController.
+*/
+/* istanbul ignore next */
+define([
+
+],function(require) {
+
+  /*
+    MS EDGE does not support Array.flat() method.
+    So, we use it if exists; we use this alternative if it doesn't.
+  */
+  /* istanbul ignore next */
+  function flatten(array) {
+    var flattened = [];
+    if (array && array.flat && typeof array.flat === "function") {
+      flattened = array.flat(Infinity);
+    } else {
+      (function flat(array) {
+        array.forEach(function(el) {
+          if (Array.isArray(el)) flat(el);
+          else flattened.push(el);
+        });
+      })(array);
+    }
+    return flattened;
+  }
+
+  /* istanbul ignore next */
+  return {
+    setFileBrowserDropEventHandler: function(fbTreeController) {
+      /* jshint ignore:start */
+      fbTreeController.processEntries = async function(event) {
+        let files = (event && event.dataTransfer && event.dataTransfer.files) ? event.dataTransfer.files : null;
+        let items = (event && event.dataTransfer && event.dataTransfer.items) ? event.dataTransfer.items : null;
+        let folders = [];
+        let fileData = [];
+
+        // We have to save items here due to EDGE strange async behavior where
+        // the event goes away.
+        if (items && files) {
+          for ( let i = 0; i < items.length; i++) {
+            let entry = items[i].webkitGetAsEntry();
+            if (entry.isFile) {
+              // Just add files right to the fileData list
+              fileData.push(files[i]);
+            } else if (entry.isDirectory) {
+              // remember each folder to process later.
+              folders.push(entry);
+            }
+          }
+        }
+
+        // Now, process each folder and add its files to fileData.
+        if (folders.length) {
+          let processEntryPromises = []; // array of processEntry promises
+          for (let entry of folders) {
+            if (entry.isDirectory) {
+              processEntryPromises.push(fbTreeController.processEntry(entry));
+            }
+          }
+          // Wait for ALL the promises to finish before proceeding.
+          let processingResultArray = await Promise.all(processEntryPromises);
+          let flatArray = [...flatten(processingResultArray)];
+          fileData.push(...flatArray);  // "..." is JavaScript spread operator.
+          // fileData.push(...processingResultArray.flat(Infinity));
+        }
+        return fileData;
+      };
+
+      fbTreeController.processEntry = async function(entry) {
+        let context = fbTreeController;
+
+        return new Promise(async function(resolve, reject) {
+          let result = await readEntry(entry);
+          resolve(result);
+
+          /*
+            Helper functions: start
+          */
+          async function getFile(fileEntry) {
+            try {
+              return await new Promise((resolve, reject) => fileEntry.file(resolve, reject));
+            } catch (err) {
+              reject(err);
+            }
+          }
+
+          async function readEntry(entry) {
+            if (entry.isFile) {
+              let file = await getFile(entry);
+              file.fullPath = entry.fullPath;
+              return file;
+            } else if (entry.isDirectory) {
+              let filesInFolder = await readFolderEntries(entry.createReader());
+              return filesInFolder;
+            }
+          }
+
+          function readFolderEntries(folderReader) {
+            return new Promise(resolve => folderReader.readEntries(resolve))
+            .then( async (entries) => {
+              /*
+                In chromium-based browsers readEntries will only return a maximum
+                of 100 entries. To get the rest, you repeat the call to readEntries
+                until you get zero back.
+              */
+              let partialResults = [];
+              if (entries && entries.length) {
+                partialResults = await readFolderEntries(folderReader);
+              }
+              let allFiles = await getAllFiles(entries);
+              // we have to combine the results from the other async calls.
+              if (allFiles && Array.isArray(allFiles) && partialResults.length) {
+                for (let file of partialResults) {
+                  allFiles.push(file);
+                }
+              }
+              return allFiles;
+            });
+          }
+
+          async function getAllFiles(fileEntries) {
+            /*
+              Both getFile and readFolderEntries are asynchronous and return
+              implicit Promises.  We use Promise.all to wait for ALL of them
+              before returning;
+            */
+            let array = await Promise.all( fileEntries.map( async (fileEntry) => {
+             let entry = fileEntry;
+             if (entry.isFile) {
+               let file = await getFile(entry);
+               file.fullPath = entry.fullPath;
+               return file;
+             } else if (entry.isDirectory) {
+               return readFolderEntries( entry.createReader() );
+             }
+            }));
+            let flatArray = [...flatten(array)];
+            return flatArray; // array.flat(Infinity);
+          }
+          /*
+            Helper functions: end
+          */
+        }); // Promise
+
+      };
+
+      fbTreeController.fileBrowserDropEventHandler = async function(event) {
+          if(event && event.dataTransfer && event.dataTransfer.files) {
+              let files = await fbTreeController.processEntries(event);
+              var length = 0;
+              var path = "";
+              var eventPath;
+              if (event && event.path && event.path.length) {
+                eventPath = event.path;
+              } else if (event.composedPath && typeof event.composedPath === 'function' && event.composedPath()) {
+                eventPath = event.composedPath();
+                if (!eventPath) { // In case of Edge currently - Feb, 2020
+                  var target = event.target;
+                  eventPath = [];
+                  while (target.parentNode !== null) {
+                    eventPath.push(target);
+                    target = target.parentNode;
+                  }
+                }
+              }
+              if (eventPath && eventPath.length > 1 && eventPath[2] && eventPath[2].children) {
+                length = eventPath[2].children.length;
+                for (var i = 0; i < length ; i++) {
+                  if (eventPath[2].children[i].innerText === eventPath[0].innerText) {
+                    if (i !== 0) {
+                      path = path + eventPath[2].children[i].innerText;
+                    } else {
+                      path = "/";
+                    }
+                    break;
+                  }
+                  path = path + "/" + (i === 0 ? "" : eventPath[2].children[i].innerText);
+                }
+              }
+
+              $.event.trigger("draganddropuploadfile:mldo", {files: files, items: null, folderPath: path});
+          }
+      };
+      /* jshint ignore:end */
+    }
+  };
+
+});

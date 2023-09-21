@@ -1,0 +1,158 @@
+ define([
+   "jquery",
+   "backbone",
+   "bootstrap",
+   "util",
+   "templates/renamePromptDialog",
+   "dojo/i18n!nls/mldoStringResource",
+   "dojo/string"
+ ], function( $, Backbone, Bootstrap, Utils, RenamePromptDialog, MLDOStrings, DojoString ) {
+
+    return Backbone.View.extend({
+
+        template: RenamePromptDialog,
+
+        events: {
+            "click .renamePromptSubmit": "rename",
+            "keydown #renamePromptInput": "onKeydown"
+        },
+
+        initialize: function(args) {
+          if (!args || Object.keys(args).length === 0) {
+            throw new TypeError("Invalid arguments");
+          }
+          if (!args.promptTitle || typeof args.promptTitle !== "string") {
+            throw new TypeError("Invalid title argument");
+          }
+          this.promptTitle = args.promptTitle;
+          if (!args.promptLabel || typeof args.promptLabel !== "string") {
+            throw new TypeError("Invalid label argument");
+          }
+          this.promptLabel = args.promptLabel;
+          if (!args.itemType || typeof args.itemType !== "string") {
+            throw new TypeError("Invalid item type argument");
+          }
+          if (typeof args.initialText === "string") {
+            this.initialText = args.initialText;
+          } else {
+            this.initialText = "";
+          }
+          this.itemType = args.itemType.toLowerCase();
+          if (!args.callback || typeof args.callback !== "function") {
+            throw new TypeError("Invalid callback argument");
+          }
+          this.promptAsInfo = (args.promptAsInfo && args.promptAsInfo === true);
+          this.callback = args.callback;
+          this.callbackCalled = false;
+          this.onCloseWindowCallback = args.onCloseWindowCallback;
+          _.bindAll(this, "render");
+        },
+
+        render: function() {
+            var self = this;
+            this.$el.html(this.template({promptTitle: this.promptTitle,
+                                         promptLabel: this.promptLabel,
+                                         initialText: this.initialText,
+                                         errorLabel: MLDOStrings.renameErrorLabel,
+                                         renameButtonLabel: MLDOStrings.renameButtonLabel,
+                                         renameCancelButtonLabel: MLDOStrings.renameCancelButtonLabel
+                                       }));
+            this.$el.on("shown.bs.modal", this.setInputFocus);
+            this.$el.on("hidden.bs.modal", function() {
+              if (self.onCloseWindowCallback && typeof self.onCloseWindowCallback === "function") {
+                self.onCloseWindowCallback(self.callbackCalled);
+              }
+              self.remove();
+            });
+            this.$el.off('dragover'); // clear previous listeners
+            this.$el.on('dragover', this.dragNotAllowed);
+            this.$el.bind('input', function() {
+                var $input = $("#renamePromptInput");
+                var text = $input.val();
+                var re = new RegExp("^" + self.initialText + "$");
+                if (/[\/\\:?*"<>|]/.test(text)) {
+                    self.displayValidationError(DojoString.substitute(MLDOStrings.renamePromptInvalidCharacters, ["\" / : \\ ? * < | >."]));
+                    self.disableSubmit();
+                } else if (/^\s*$/.test(text) || re.test(text)) {
+                    self.hideValidationError();
+                    self.disableSubmit();
+                } else {
+                    self.hideValidationError();
+                    self.enableSubmit();
+                }
+            });
+            if (this.promptAsInfo) {
+              $('#renamePromptDialog div#mldo-error-container').removeClass('importantDialogError').addClass('importantDialogInfo');
+              $('#renamePromptDialog div#mldo-error-container span.notificationImageError').removeClass('notificationImageError').addClass('notificationImageInfo');
+              $('#renamePromptDialog div#mldo-error-container span.notificationContentTextError').removeClass('notificationContentTextError').addClass('notificationContentTextInfo');
+              $('#renamePromptDialog #renamePromptSubmit').text(MLDOStrings.renameAcceptLabel);
+              this.enableSubmit();
+            }
+            $('#renamePromptDialog').modal({backdrop: 'static'});
+            return this;
+        },
+
+        setInputFocus: function() {
+          var v = $("#renamePromptInput").val();
+          $("#renamePromptInput").focus();
+          $("#renamePromptInput").val("");
+          $("#renamePromptInput").val(v);
+        },
+
+        dragNotAllowed: function(e) {
+          e.preventDefault();
+          e.originalEvent.dataTransfer.dropEffect = 'none';
+        },
+
+        disableSubmit: function() {
+            $('.renamePromptSubmit').prop('disabled', true);
+        },
+
+        enableSubmit: function() {
+            $('.renamePromptSubmit').prop('disabled', false);
+        },
+
+        displayValidationError: function(err) {
+            $('.inline_form_error_msg').html(err);
+            $('.inline_form_error').show();
+            $('#rename_prompt_error_notification_group').addClass('has-error has-feedback');
+            $('.form-control-feedback').show();
+        },
+
+        hideValidationError: function() {
+            $('.inline_form_error').hide();
+            $('.inline_form_error_msg').empty();
+            $('#rename_prompt_error_notification_group').removeClass('has-error has-feedback');
+            $('.form-control-feedback').hide();
+        },
+
+        rename: function(e) {
+          if (e && e.preventDefault) {
+            e.preventDefault();
+          }
+          var alternate = $("#renamePromptInput").val(); // _.escape($("#renamePromptInput").val());
+
+          // Bail out if no input
+          if (!alternate || !alternate.trim()) {
+              return;
+          }
+          alternate = alternate.trim();
+          this.callback(alternate);
+          this.callbackCalled = true;
+          $('#cancelRenamePrompt').click();
+        },
+
+        onKeydown: function(e) {
+            var code = e.keyCode || e.which;
+            if (code == 13) { // Enter key
+                e.preventDefault();
+                var name = $("#renamePromptInput").val(); // _.escape($("#renamePromptInput").val());
+
+                // Bail out if no input
+                if (name && name.trim()) {
+                    $(".renamePromptSubmit").click();
+                }
+            }
+        }
+    });
+});

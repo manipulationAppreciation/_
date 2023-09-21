@@ -1,0 +1,15 @@
+define([
+  "matlabdriveapp"
+], function( MatlabDriveApplication ) {
+
+  /**
+   * This subclass of MatlabDriveApplication uses
+   * Mathworks FileBrowser2 widget for the tree controller.
+   */
+  var MldoFbApp = MatlabDriveApplication.extend({
+    initialize: function (params) {
+      this.constructor.__super__.initialize.apply(this, arguments);
+    }
+  });
+  return MldoFbApp;
+}); // require

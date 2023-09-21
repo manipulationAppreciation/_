@@ -1,0 +1,432 @@
+/*
+ * This file only contains items that are not specific to any class and needs to be reused by multiple unrelated classes.
+ * DO NOT PUT ITEMS SPECIFIC TO A CLASS IN HERE (even if you think it may someday be reused -- wait till that happens.)
+ */
+ define([
+   "dojo/i18n!nls/mldoStringResource",
+   "dojo/string",
+   "mw-html-utils/HtmlUtils",
+   "dojo/has",
+   "ErrorMessageTranslator"
+ ], function(MLDOStrings, DojoString, HtmlUtils, has, ErrorMessageTranslator) {
+
+   var VALID_INVITATION_ACTIONS = [ "accept", "decline", "copy", "acceptAndOpen", "copyAndOpen" ];
+
+   return {
+    /**
+     * Helper function that finds the class object from a possibly long package name
+     */
+    getClassFromFullPackageName: function(classname) {
+      var p = null;
+      if (classname && classname.length) {
+        var fn = window || this; // get the global object (in a browser it's window)
+        var packages = classname.split('.');
+        for( var i = 0; i < packages.length; i++) {
+          if (p) {
+            p = p[packages[i]];
+          } else {
+            p = fn[packages[i]];
+          }
+        }
+      }
+      return p;
+    },
+
+    /**
+     * Helper function that formats a size in bytes into an appropriate unit counts (e.g. "KB", "MB", etc.)
+     */
+    getReadableFileSizeString: function(fileSizeInBytes) {
+      if ( typeof fileSizeInBytes === "undefined" || isNaN(fileSizeInBytes) || fileSizeInBytes === "" || fileSizeInBytes === null) {
+        throw new Error("Invalid file size argument");
+      }
+      var i = -1;
+      var byteUnits = [' KB', ' MB', ' GB', ' TB', 'PB', 'EB', 'ZB', 'YB'];
+      if (fileSizeInBytes > 0) {
+        do {
+            fileSizeInBytes = fileSizeInBytes / 1024;
+            i++;
+        } while (fileSizeInBytes >= 1024);
+      } else {
+        ++i;
+      }
+      return Math.max(fileSizeInBytes, 0.1).toFixed(1) + byteUnits[i];
+    },
+
+    getApplicationNameFromId: function(appId) {
+      var appName = MLDOStrings.defaultApplicationLabel;
+      var applicationNameMap = {
+        "": MLDOStrings.defaultApplicationLabel,
+        "addons": MLDOStrings.addonApplicationLabel,
+        "thingspeak": MLDOStrings.thingspeakApplicationLabel,
+        "matlab_grader": MLDOStrings.graderApplicationLabel
+      };
+      if(appId === "" || (appId in applicationNameMap)) {
+        appName = applicationNameMap[appId];
+      }
+      return appName;
+    },
+
+    /**
+     * Helper function that takes a UNIX-like path and returns the last child folder name,
+     * or "MATLAB Drive" if the path is "/".
+     * For example, "/a/b/c" will return "c", as will "/a/b/c/".
+     */
+    getFolderNameFromPath: function(origPath, appId) {
+      var folder = "";
+      if (origPath && origPath.length) {
+        var path = origPath;
+        var pieces = [];
+        if (path && typeof path === 'string') {
+          path = path.replace(/^\//,"");
+          path = path.replace(/\/$/,"");
+          if (path.length > 0) {
+            pieces = path.split('/');
+            if (pieces.length > 0) {
+              folder = pieces[pieces.length - 1];
+            } else {
+              folder = this.getApplicationNameFromId(appId);
+            }
+          } else {
+            folder = this.getApplicationNameFromId(appId);
+          }
+        }
+      }
+      return folder;
+    },
+
+    /**
+     * Helper functions that takes a fullPath and the path of the current root folder.
+     * It returns a relative path to the current root (usually by removing the current folder path).
+     */
+    getRelativePath: function(fullPath, currentFolder) {
+      var result = '';
+      if (!fullPath || typeof fullPath !== "string" || !currentFolder) {
+        return result;
+      }
+      var cl = currentFolder.length;
+      var index = fullPath.indexOf(currentFolder);
+      if (currentFolder !== '/' && index === 0) {
+        result = fullPath.substring(cl);
+      } else {
+        result = fullPath;
+      }
+      return result;
+    },
+
+    getFileNameFromPath: function(path) {
+      var name = "";
+      if (path) {
+        var pieces = path.split("/");
+        if (pieces && !pieces[0]) {
+          pieces.shift();
+        }
+        var len = pieces.length;
+        if (len) {
+          if (pieces[len - 1]) {
+            name = pieces[len - 1];
+          } else if(len > 1 && pieces[len - 2]) {
+            name = pieces[len - 2];
+          }
+        }
+      }
+      return name;
+    },
+
+    getParentFolderFromPath: function(path) {
+      var parent = "";
+      if (path && typeof path === "string") {
+        var pieces = path.split("/");
+        if (pieces && !pieces[0]) {
+          pieces.shift();
+        }
+        if (pieces && pieces.length && !pieces[pieces.length - 1]) {
+          pieces.pop();
+        }
+        if (pieces.length) {
+          pieces.pop(); // remove child, leaving parent
+        }
+        var len = pieces.length;
+        if (len) {
+          parent = pieces[len - 1];
+        } else {
+          parent = MLDOStrings.rootFolderNameMatlabDrive;
+        }
+      }
+      return parent;
+    },
+
+    isMobileBrowser: function() {
+      var isMobile = false;
+      // recommended by Mozilla for mobile test.
+      if (/Mobi/.test(navigator.userAgent)) {
+        isMobile = true;
+      }
+      return isMobile;
+    },
+
+    sortFileInfosByPath: function(fileInfos) {
+      var sortedFileInfos = [];
+      var compareMethod;
+      if (!fileInfos || !Array.isArray(fileInfos) || !fileInfos.length) {
+        throw new TypeError("Invalid fileInfos argument");
+      }
+      if (fileInfos[0].originalLocation && fileInfos[0].tombstoneId) {
+        compareMethod = function(a, b) {
+          var val;
+          if (a.originalLocation === b.originalLocation) { val = 0;}
+          if (a.originalLocation < b.originalLocation) { val = 1; }
+          if (a.originalLocation > b.originalLocation) { val = -1; }
+          return val;
+        };
+      } else if (fileInfos[0].path) {
+        compareMethod = function(a, b) {
+          var val;
+          if (a.path === b.path) { val = 0;}
+          if (a.path < b.path) { val = -1; }
+          if (a.path > b.path) { val = 1; }
+          return val;
+        };
+      }else {
+        compareMethod = null;
+      }
+      if (compareMethod) {
+        sortedFileInfos = fileInfos.sort(compareMethod);
+      } else {
+        sortedFileInfos = fileInfos;
+      }
+      return sortedFileInfos;
+    },
+
+    filterBasedOnParent: function(fileInfos) {
+      fileInfos = fileInfos || [];
+      var allFileInfos = fileInfos;
+      var filteredFileInfos = [];
+      allFileInfos.forEach(function (fileInfo) {
+              if (allFileInfos.filter(function (e) {
+                  return e.path === fileInfo.parent;
+              }).length > 0) {
+                  return;
+              } else {
+                  filteredFileInfos.push(fileInfo);
+                  return;
+              }
+          }
+      );
+      return filteredFileInfos;
+    },
+
+    areAllOriginalLocationsTheSame: function(fileInfos) {
+      var areSame = false;
+      var originalLocation;
+      if (fileInfos && fileInfos.length && fileInfos[0] && fileInfos[0].originalLocation) {
+        originalLocation = fileInfos[0].originalLocation;
+        areSame = true;
+        fileInfos.forEach(function (fileInfo) {
+          if (!fileInfo.originalLocation ||
+              typeof fileInfo.originalLocation !== "string" ||
+              fileInfo.originalLocation !== originalLocation) {
+            areSame = false;
+          }
+        });
+      }
+      return areSame;
+    },
+
+    toTitleCase: function(str) {
+      var titleString;
+      titleString = str.replace(/\w\S+/g,
+                                function(txt) {
+                                  return txt.charAt(0).toUpperCase() + txt.substr(1).toLowerCase();
+                                });
+      return titleString;
+    },
+
+    getParentPath: function(path) {
+      var parentPath = "";
+      if (path && typeof path === "string") {
+        var pieces = path.split("/");
+        if (pieces && !pieces[0]) {
+          pieces.shift();
+        }
+        if (pieces && pieces.length && !pieces[pieces.length - 1]) {
+          pieces.pop();
+        }
+        if (pieces.length) {
+          pieces.pop(); // remove child, leaving parent
+        }
+        var len = pieces.length;
+        if (len) {
+          for (var i = 0; i < len; i++) {
+            parentPath += "/" + pieces[i];
+          }
+        } else {
+          parentPath = "/";
+        }
+      }
+      return parentPath;
+    },
+
+    getGuidDigit: function(c) {
+      var r = Math.random() * 16 | 0;
+      var v = ((c == 'x') ? r : (r & 0x3 | 0x8));
+      return v.toString(16);
+    },
+
+    getInstanceGUID: function() {
+      var context = this;
+      return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, context.getGuidDigit);
+    },
+
+    getErrorMessageTranslator: function() {
+      return ErrorMessageTranslator.getInstance();
+    },
+
+    /*
+     * Mimics what MO MobileBrowserCheck (mw-browser-utils) does
+     */
+    isBrowserValid: function () {
+        var isValid = true;
+        var query = HtmlUtils.parseQueryString();
+        /*
+            If there is a query parameter touch, then there is no check for ios or android sot MO will load
+        */
+        if (query["touch"] == null && (has("ios") || has("android"))) { // jshint ignore:line
+            isValid = false;
+        }
+
+        return isValid;
+    },
+
+    getMldoURL: function(locationString, page) {
+      var mldoURL = "";
+      var protocolAndHost = locationString;
+      var currentLocation = null;
+      var origin = "";
+      var protocol = "";
+      var hostplus = "";
+      var port = "";
+      var hostname = "";
+      var hostPieces = null;
+      var hostAndPort = null;
+      if (!this.isIE11()) {
+        currentLocation = new URL(locationString);
+        origin = currentLocation.origin;
+        protocol = currentLocation.protocol;
+        hostname = currentLocation.hostname;
+        port = currentLocation.port;
+      } else {
+        // isIE11 -- no support for URL
+        if (protocolAndHost.indexOf("://") >= 0) {
+          protocolAndHost = locationString.split("://");
+          if (protocolAndHost.length === 2) {
+            protocol = protocolAndHost[0];
+            host = protocolAndHost[1];
+          }
+        }
+        if (host) {
+          if (host.indexOf("/") >= 0) {
+            hostPieces = host.split("/");
+            if (hostPieces.length >= 1) {
+              hostname = hostPieces[0];
+            }
+          } else {
+            hostname = host;
+          }
+        }
+        if (hostname && hostname.indexOf(":") >= 0) {
+          hostAndPort = hostname.split(":");
+          hostname = hostAndPort[0];
+          port = hostAndPort[1];
+        }
+      }
+      if (origin) {
+        mldoURL = origin;
+        if (page) {
+          if (page.indexOf("/") !== 0) {
+            mldoURL += "/";
+          }
+          mldoURL += page;
+        }
+      } else if (protocol && hostname) {
+        mldoURL += protocol + "://" + hostname;
+        if (port) {
+          mldoURL += ":" + port;
+        }
+        if (page) {
+          if (page.indexOf("/") !== 0) {
+            mldoURL += "/";
+          }
+          mldoURL += page;
+        }
+      }
+      return mldoURL;
+    },
+
+    isMSEdge: function() { return (navigator && navigator.userAgent) ? /Edge\/\d+/.test(navigator.userAgent) : false; },
+
+    isIE11: function() { return (!!window.MSInputMethodContext && !!document.documentMode) && !this.isMSEdge(); },
+
+    isValidInvitationAction: function(action) {
+      var isValid = false;
+      if (action && typeof action === "string" && VALID_INVITATION_ACTIONS.indexOf(action) >= 0) {
+        isValid = true;
+      }
+      return isValid;
+    },
+
+    isDirectoryUploadSupported: function() {
+      var elem = document.createElement('input');
+      elem.type = "file";
+      return (!this.isIE11() && ("webkitdirectory" in elem));
+    },
+
+    isEmptyObject: function(obj) {
+      return !obj || Object.keys(obj).length === 0;
+    },
+
+     getTabbableElements: function() {
+       return $('a[href], area[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled]), iframe, object, embed, *[tabindex], *[contenteditable]');
+     },
+
+     disableTabbingOnPage: function(tabbableElements) {
+       $.each(tabbableElements, function (index, element) {
+         $(element).attr('tabindex', '-1');
+       });
+     },
+
+     returnFocusToFirstElementInModal: function(firstFocusableElement, lastFocusableElement, e) {
+       let isTabPressed = e.key === 'Tab' || e.keyCode === 9;
+       if (!isTabPressed) {
+         return;
+       }
+
+       if (e.shiftKey) { // if shift key pressed for shift + tab combination
+         if (document.activeElement === firstFocusableElement) {
+           lastFocusableElement.focus(); // add focus for the last focusable element
+           e.preventDefault();
+         }
+       } else { // if tab key is pressed
+         if (document.activeElement === lastFocusableElement) { // if focused has reached to last focusable element then focus first focusable element after pressing tab
+           firstFocusableElement.focus(); // add focus for the first focusable element
+           e.preventDefault();
+         }
+       }
+     },
+
+     enableTabbingOnModal: function(tabbableElements) {
+       $.each(tabbableElements, function (index, element) {
+         if($(element).parents('.modal').length) {
+           //element is inside of the modal
+           $(element).attr('tabindex', '0');
+         }
+       });
+     },
+
+     reEnableTabbingOnPage: function(tabbableElements) {
+       $.each(tabbableElements, function (index, element) {
+         $(element).attr('tabindex', '0');
+       });
+     }
+
+  };
+}); // require

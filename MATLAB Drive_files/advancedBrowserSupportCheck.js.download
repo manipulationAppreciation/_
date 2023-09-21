@@ -1,0 +1,41 @@
+/* istanbul ignore file */
+define([], function() {
+  'use strict';
+
+  var browserIsSupported = false;
+
+  /* jshint ignore:start */
+  (function() { // use anonymous closure so everything goes away when done.
+    // supports const
+    const constTest = 32;
+
+    // supports let
+    let letTest = "abc";
+
+    // supports lambda
+    let lambdaTest = (a, b) => a * b;
+
+    // supports Promise
+    function promiseTest() {
+      return new Promise(resolve => {
+        setTimeout(() => {
+          resolve('resolved');
+        }, 2000);
+      });
+    }
+
+    // supports async/await
+    const asyncAwaitTest = async function(x) {
+      let a = await promiseTest();
+      let b = await promiseTest();
+      return x + a + b;
+    };
+
+  })();
+  /* jshint ignore:end */
+  
+  browserIsSupported = true;
+  var isSupported = function() { return browserIsSupported; };
+
+  return isSupported;
+});

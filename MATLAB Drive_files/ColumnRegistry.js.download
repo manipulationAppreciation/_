@@ -1,0 +1,196 @@
+define([
+  "mw-filebrowser/columns/FileBrowserColumnRegistry",
+  "mw-filebrowser/columns/NameColumn",
+  "mw-filebrowser/columns/SizeColumn",
+  "mw-filebrowser/columns/DateModifiedColumn",
+  "filebrowser/columns/OriginalLocationColumn",
+  "filebrowser/columns/TombstoneColumn",
+  "filebrowser/columns/DeletedDateColumn",
+  "filebrowser/columns/ClientDateModifiedColumn",
+  "filebrowser/columns/SharedByColumn",
+  "filebrowser/columns/SharedOnColumn",
+  "filebrowser/columns/AccessTypeColumn",
+  "filebrowser/columns/OwnedByColumn",
+  "mw-filebrowser/columns/helpers/FileIconUtils",
+  "dojo/i18n!nls/mldoStringResource"
+], function (FileBrowserColumnRegistry, NameColumn,
+             SizeColumn, DateModifiedColumn, OriginalLocationColumn,
+             TombstoneColumn, DeletedDateColumn, ClientDateModifiedColumn,
+             SharedByColumn, SharedOnColumn, AccessTypeColumn, OwnedByColumn, FileIconUtils, MLDOStrings) {
+
+  function renderHeaderCellOverride(th) {
+      var nameColumn = document.createElement("div");
+      nameColumn.className = "columnHeaderLabel";
+      var labelNode = document.createTextNode(this.label);
+      nameColumn.appendChild(labelNode);
+      th.appendChild(nameColumn);
+  }
+
+  var ColumnRegistry = function(desiredColumns, indentWidth, id) {
+    if (!desiredColumns || typeof desiredColumns !== "object" || Object.keys(desiredColumns).length === 0) {
+      throw new TypeError("Invalid desiredColumns argument");
+    }
+    if (indentWidth && isNaN(indentWidth)) {
+      throw new TypeError("Invalid indentWidth argument");
+    }
+    if (id && typeof id !== "string") {
+      throw new TypeError("Invalid id argument");
+    }
+    return this.createColumnRegistry(desiredColumns, indentWidth, id);
+  };
+
+  /*
+   * Actions: Context menu item constructors
+   */
+  ColumnRegistry.prototype = {
+    /*
+     * Columns and Sorting
+     */
+    createColumnRegistry: function(desiredColumns, indentWidth, id) {
+      desiredColumns = desiredColumns || {};
+      var registry = new FileBrowserColumnRegistry();
+      /* always have a Name column */
+      var nameColumn = new NameColumn({});
+      nameColumn.column.label = MLDOStrings.widgetTestOptionsColumnName;
+      nameColumn.column.renderHeaderCell = renderHeaderCellOverride;
+      if (id) {
+        nameColumn.column.id = nameColumn.column.id + id;
+      }
+      nameColumn.column.indentWidth = indentWidth || 25;
+      nameColumn.column.editorArgs.pattern = '[^\/\\\\:?*"<>|]*';
+      if (desiredColumns.linkName) {
+        nameColumn.column.renderCell = function (fileInfo, data, td, options) {
+            var cellData = document.createElement("span");
+            var icon;
+            cellData.className = "dgrid-cell-data";
+
+            if (fileInfo.type !== "group") {
+                icon = document.createElement("span");
+                icon.id = FileIconUtils.ICON_PLACE_HOLDER;
+                icon.className = FileIconUtils.getIconClass(fileInfo, nameColumn.column.grid._expanded[fileInfo.path]);
+                cellData.appendChild(icon);
+            }
+
+            var fileName = document.createTextNode(fileInfo.name);
+            var link = document.createElement("a");
+            link.setAttribute("data-linkpath", fileInfo.linkPath);
+            link.setAttribute("data-tombstoneid", fileInfo.tombstone);
+            link.appendChild(fileName);
+            link.className = "shareInvitationLink";
+            cellData.appendChild(link);
+
+            if (fileInfo.type === "group") {
+                domClass.add(cellData, "group");
+            }
+            var infoLabelText = FileIconUtils.getInfoLabel(fileInfo);
+            if (infoLabelText) {
+                var infoLabel = document.createElement("span");
+                infoLabel.className = "infoLabel";
+                infoLabel.innerText = infoLabelText;
+                cellData.appendChild(infoLabel);
+            }
+            return cellData;
+        };
+      }
+      registry.addColumn(nameColumn);
+
+      if (desiredColumns.tombstone) {
+        var tombstoneColumn = new TombstoneColumn({});
+        if (id) {
+          tombstoneColumn.column.id = tombstoneColumn.column.id + id;
+        }
+        tombstoneColumn.column.hidden = true;
+        registry.addColumn(tombstoneColumn);
+      }
+
+      if (desiredColumns.originalLocation) {
+        var originalLocationColumn = new OriginalLocationColumn({});
+        if (id) {
+          originalLocationColumn.column.id = originalLocationColumn.column.id + id;
+        }
+        originalLocationColumn.column.hidden = false;
+        registry.addColumn(originalLocationColumn);
+      }
+
+      if (desiredColumns.size) {
+        var sizeColumn = new SizeColumn({});
+        sizeColumn.column.label = MLDOStrings.widgetTestOptionsColumnSize;
+        sizeColumn.column.renderHeaderCell = renderHeaderCellOverride;
+        if (id) {
+          sizeColumn.column.id = sizeColumn.column.id + id;
+        }
+        sizeColumn.column.hidden = false;
+        registry.addColumn(sizeColumn);
+      }
+
+      if (desiredColumns.modifiedDate) {
+        var modifiedColumn = new DateModifiedColumn({});
+        modifiedColumn.column.label = MLDOStrings.widgetTestOptionColumnDateModified;
+        modifiedColumn.column.renderHeaderCell = renderHeaderCellOverride;
+        if (id) {
+          modifiedColumn.column.id = modifiedColumn.column.id + id;
+        }
+        modifiedColumn.column.hidden = false;
+        registry.addColumn(modifiedColumn);
+      }
+
+      if (desiredColumns.deletedDate) {
+        var deletedDateColumn = new DeletedDateColumn({});
+        if (id) {
+          deletedDateColumn.column.id = deletedDateColumn.column.id + id;
+        }
+        deletedDateColumn.column.hidden = false;
+        registry.addColumn(deletedDateColumn);
+      }
+
+      if (desiredColumns.clientModifiedDate) {
+        var clientDateModifiedColumn = new ClientDateModifiedColumn({});
+        if (id) {
+          clientDateModifiedColumn.column.id = clientDateModifiedColumn.column.id + id;
+        }
+        clientDateModifiedColumn.column.hidden = false;
+        registry.addColumn(clientDateModifiedColumn);
+      }
+
+      if (desiredColumns.sharedBy) {
+        var sharedByColumn = new SharedByColumn({});
+        if (id) {
+          sharedByColumn.column.id = sharedByColumn.column.id + id;
+        }
+        sharedByColumn.column.hidden = false;
+        registry.addColumn(sharedByColumn);
+      }
+
+      if (desiredColumns.sharedOn) {
+        var sharedOnColumn = new SharedOnColumn({});
+        if (id) {
+          sharedOnColumn.column.id = sharedOnColumn.column.id + id;
+        }
+        sharedOnColumn.column.hidden = false;
+        registry.addColumn(sharedOnColumn);
+      }
+
+      if (desiredColumns.accessType) {
+        var accessTypeColumn = new AccessTypeColumn({});
+        if (id) {
+          accessTypeColumn.column.id = accessTypeColumn.column.id + id;
+        }
+        accessTypeColumn.column.hidden = false;
+        registry.addColumn(accessTypeColumn);
+      }
+
+      if (desiredColumns.ownedBy) {
+        var ownedByColumn = new OwnedByColumn({});
+        if (id) {
+          ownedByColumn.column.id = ownedByColumn.column.id + id;
+        }
+        ownedByColumn.column.hidden = false;
+        registry.addColumn(ownedByColumn);
+      }
+
+      return registry;
+    }
+  };
+
+  return ColumnRegistry;
+});

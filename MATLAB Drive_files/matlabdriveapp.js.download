@@ -1,0 +1,1218 @@
+define([
+  "underscore",
+  "jquery",
+  "backbone",
+  "bootstrap",
+  "util",
+  "matlabdriverouter",
+  "authmanager",
+  "notificationmanager",
+  "userquotamanager",
+  "pages/FilesPage",
+  "pages/TrashPage",
+  "pages/SharingPage",
+  "pages/PreviewPage",
+  "apsClient",
+  "dojo/i18n!nls/mldoStringResource"
+], function( _, $, Backbone, Bootstrap, Util, MATLABDriveRouter, AuthManager, NotificationManager, UserQuotaController, FilesPageView, TrashPageView, SharingPageView, PreviewPage, APSClient, MLDOStrings ) {
+
+  var _VALID_APP_IDS = [ "", "addons", "thingspeak", "matlab_grader"];
+
+  /**
+   * Application UI controller
+   * Contains an embedded login manager
+   * Handles communicating with GDS
+   *
+   * Note: this is now an abstract class. Do not instantiate.
+   * Rather use the subclasses: MldoFbApp.
+   */
+  var MatlabDriveApplication = Backbone.View.extend({
+
+    // map event handlers to events that are for THIS component (not intercomponent)
+    events: {
+      "click a#menu-logout" : "logoutHandler",
+    },
+
+    // called by the contructor
+    initialize: function(args) {
+      var context = this;
+      var params = this.processInitializeArguments(args);
+      if (!params || !params.options || !params.config) {
+        throw new Error("Bad results from processInitializeArguments");
+      }
+      this.options = params.options;
+      this.config = params.config;
+      this.externalChanges = [];
+      this.externalChangeCount = 0;
+      /*
+       * Load module controllers
+       */
+      this.authMgr = new AuthManager(this.options,this.config);
+      this.appContainerId = this.options.appContainerId;  // html element's id attribute value
+      this.$appContainer = $('#' + this.appContainerId); // jQuery ID selector
+      this.setElement(this.$appContainer); // set the base element of this view.
+      this.notificationMgr = new NotificationManager(this.options);
+      this.userQuotaController = new UserQuotaController(
+        {
+          gdsDAO: this.getAuthManager().getDAO()
+        }
+      );
+      this.filesPage = new FilesPageView(
+        {
+          pageOptions: {
+            authmanager: this.getAuthManager(),
+            quotamanager: this.getUserQuotaController(),
+            treecontroller: null,
+            allowDnD: this.options.allowDnD,
+            allowDownloads: this.options.allowDownloads
+          },
+          config: this.config
+        }
+      );
+      this.filesPage.setNotificationManager(this.getNotificationManager());
+      this.trashPage = new TrashPageView(
+        {
+          pageOptions: {
+            authmanager: this.getAuthManager(),
+            quotamanager: this.getUserQuotaController(),
+            treecontroller: null
+          },
+          config: this.config
+        }
+      );
+      // adjust CSS on body for trash enabled UI
+      $('body').addClass('ff-delete');
+
+      if ((this.config.isSharingEnabled && this.config.isSharingEnabled())) {
+        $('html').addClass('mldo-sharing');
+        this.sharingPage = new SharingPageView(
+          {
+            pageOptions: {
+              authmanager: this.getAuthManager(),
+              quotamanager: this.getUserQuotaController(),
+              treecontroller: null
+            },
+            config: this.config
+          }
+        );
+        this.sharingPage.setNotificationManager(this.getNotificationManager());
+      }
+
+      if ((this.config.isInvitationPreviewEnabled && this.config.isInvitationPreviewEnabled())) {
+        this.previewPage = new PreviewPage(
+          {
+            pageOptions: {
+              authmanager: this.getAuthManager(),
+              quotamanager: this.getUserQuotaController(),
+              allowDownloads: this.options.allowDownloads
+            },
+            config: this.config
+          }
+        );
+      }
+      this.htmlLocalStorage = (typeof(Storage) !== "undefined");
+      // Test and turn off if browser settings doesn't allow access.
+      if (this.htmlLocalStorage) {
+        try {
+          localStorage.getItem("mldo.currentFolder");
+        } catch (e) {
+          this.htmlLocalStorage = false;
+        }
+      }
+
+      // bind 'this' in the listed methods to the current 'this',
+      // even when called by other modules.
+      _.bindAll(this, "messageHandler", "logoutHandler", "sessionSuccess",
+                      "sessionFailure", "refreshPage", "goToTrashCan",
+                      "goToFiles", "goToSharing", "incrementExternalChangeCount",
+                      "getExternalChanges", "getExternalChangeCount",
+                      "getExternalChangeCount", "getExternalChanges",
+                      "incrementExternalChangeCount", "getCurrentPage",
+                      "stopCurrentPage", "handleApsRefresh", "navigateToSharing",
+                      "handleApsStorageRefresh", "navigateToFiles",
+                      "navigateToTrash", "_handleApsRefreshFunctionality",
+                      "_handleApsStorageRefreshFunctionality",
+                      "handleApsRefreshFiles", "handleApsRefreshTrash",
+                      "handleApsRefreshSharing", "handleApsRefreshBoth",
+                      "handleApsRefreshNoPage", "logout",
+                      "handleApsNotification", "updateDropdown" );
+
+      /**
+      *  Router that handles bookmarks and address bar in browser
+      *  Set pushState to false for servers that don't
+      *  support HTML5 pushstate (like glassFish)
+      */
+      this.router = new MATLABDriveRouter(
+        {
+          parent: this,
+          useHtml5PushState: this.config.useHtml5PushState(),
+          routerBase: this.config.getRouterBase(),
+          isDeleteEnabled: true,
+          additionalApplicationsEnabled: ((this.config.isAdditionalApplicationsEnabled && this.config.isAdditionalApplicationsEnabled()) ? true : false),
+          isSharingEnabled: (this.config.isSharingEnabled && this.config.isSharingEnabled()),
+          isInvitationPreviewEnabled: (this.config.isInvitationPreviewEnabled && this.config.isInvitationPreviewEnabled())
+        }
+      );
+    },
+
+    processInitializeArguments: function(params) {
+      if (!params || typeof params !== "object") {
+        throw new TypeError("Invalid params argument");
+      }
+      var options = params.applicationOptions;
+      var config = params.config;
+      // options are either passed in, or use the default values
+      var defaults = {
+        appContainerId: 'app',
+        authContainerId: 'authContainer',
+        loginIframeId: 'loginIframe',
+        notificationAreaId: 'matlabErrors',
+        allowDnD: true
+      };
+      if (typeof options === 'object') {
+        options = $.extend(defaults, options); // jQuery call to merge to objects, override defaults with any passed in values
+      } else {
+        options = defaults;
+      }
+      // config should be provide and have a getGdsURL method -- if not, throw exception
+      if (!config || typeof config != 'object' || !config.getGdsURL || !config.getDAOClassName) {
+        throw new TypeError("Invalid config argument");
+      }
+      return({options: options, config: config});
+    },
+
+    getExternalChangeCount: function() {
+      return this.externalChangeCount;
+    },
+
+    getExternalChanges: function() {
+      return this.externalChanges;
+    },
+
+    incrementExternalChangeCount: function(msg) {
+      ++this.externalChangeCount;
+      this.externalChanges.push(msg);
+    },
+
+    getAuthManager: function() {
+      return this.authMgr;
+    },
+
+    getNotificationManager: function() {
+      return this.notificationMgr;
+    },
+
+    getUserQuotaController: function() {
+      return this.userQuotaController;
+    },
+
+    getFilesPage: function() {
+      return this.filesPage;
+    },
+
+    getTrashPage: function() {
+      return this.trashPage;
+    },
+
+    getSharingPage: function() {
+      if (this.config.isSharingEnabled && this.config.isSharingEnabled()) {
+        return this.sharingPage;
+      } else {
+        return null;
+      }
+    },
+
+    getPreviewPage: function() {
+      if (this.config.isInvitationPreviewEnabled && this.config.isInvitationPreviewEnabled()) {
+        return this.previewPage;
+      } else {
+        return null;
+      }
+    },
+
+    /*
+    * Callback functions for inter-module communication
+    */
+    messageHandler: function(data) {
+     if (!data || typeof data !== "object" || !data.message || typeof data.message !== "string" || (data.severity && typeof data.severity !== "string")) {
+       throw new TypeError("Invalid message data argument");
+     }
+     var msg = data.message;
+     var doLogout = data.severity === 'SEVERE';
+     if (data.severity === 'ERROR' || data.severity === 'SEVERE') {
+       this.getNotificationManager().notifyUserOfError(data.message, doLogout);
+     } else if (data.severity === 'NORMAL') {
+       if (data.linkData && typeof data.linkData === "object" && data.linkData.callback && typeof data.linkData.callback === "function" && data.linkData.text && typeof data.linkData.text === "string") {
+         this.getNotificationManager().notifyUserOfSuccessWithLink(data.message, data.linkData.text, data.linkData.callback);
+       } else {
+         this.getNotificationManager().notifyUserOfSuccess(data.message, false);
+       }
+     } else if (data.severity === 'INFO') {
+       this.getNotificationManager().notifyUserOfInfo(data.message, false);
+     } else {
+       throw new TypeError("Invalid severity value");
+     }
+    },
+
+    sessionSuccess: function(view, argument) {
+      switch (view) {
+        case 'files':
+          this.navigateToFiles(argument); // folderPath
+          break;
+        case 'trash':
+          this.router.navigate(this.getApplicationId() + "trash", {trigger: true});
+          break;
+        case 'sharing':
+          if (this.config.isSharingEnabled && this.config.isSharingEnabled()) {
+            this.navigateToSharing(argument); // invitationId
+          } else {
+            this.router.navigate("files", {trigger: true, replace: true});
+          }
+          break;
+        default:
+          this.router.navigate(this.getApplicationId() + "files", {trigger: true, replace: true});
+          break;
+      }
+      this.startAPS();
+    },
+
+    // On failure, if the error is authentication, redirect to
+    // embedded login form. Otherwise, log error message.
+    sessionFailure: function(gdsError) {
+      if (gdsError && typeof gdsError === "object") {
+        var notifier = this.getNotificationManager();
+        if (gdsError.errorCode !== "AUTHENTICATION_ERROR") {
+          if (notifier) {
+            var msg = Util.getErrorMessageTranslator().getTranslatedMessage(gdsError, "matlabdriveapp.sessionFailure");
+            notifier.notifyUserOfError(msg, true);
+          }
+        }
+      }
+      this.logout();
+    },
+
+    startView: function(view, folderPath, appSwitch, authenticated, invitationId) {
+      var am = this.getAuthManager();
+      if (view !== "preview") {
+            this.startAPS();
+      }
+      if (view === 'files') {
+        am.hide();
+        $('body').removeClass("mldoLogin");
+        this.getTrashPage().stopPage();
+        if (this.config.isSharingEnabled && this.config.isSharingEnabled()) {
+          this.getSharingPage().stopPage();
+        }
+        if (this.config.isInvitationPreviewEnabled && this.config.isInvitationPreviewEnabled()) {
+          this.getPreviewPage().stopPage();
+        }
+        this.startFilesPage();
+        this.navigateToFiles(folderPath, appSwitch);
+      } else if (view === 'trash') {
+        am.hide();
+        $('body').removeClass("mldoLogin");
+        this.getFilesPage().stopPage();
+        if (this.config.isSharingEnabled && this.config.isSharingEnabled()) {
+          this.getSharingPage().stopPage();
+        }
+        if (this.config.isInvitationPreviewEnabled && this.config.isInvitationPreviewEnabled()) {
+          this.getPreviewPage().stopPage();
+        }
+        this.startTrashPage();
+        this.navigateToTrash(appSwitch);
+      } else if (view === "sharing") {
+        if (this.config.isSharingEnabled && this.config.isSharingEnabled()) {
+          am.hide();
+          $('body').removeClass("mldoLogin");
+          this.getFilesPage().stopPage();
+          this.getTrashPage().stopPage();
+          if (this.config.isInvitationPreviewEnabled && this.config.isInvitationPreviewEnabled()) {
+            this.getPreviewPage().stopPage();
+          } else if (invitationId) {
+            this.getSharingPage().setActionableInvitation({invitationId: invitationId, action: null});
+          }
+          this.startSharingPage();
+          this.navigateToSharing(invitationId, appSwitch);
+        } else {
+          throw new TypeError("Invalid \"view\" value");
+        }
+      } else if (view === "preview") {
+        if (this.config.isInvitationPreviewEnabled && this.config.isInvitationPreviewEnabled()) {
+          am.hide();
+          $('body').removeClass("mldoLogin");
+          this.getFilesPage().stopPage();
+          this.getTrashPage().stopPage();
+          if (this.config.isSharingEnabled && this.config.isSharingEnabled()) {
+            this.getSharingPage().stopPage();
+          }
+          this.startPreviewPage(invitationId, folderPath, authenticated, authenticated ? am.getSessionId() : null);
+          this.navigateToPreview(invitationId, folderPath, appSwitch);
+        } else {
+          throw new TypeError("Invalid \"view\" value");
+        }
+      } else {
+        throw new TypeError("Invalid \"view\" value");
+      }
+    },
+
+    getClientStringForView: function(view, folderPath) {
+      var clientString = "MLDO"; // default value
+      switch (view) {
+        case "files":
+         clientString = "MLDO-FILES";
+         break;
+        case "trash":
+         clientString = "MLDO-TRASH";
+         break;
+        case "sharing":
+         if (folderPath && folderPath.length) {
+           clientString = "MLDO-SHARING-INVITE";
+         } else {
+           clientString = "MLDO-SHARING";
+         }
+      }
+      return clientString;
+    },
+
+    doLogin: function(view, folderPath, invitationId, errorText) {
+      var context = this;
+      var am = this.getAuthManager();
+      var loginPromise = am.startLogin(this.getClientStringForView(view, folderPath), errorText, view, invitationId);
+      $('body').addClass("mldoLogin");
+      this.router.navigate("login", {trigger: false});
+      loginPromise.done(function(result) {
+        $('body').removeClass("mldoLogin");
+        if (view === 'files') {
+          context.router.navigate("files" + folderPath, {trigger: true, replace: true});
+        } else if (view === "sharing") {
+          if (context.config.isSharingEnabled && context.config.isSharingEnabled()) {
+            if (invitationId) {
+              context.router.navigate("sharing/" + invitationId + folderPath, {trigger: true, replace: true});
+            } else {
+              context.router.navigate("sharing/", {trigger: true, replace: true});
+            }
+          } else {
+            context.router.navigate("files", {trigger: true, replace: true});
+          }
+        } else {
+          context.router.navigate(view, {trigger: true, replace: true});
+        }
+      });
+      return loginPromise;
+    },
+
+    /**
+     * Determine whether to do a login, handshake, or go straight to the app
+     */
+    authCheck: function(view, folderPath, appSwitch, invitationId) {
+      folderPath = folderPath || "";
+      view = view || 'files';
+      var context = this;
+      // if there already is a sessionID and profile info, show the app UI
+      var am = this.getAuthManager();
+      // if we have a valid session, use it
+      if (am.isValidSession()) {
+        // startView and set authenticated as true
+        this.startView(view, folderPath, appSwitch, true, invitationId);
+        // if there already is a token and profile info, try the GDS handshake
+      } else {
+        // otherwise, we do not have a valid session
+        // So, see if we can create a new session using the SSO cookie.
+        am.hide();
+        var sessionPromise = am.doServiceHandshake();
+        // sessionPromise.done(function(result) {context.sessionSuccess(view, folderPath);}).fail(context.sessionFailure);
+        sessionPromise.done(function(result) {
+          context.authCheck(view, folderPath, appSwitch, invitationId);
+        })
+          .fail(function (err) {
+            // if view is Preview, start unauthenticated invitation preview
+            if (context.config.isInvitationPreviewEnabled && context.config.isInvitationPreviewEnabled() && view === "preview") {
+              // startView and set authenticated as false
+              context.startView(view, folderPath, appSwitch, false, invitationId);
+            } else {
+              // If that fails, redirect to login page.
+              // In case of displaying Login page after performing an action on Preview page
+              if (document.getElementById("previewView") !== null && context.config.isInvitationPreviewEnabled && context.config.isInvitationPreviewEnabled()) {
+                context.getPreviewPage().stopPage();
+                context.getPreviewPage().stopPageOnRedirectToLogin();
+              }
+              context.doLogin(view, folderPath, invitationId);
+            }
+          });
+      }
+    },
+
+    getCurrentPage: function(doNavigation) {
+      var currentPage = null;
+      var page = this.router.getCurrentRoutePage();
+      switch(page) {
+        case 'files':
+          currentPage = this.getFilesPage();
+          if (doNavigation) {
+            this.router.navigate(this.getApplicationId() + "files", {trigger: true});
+          }
+          break;
+
+        case 'trash':
+          currentPage = this.getTrashPage();
+          if (doNavigation) {
+            this.router.navigate(this.getApplicationId() + "trash", {trigger: true});
+          }
+          break;
+
+        case 'sharing':
+          if (this.config.isSharingEnabled && this.config.isSharingEnabled()) {
+            currentPage = this.getSharingPage();
+            if (doNavigation) {
+              this.router.navigate(this.getApplicationId() + "sharing", {trigger: true});
+            }
+          } else {
+            throw new Error("Unsupported router page value: " + page);
+          }
+          break;
+
+        default:
+          throw new Error("Unsupported router page value: " + page);
+      }
+      return currentPage;
+    },
+
+    stopCurrentPage: function() {
+      var currentPage = this.getCurrentPage(false);
+      if (currentPage) {
+        currentPage.stopPage();
+      }
+    },
+
+    needsRefresh: function(folderPath) {
+      var isVisibleAndOpened = false;
+      if (folderPath && typeof folderPath === "string" && folderPath.length) {
+        var currentPage = this.getCurrentPage(false);
+        if (currentPage) {
+          isVisibleAndOpened = currentPage.needsRefresh(folderPath);
+        }
+      }
+      return isVisibleAndOpened;
+    },
+
+    refreshPage: function() {
+      var currentPage = this.getCurrentPage(false);
+      if (currentPage) {
+        currentPage.refreshPage();
+      }
+    },
+
+    goToTrashCan: function() {
+      $('body').removeClass("mldoLogin");
+      this.router.navigate(this.getApplicationId() + "trash", {trigger: true, replace: false});
+    },
+
+    goToFiles: function() {
+      var cf = this.getFilesPage().getStoredCurrentFolder();
+      $('body').removeClass("mldoLogin");
+      this.router.navigate(this.getApplicationId() + "files" + cf, {trigger: true, replace: false});
+    },
+
+    goToSharing: function(invitationId, command, fileInfo) {
+      if (this.config.isSharingEnabled && this.config.isSharingEnabled()) {
+        $('body').removeClass("mldoLogin");
+        if (invitationId && typeof invitationId === "string" ) {
+          if (command && typeof command === "string" && Util.isValidInvitationAction(command)) {
+            this.getSharingPage().setActionableInvitation({invitationId: invitationId, action: command, fileInfo: fileInfo});
+            this.router.navigate(this.getApplicationId() + "sharing", {trigger: true, replace: false});
+          } else {
+            this.router.navigate(this.getApplicationId() + "sharing/" + invitationId , {trigger: true, replace: false});
+          }
+        } else {
+          this.router.navigate(this.getApplicationId() + "sharing" , {trigger: true, replace: false});
+        }
+      }
+    },
+
+    _handleApsRefreshFunctionality: function(e, data) {
+      var path = null;
+      var origFolder = null;
+      var page = null;
+      var targetFolder = null;
+      var applicationId = (data && "application" in data)? data.application : "";
+      var routePage = this.router.getCurrentRoutePage();
+      if (e) {
+        e.preventDefault();
+        if (data && data.path) {
+          path = data.path;
+          if (data.origPath) {
+            origFolder = Util.getParentPath(data.origPath);
+          }
+          targetFolder = Util.getParentPath(path);
+        }
+        if (data && data.page) {
+          page = data.page;
+        }
+      }
+      if (applicationId.length && (this.getApplicationId().indexOf(applicationId) >= 0) && this.config.isAdditionalApplicationsEnabled() ) {
+        if (!page || page === routePage || page === 'both') {
+          if (!targetFolder ||
+             (page === "both" && routePage === "trash") ||
+             (targetFolder && this.needsRefresh(targetFolder)) ||
+             (origFolder && this.needsRefresh(origFolder))) {
+            this.refreshPage();
+          }
+        }
+      } else if (applicationId === "") {
+        if (!page || page === routePage || page === 'both') {
+          if (!targetFolder ||
+             (page === "both" && routePage === "trash") ||
+             (targetFolder && this.needsRefresh(targetFolder)) ||
+             (page === "sharing" && routePage === "sharing") ||
+             (origFolder && this.needsRefresh(origFolder))) {
+            this.refreshPage();
+          }
+        }
+      }
+    },
+
+    _handleApsStorageRefreshFunctionality: function(e, data) {
+      this.getUserQuotaController().render();
+    },
+
+    handleApsRefresh: function(e, data) {
+      if (data && data.page) {
+        switch (data.page) {
+          case "sharing":
+          this.handleApsRefreshSharing(e, data);
+          break;
+          case "files":
+          this.handleApsRefreshFiles(e, data);
+          break;
+          case "trash":
+          this.handleApsRefreshTrash(e, data);
+          break;
+          case "both":
+          this.handleApsRefreshBoth(e, data);
+          break;
+        }
+      } else {
+          this.handleApsRefreshNoPage(e, data);
+      }
+    },
+
+    handleApsRefreshTrash: _.debounce(function(e, data) { this._handleApsRefreshFunctionality(e, data); }, 1000),
+    handleApsRefreshFiles: _.debounce(function(e, data) { this._handleApsRefreshFunctionality(e, data); }, 1000),
+    handleApsRefreshSharing: _.debounce(function(e, data) { this._handleApsRefreshFunctionality(e, data); }, 1000),
+    handleApsRefreshBoth: _.debounce(function(e, data) { this._handleApsRefreshFunctionality(e, data); }, 1000),
+    handleApsRefreshNoPage: _.debounce(function(e, data) { this._handleApsRefreshFunctionality(e, data); }, 1000),
+
+    handleApsStorageRefresh: _.debounce(function(e, data) { this._handleApsStorageRefreshFunctionality(e, data); }, 1000),
+
+    handleApsNotification: function(e, data) {
+      if (e && typeof e === "object") {
+        e.preventDefault();
+      }
+      if (data && typeof data === "object") {
+        if (data.severity === 'SEVERE' || data.severity === 'ERROR' || data.severity === 'INFO') {
+          this.messageHandler(data);
+        } else if (data.severity === 'NORMAL') {
+          this.incrementExternalChangeCount(data.message);
+        }
+      }
+    },
+
+    startAPS: function() {
+      if (this.aps && this.aps.isAlive()) {
+        return;
+      }
+      if (this.config.isAPSEnabled && this.config.isAPSEnabled()) {
+        // setup message listeners for APS client messages
+        var context = this;
+        // Message telling us to refresh our grid because data has changed.
+        // The use of debounce is to prevent quick recalling of the same method.
+        // So, this says to call the debounced-method 1000ms after no more calls
+        // to it have occurred.
+        $(document).on("refresh:aps", this.handleApsRefresh);
+        $(document).on("refreshstorage:aps", this.handleApsStorageRefresh);
+        // message tellings us what changed or other notification info such as error.
+        $(document).on("notification:aps", this.handleApsNotification);
+
+        this.aps = new APSClient(this.config); // no longer pass UserID
+        if (this.aps) {
+          var originId = this.aps.getInstanceGUID();
+          if (originId) {
+            this.getAuthManager().getDAO().setOriginId(originId);
+            this.getFilesPage().setOriginId(originId);
+            this.getTrashPage().setOriginId(originId);
+          }
+          if (this.getAuthManager().getLoginData().accessToken) {
+            this.aps.initialize(this.getAuthManager().getLoginData().accessToken);
+          } else {
+            this.aps.initialize(this.getAuthManager().getLoginData().token);
+          }
+        }
+      }
+    },
+
+    stopAPS: function() {
+      if (this.config.isAPSEnabled && this.config.isAPSEnabled()) {
+
+        // Remove message listeners
+        $(document).off("refresh:aps");
+        $(document).off("refreshstorage:aps");
+        $(document).off("notification:aps");
+
+        if (this.aps) {
+          this.aps.stop();
+          this.getAuthManager().getDAO().setOriginId(null);
+          this.aps = null;
+        }
+      }
+    },
+
+    restartAPS: function() {
+      this.stopAPS();
+      this.startAPS();
+    },
+
+    closeAnyPopup: function() {
+      $('div.modal-backdrop.fade.in').remove();
+    },
+
+    updateDropdown: function() {
+      this.getCurrentPage(false).updateSettings();
+      this.getCurrentPage(false).updateUserQuota();
+    },
+
+    /**
+     * The Application's starting point.
+     */
+    startApplication: function() {
+      var am = this.getAuthManager();
+      var qm = this.getUserQuotaController();
+      var router = this.router;
+      var notifier = this.getNotificationManager();
+      var context = this;
+      notifier.start(this.logoutHandler);
+      am.start();
+      qm.start(this.messageHandler);
+      if (this.config.isQualarooEnabled && this.config.isQualarooEnabled()) {
+        var qualarooScript = document.createElement('script');
+        qualarooScript.type= "text/javascript";
+        qualarooScript.src = "/assets_3.8.0/js/analytics/qualaroo.js";
+        document.body.appendChild(qualarooScript);
+      }
+      if (this.config.isAdobeAnalyticsEnabled && this.config.isAdobeAnalyticsEnabled()) {
+        var adobeHeadScript = document.createElement('script');
+        adobeHeadScript.type= "text/javascript";
+        adobeHeadScript.src = "//assets.adobedtm.com/d0cc0600946eb3957f703b9fe43c3590597a8c2c/satelliteLib-e8d23c2e444abadc572df06537e2def59c01db09.js";
+        document.head.appendChild(adobeHeadScript);
+        adobeHeadScript.onload = function() {
+          var adobeBodyScript = document.createElement('script');
+          adobeBodyScript.type= "text/javascript";
+          adobeBodyScript.src = "/assets_3.8.0/js/analytics/adobe.js";
+          document.body.appendChild(adobeBodyScript);
+        };
+      }
+      $(window).on('online',  function(e) {context.restartAPS();});
+      $(window).on("storage", function(e) {
+        if (e.originalEvent.key === "sessionId" && !e.originalEvent.newValue) {
+          window.location.reload();
+        }
+      });
+
+      // disable this now because we update quota when dropdown expanded.
+      $(document).on("quotachange:mldo", function(e) {
+        if(e) {
+          e.preventDefault();
+        }
+        context.getUserQuotaController().render();
+      });
+
+      $(document).on("changetotrashpage:mldo", function(e) {
+        if (e) {
+          e.preventDefault();
+        }
+        context.goToTrashCan();
+      });
+      $(document).on("startfilespage:mldo", function(e, data) {
+        if (e) {
+          e.preventDefault();
+        }
+        context.getFilesPage().startPage(context.messageHandler);
+      });
+      $(document).on("stopfilespage:mldo", function(e) {
+        if (e) {
+          e.preventDefault();
+        }
+        context.getFilesPage().stopPage();
+      });
+      $(document).on("changetofilespage:mldo", function(e, data) {
+        if (e) {
+          e.preventDefault();
+        }
+        // Order IMPORTANT!:  Change folder BEFORE changing Pages.
+        if (data && data.destination) {
+          context.getFilesPage().changeStoredCurrentFolder(data.destination, false);
+        }
+        if (context.config.isCopyToDriveEnabled && context.config.isCopyToDriveEnabled()) {
+          if (data && typeof data === "object" && data.invitationId && typeof data.invitationId === "string" &&
+            data.invitationName && typeof data.invitationName === "string" && data.command && typeof data.command === "string") {
+            context.getFilesPage().setActionableInvitation({invitationId: data.invitationId, invitationName: data.invitationName, action: data.command, fileInfo: data.fileInfo});
+          }
+        }
+        context.goToFiles();
+      });
+      if (this.config.isSharingEnabled && this.config.isSharingEnabled()) {
+        $(document).on("changetosharingpage:mldo", function(e, data) {
+          if (e) {
+            e.preventDefault();
+          }
+          if (data && typeof data === "object" && data.invitationId && typeof data.invitationId === "string") {
+            if (context.htmlLocalStorage) {
+              localStorage.setItem("mldo:invitationId", data.invitationId);
+              if (data.command && typeof data.command === "string" && data.command !== "undefined") {
+                localStorage.setItem("mldo:command", data.command);
+              }
+              if (data.fileInfo && typeof data.fileInfo === "object" && data.fileInfo !== "undefined") {
+                localStorage.setItem("mldo:fileInfo", JSON.stringify(data.fileInfo));
+              }
+            }
+            context.goToSharing(data.invitationId, data.command, data.fileInfo);
+          } else {
+            context.goToSharing();
+          }
+        });
+      }
+      $(document).on('exitApplication:mldo', function(e) {
+        if (e) {
+          e.preventDefault();
+        }
+        context.logoutHandler();
+      });
+      $(document).on('navupdate:mldo', function(e, data) {
+        if (e && e.preventDefault) {
+          e.preventDefault();
+        }
+        if (data && data.path && data.path.length) {
+          context.updateNavAddress(data.path);
+        }
+      });
+      $(document).on('previewnavupdate:mldo', function(e, data) {
+        if (e && e.preventDefault) {
+          e.preventDefault();
+        }
+        if (data && data.path && data.path.length) {
+          context.updatePreviewNavAddress(data.path, data.invitationId);
+        }
+      });
+      $(document).on('toggleshowhiddenfiles:mldo', function(e, data) {
+        if (e && e.preventDefault) {
+          e.preventDefault();
+        }
+        context.setShowHidden(data);
+        context.refreshPage();
+      });
+      $(document).on('changeapplication:mldo', function(e, data) {
+        if (e && e.preventDefault) {
+          e.preventDefault();
+        }
+        var appId = (!data || !("newAppId" in data) || data.newAppId === "") ? "" : data.newAppId;
+        var pageName = (!data || !data.page) ? "files" : data.page;
+        var path = "/";
+        var currentPage = context.router.getCurrentRoutePage();
+        var currentAppId = context.getApplicationId();
+        var appSwitch = (currentAppId === appId || currentAppId === appId + "/")? false : true;
+        if (appSwitch) {
+          // If on Preview page, take user to Sharing page on changing application
+          if (pageName === "preview") {
+            pageName = "sharing";
+          }
+          context.setApplicationId(appId);
+          if (currentPage !== "files") {
+            context.getFilesPage().changeStoredCurrentFolder(path, true);
+          }
+          if (context.config.isSharingEnabled && context.config.isSharingEnabled()) {
+            if (currentPage !== "sharing") {
+              context.getSharingPage().changeStoredCurrentFolder(path, true);
+            }
+          }
+          context.getCurrentPage(false).changeStoredCurrentFolder(path);
+          context.router.navigate(context.getApplicationId() + pageName, {trigger: true, replace: false});
+        }
+      });
+      $(window).on('popstate', context.closeAnyPopup);
+
+      if (this.config.isOpenWithEnabled && this.config.isOpenWithEnabled()) {
+        // load OpenWith service
+        var scriptElement = document.createElement("script");
+        scriptElement.type = "application/javascript";
+        scriptElement.src = this.config.getOpenWithURL();
+        document.body.appendChild(scriptElement);
+      }
+
+      // router must start last
+      // start the router
+      router.start();
+    },
+
+    /**
+     * A method to removed event listens created by the login manager.
+     * (Not currently called)
+     */
+    stopApplication: function() {
+      var am = this.getAuthManager();
+      var qm = this.getUserQuotaController();
+      var notifier = this.getNotificationManager();
+      // remove event listeners
+      am.stop();
+      qm.stop();
+      notifier.stop();
+//      $(document).off("quotachange:mldo");
+      $(document).off("changetotrashpage:mldo");
+      $(document).off("changetofilespage:mldo");
+      if (this.config.isSharingEnabled && this.config.isSharingEnabled()) {
+        $(document).off("changetosharingpage:mldo");
+      }
+      $(document).off('exitApplication:mldo');
+      $(document).off('navupdate:mldo');
+      $(document).off('previewnavupdate:mldo');
+      $(window).off('online');
+      $(document).off('toggleshowhiddenfiles:mldo');
+      $(document).off('changeapplication:mldo');
+      $(window).off('popstate', this.closeAnyPopup);
+      // router doesn't stop
+    },
+
+    // TEMP workaround
+    cleanLoginCookies: function() {
+      var am = this.getAuthManager();
+      var promise = $.Deferred();
+      var f = document.createElement('iframe');
+      f.style.width = "1px";
+      f.style.height = "1px";
+      f.style.background = "white";
+      f.onload = function() {
+        setTimeout(function() {
+          promise.resolve({});
+          document.body.removeChild(f);
+          f.src = "about:blank";
+        }, 0);
+      };
+      f.src = am.getLogoutURL();
+      document.body.appendChild(f);
+      return promise;
+    },
+
+    logoutHandler: function(e) {
+      if (e) {
+        e.preventDefault();
+      }
+
+      // TEMP Workaround
+      var promise = this.cleanLoginCookies();
+      promise.done(this.logout);
+
+      this.getCurrentPage(false).logoutPage();
+//      this.logout(); // TEMP Workaround
+      //Reset Show Hidden and Application Id to default
+      this.setShowHidden(false);
+      this.setApplicationId("");
+    },
+
+    logout: function() {
+      var am = this.getAuthManager();
+      var notifier = this.getNotificationManager();
+      var router = this.router;
+
+      // remove any remaining dialog backdrops when going to login page
+      var dialogBackdrops = document.getElementsByClassName('modal-backdrop fade in');
+      if (dialogBackdrops && dialogBackdrops.length) {
+        for (var backdropIndex = 0; backdropIndex < dialogBackdrops.length; backdropIndex++) {
+          dialogBackdrops[backdropIndex].parentNode.removeChild(dialogBackdrops[backdropIndex]);
+        }
+      }
+
+      this.stopAPS();
+      this.stopCurrentPage();
+      am.logout(false);
+
+      this.getFilesPage().invalidate();
+      this.getFilesPage().getAuthManager().getDAO().setSessionId(null);
+      this.getTrashPage().invalidate();
+      this.getTrashPage().getAuthManager().getDAO().setSessionId(null);
+      if (this.config.isSharingEnabled && this.config.isSharingEnabled()) {
+        this.getSharingPage().invalidate();
+        this.getSharingPage().getAuthManager().getDAO().setSessionId(null);
+      }
+
+      // clear any notification text
+      notifier.clearErrorNotification(false);
+      // remove user contents from DOM
+      this.$appContainer.empty();
+      this.$appContainer.hide();
+      $('body').addClass("mldoLogin");
+      router.navigate("login", {trigger: true, replace: true});
+      document.title = MLDOStrings.indexPageTitle;
+
+    },
+
+    /**
+     * Starting point for rendering application content.
+     * If you are logged in, you would go here next.
+     */
+    startFilesPage: function() {
+      if (document.getElementById("filesView") === null) {
+        this.$appContainer.show();  // Enable the display of the application content container
+        this.getFilesPage().setElement(this.$appContainer); // set the base element of this view.
+        this.getFilesPage().startPage(this.messageHandler);
+        this.getFilesPage().render();
+      } else {
+        this.getFilesPage().startPage(this.messageHandler);
+      }
+      document.title = MLDOStrings.loggedInPageTitle;
+    },
+
+    startTrashPage: function() {
+      if (document.getElementById("trashView") === null) {
+        this.$appContainer.show();  // Enable the display of the application content container
+        this.getTrashPage().setElement(this.$appContainer); // set the base element of this view.
+        this.getTrashPage().startPage(this.messageHandler);
+        this.getTrashPage().render();
+      } else {
+        this.getTrashPage().startPage(this.messageHandler);
+      }
+      document.title = MLDOStrings.loggedInPageTitle;
+    },
+
+    startSharingPage: function() {
+      var promise;
+      var context = this;
+      if (this.config.isSharingEnabled && this.config.isSharingEnabled()) {
+        if (document.getElementById("sharingView") === null) {
+          this.$appContainer.show();  // Enable the display of the application content container
+          this.getSharingPage().setElement(this.$appContainer); // set the base element of this view.
+          promise = this.getSharingPage().startPage(this.messageHandler);
+          promise.done(function() {
+            context.getSharingPage().render();
+          });
+        } else {
+          this.getSharingPage().startPage(this.messageHandler);
+        }
+        document.title = MLDOStrings.loggedInPageTitle;
+      }
+    },
+
+    startPreviewPage: function(invitationId, folderPath, authenticated, sessionId) {
+      var promise;
+      var context = this;
+      if (this.config.isInvitationPreviewEnabled && this.config.isInvitationPreviewEnabled()) {
+        if (!invitationId) {
+          if (!authenticated) {
+            context.doLogin("files", "", null, MLDOStrings.invitationPreviewInvitationUndefined); // view, folderPath, invitationid, errorText
+          } else {
+            context.goToSharing();
+            context.getSharingPage().getTreeController().getFileService().notify(MLDOStrings.invitationPreviewInvitationUndefined, "ERROR");
+          }
+        }
+        if (document.getElementById("previewView") === null) {
+          this.$appContainer.show();  // Enable the display of the application content container
+          this.getPreviewPage().setElement(this.$appContainer); // set the base element of this view.
+          this.getPreviewPage().setInvitationId(invitationId);
+          this.getPreviewPage().setStartingFullPath(folderPath);
+          this.getPreviewPage().setAuthentication(authenticated);
+          if (sessionId) {
+            this.getPreviewPage().setSessionId(sessionId);
+          }
+          context.getPreviewPage().startPage(this.messageHandler);
+          promise = this.getPreviewPage().readInvitation();
+          promise.done(function() {
+            context.getPreviewPage().render(context.messageHandler);
+          }).fail(function (err) {
+            context.getPreviewPage().stopPage();
+            // user not logged in to preview personal invitation
+            if (invitationId && err.errorCode === 'SESSION_ID_CANNOT_BE_EMPTY') {
+              // Workaround for EmbeddedLogin redirect URL changes
+              if (context.htmlLocalStorage) {
+                localStorage.setItem("mldo:invitationId", invitationId);
+              }
+              context.doLogin("sharing", "", invitationId);
+            }
+            // invitation does not exist
+            else if (invitationId && (err.errorCode === 'RESOURCE_DOES_NOT_EXIST' || err.errorCode === 'INVITATION_DOES_NOT_EXIST')) {
+              if (!authenticated) {
+                context.doLogin("files", "", null, MLDOStrings.invitationPreviewInvitationNotExist); // view, folderPath, invitationid, errorText
+              } else {
+                context.goToSharing();
+                context.getSharingPage().getTreeController().getFileService().notify(MLDOStrings.invitationPreviewInvitationNotExist, "ERROR");
+              }
+            }
+            // non-authorized user tries to preview a personal invitation, take them to sharing page
+            else if (invitationId && err.errorCode === 'AUTHORIZATION_ERROR') {
+              context.goToSharing();
+              context.getSharingPage().getTreeController().getFileService().notify(MLDOStrings.invitationPreviewAuthorizationError, "ERROR");
+            } else {
+              if (!authenticated) {
+                context.doLogin("files", "", null, err.message); // view, folderPath, invitationid, errorText
+              } else {
+                context.goToSharing();
+                context.getSharingPage().getTreeController().getFileService().notify(err.message, "ERROR");
+              }
+            }
+          });
+        } else {
+          this.getPreviewPage().startPage(context.messageHandler);
+        }
+        document.title = MLDOStrings.loggedInPageTitle;
+      }
+    },
+
+    navigateToFiles: function(folderPath, appSwitch) {
+      if (folderPath) {
+        var encodedPath;
+        try {
+          encodedPath = encodeURI(folderPath);
+        } catch (e) {
+          encodedPath = folderPath;
+        }
+        var cf = this.getFilesPage().getStoredCurrentFolder();
+        if (cf !== folderPath || folderPath.indexOf('%') >= 0) {
+          this.getFilesPage().changeStoredCurrentFolder(folderPath);
+          this.router.navigate(this.getApplicationId() + "files" + encodedPath, {trigger: true, replace: false});
+        } else {
+          // it is possible that this needs to close the file preview and update breadcrumbs
+          // handling the browser back button navigation here
+          try {
+            this.getFilesPage().closeFileViewerAndShowTree();
+            this.getFilesPage().breadcrumbManager.updateBreadcrumbs(folderPath);
+          } catch (e) {
+            //do nothing - this was an attempt to close file viewer if it was open.
+          }
+        }
+        if(appSwitch){
+          this.getFilesPage().changeStoredCurrentFolder(folderPath);
+          this.updateDropdown();
+        }
+        this.router.navigate(this.getApplicationId() + "files" + encodedPath, {trigger: false, replace: !appSwitch});
+      } else {
+        if(appSwitch){
+          this.getFilesPage().changeStoredCurrentFolder("/");
+          this.updateDropdown();
+        }
+        this.router.navigate(this.getApplicationId() + "files/", {trigger: false, replace: !appSwitch});
+      }
+    },
+
+    navigateToTrash: function(appSwitch) {
+      if(appSwitch){
+        this.getTrashPage().changeStoredCurrentFolder("/");
+        this.updateDropdown();
+      }
+      this.router.navigate(this.getApplicationId() + "trash/", {trigger: false, replace: !appSwitch});
+    },
+
+    navigateToSharing: function(invitationId, appSwitch) {
+      if (this.config.isSharingEnabled && this.config.isSharingEnabled()) {
+        if(appSwitch){
+          this.getSharingPage().changeStoredCurrentFolder("/");
+          this.updateDropdown();
+        }
+        if (invitationId) {
+          this.router.navigate(this.getApplicationId() + "sharing/" + invitationId, {trigger: true, replace: !appSwitch});
+        } else {
+          this.router.navigate(this.getApplicationId() + "sharing/", {trigger: false, replace: !appSwitch});
+        }
+      }
+    },
+
+    navigateToPreview: function (invitationId, folderPath, appSwitch) {
+      if (!this.config.isInvitationPreviewEnabled || !this.config.isInvitationPreviewEnabled()) {
+        return false;
+      }
+      var encodedPath;
+      try {
+        encodedPath = encodeURI(folderPath);
+      } catch (e) {
+        encodedPath = folderPath;
+      }
+      var cf;
+      if (!this.getPreviewPage().getTreeController()) {
+        if (this.getPreviewPage().getFileService()) {
+          cf = this.getPreviewPage().getFileService().getStoredCurrentFolder();
+        }
+      } else {
+        cf = this.getPreviewPage().getStoredCurrentFolder();
+      }
+      if (cf !== folderPath || folderPath.indexOf('%') >= 0) {
+        if (this.getPreviewPage().getTreeController()) {
+          this.getPreviewPage().changeStoredCurrentFolder(folderPath);
+        }
+      } else {
+          // it is possible that this needs to close the file preview and update breadcrumbs
+          // handling the browser back button navigation here
+          try {
+              this.getPreviewPage().closeFileViewerAndShowTree();
+              this.getPreviewPage().breadcrumbManager.updateBreadcrumbs(folderPath);
+          } catch (e) {
+              //do nothing - this was an attempt to close file viewer if it was open.
+          }
+      }
+      if (appSwitch) {
+        if (this.getPreviewPage().getTreeController()) {
+          this.getPreviewPage().changeStoredCurrentFolder(folderPath);
+        }
+        this.updateDropdown();
+      }
+      this.router.navigate(this.getApplicationId() + "sharing/" + invitationId + encodedPath, {
+        trigger: false,
+        replace: !appSwitch
+      });
+    },
+
+    updateNavAddress: function(path) {
+      var encodedPath;
+      try {
+        encodedPath = encodeURI(path);
+      } catch (e) {
+        encodedPath = path;
+      }
+      path = encodedPath;
+      this.router.navigate(this.getApplicationId() + "files" + path, {trigger: false, replace: false});
+    },
+
+    updatePreviewNavAddress: function(path, invitationId) {
+      var encodedPath;
+      try {
+        encodedPath = encodeURI(path);
+      } catch (e) {
+        encodedPath = path;
+      }
+      path = encodedPath;
+      if (invitationId) {
+        this.router.navigate(this.getApplicationId() + "sharing/" + invitationId + path, {trigger: false, replace: false});
+      }
+    },
+
+    setShowHidden: function(value){
+      this.getAuthManager().getDAO().setShowHidden(value);
+    },
+
+    setApplicationId: function(value){
+      if (value && typeof value === "string" && _VALID_APP_IDS.indexOf(value) > -1) {
+        this.getAuthManager().getDAO().setApplicationId(value);
+      } else {
+        this.getAuthManager().getDAO().setApplicationId("");
+      }
+    },
+
+    getApplicationId: function(){
+      var appId = (!this.getAuthManager().getDAO().getApplicationId() || this.getAuthManager().getDAO().getApplicationId()==="") ? "" : this.getAuthManager().getDAO().getApplicationId();
+      if (_VALID_APP_IDS.indexOf(appId) < 0) {
+        appId = "";
+        this.setApplicationId(appId);
+      }
+      if (appId !== "") {
+        appId += "/";
+      }
+      return appId;
+    }
+
+  });
+  return MatlabDriveApplication;
+}); // require

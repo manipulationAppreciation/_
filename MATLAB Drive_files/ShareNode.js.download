@@ -1,0 +1,60 @@
+define(["util"], function(Util) {
+
+  var  getDisplayName = function(initiator) {
+    var displayName = "";
+    if (initiator.emailAddress) {
+        displayName = _.escape(initiator.emailAddress);
+      } else {
+        if (initiator.firstName || initiator.lastName) {
+          if (initiator.firstName) {
+            displayName += initiator.firstName;
+          }
+          if (displayName && initiator.lastName) {
+            displayName += " ";
+          }
+          if (initiator.lastName) {
+            displayName += initiator.lastName;
+          }
+        }
+      }
+      return displayName;
+    };
+
+  /**
+   * Map GDS folder to FileBrowser2 folder node data
+   */
+  ShareNode = function(gdsInvitation) {
+    var gds = gdsInvitation || {};
+    // FileBrowser2 fields
+    this.isDirectory = true;
+    this.isSharedFolder = true;
+    this.shareAttributes = {
+      isProducedRoot: true,
+      invitationType: gds.invitationType,
+      hasActiveLink: gds.hasActiveLink
+    };
+    this.accessType = gds.accessType;
+    this.hasActiveLink = gds.hasActiveLink;
+    this.filePermissions = {canWrite: (this.accessType !== "READ_ONLY" ? true : false) };
+    this.type = "folder";
+    this.separator = "/";
+    this.name = gds.name;
+    this.parent = "";
+    this.location = "/";
+    this.path = "/" + this.name;
+    this.invitationId = gds.invitationId;
+    this.linkPath = (gds.resource && gds.resource.path) ? gds.resource.path : "";
+    // tombstone not tombstoneId in this case to avoid changing row-id in dgrid.
+    this.tombstone = gds.tombstone;
+    this.initiator = gds.initiator;
+    if (this.initiator) {
+      this.initiator.displayValue = getDisplayName(this.initiator);
+    }
+    if (gds.createdDate) {
+      this.sharedDate = gds.createdDate;
+    } else {
+      this.sharedDate = null;
+    }
+  };
+  return ShareNode;
+});

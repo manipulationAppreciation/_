@@ -1,0 +1,86 @@
+define([
+    "dojo/_base/declare",
+    "mw-filebrowser/actions/Action",
+    "mw-keybindings/DefaultKeys",
+    "mw-filename-utils/FileNameUtil",
+    "util",
+    "dojo/i18n!nls/mldoStringResource",
+    "dojo/string"
+], function (declare, Action, DefaultKeys, FileNameUtil, Util, MLDOStrings, DojoString) {
+  return declare(Action, {
+    constructor: function (args) {
+        args = args || {};
+        var context = args.context;
+        this.moveEnabled = args.moveEnabled || false;
+        var makeActionAvailable = args.showAction || false;
+        this.name =  "copyAction";
+        this.label = (this.moveEnabled ? MLDOStrings.filesPageCopyToLabel : MLDOStrings.contextMenuCopyLabel);
+        this.enabled = makeActionAvailable;
+        this.section = {
+            id: "MISC",
+            name: "MISC",
+            allowSubMenu: false,
+            forceSubMenu: false
+        };
+        this.shortcut = "Ctrl + C";
+        this.keyCode = DefaultKeys.C;
+        this.requiresCtrl = true;
+        this.supportsKeyBinding = true;
+        this.isApplicableTo = function (path) {
+          /* Ctrl + c triggers this piece of code on Mac systems as well, avoid copying when Ctrl + c is pressed in Mac
+          Currently both Ctrl and Cmd keys are allowed
+          var macPlatform = context.isPlatformMac();
+          */
+          var selectedFileCount = context.getSelectedRowCount();
+          if (selectedFileCount < 1) {
+            this.enabled = false;
+          } else {
+            var fileInfos = context.getSelectedItemFileInfos();
+            var fileInfo = fileInfos[0];
+            this.enabled = makeActionAvailable && FileNameUtil.isFileInfo(fileInfo);
+          }
+          return this.enabled;
+        };
+        this.callback = function (action) {
+          var fileInfos = context.getSelectedItemFileInfos();
+          var sortedFileInfos = Util.sortFileInfosByPath(fileInfos);
+          var fileInfo = fileInfos[0];
+          if (this.isApplicableTo(fileInfo)) {
+            var path = FileNameUtil.pathFromFileInfo(fileInfo);
+            var currentFolder = context.getCurrentFolder();
+            if (currentFolder !== "/" && path) {
+              path = currentFolder + path;
+            }
+            var fullPathFileInfo = null;
+            if (!fileInfo) {
+                fullPathFileInfo = FileNameUtil.folderInfoFromPath(path);
+            } else {
+                if(fileInfo.isDirectory) {
+                    fullPathFileInfo = FileNameUtil.folderInfoFromPath(path);
+                } else {
+                    fullPathFileInfo = FileNameUtil.fileInfoFromPath(path);
+                }
+            }
+            if (fullPathFileInfo && fullPathFileInfo.location && fullPathFileInfo.name) {
+              fullPathFileInfo.path = fullPathFileInfo.location + fullPathFileInfo.name;
+              fullPathFileInfo.parent = FileNameUtil.getParentPath(fullPathFileInfo.path);
+            }
+            if (fileInfos.length === 1 && fileInfo && fullPathFileInfo) {
+              if (this.moveEnabled) {
+                context.handleMoveOrCopy(fullPathFileInfo, "copy");
+              } else {
+                context.handleCopyAction(fullPathFileInfo);
+              }
+            } else if (fileInfos.length > 1) {
+              if (this.moveEnabled) {
+                context.handleMultiSelectMoveOrCopy(sortedFileInfos, "copy");
+              } else {
+                context.handleMultiSelectCopy(sortedFileInfos);
+              }
+            }
+          }
+        };
+    }
+  });
+
+});

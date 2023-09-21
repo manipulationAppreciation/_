@@ -1,0 +1,191 @@
+define([
+ "underscore",
+ "jquery",
+ "backbone",
+ "util",
+ "config",
+ "dao/gdsdao",
+ "folderChooserView",
+ "mldofileservice",
+ "dojo/i18n!nls/mldoStringResource",
+ "dojo/string"
+], function( _, $, Backbone, Util, GCONFIG, GDSDAO, FolderChooser, FileService, MLDOStrings, DojoString ) {
+
+  return Backbone.View.extend({
+
+    events: {
+
+    },
+
+    createGDSFileService: function() {
+      var fs;
+      var dao = new GDSDAO(GCONFIG);
+      var listContentMethod = "getFolderData" in dao ? dao.getFolderData : undefined;
+      fs = new FileService();
+      fs.initialize({ gdsDAO: dao, enableNavigation: false, listContentsMethod: listContentMethod });
+      return fs;
+    },
+
+    initialize: function(args) {
+      if (!args || typeof args !== "object" || Object.keys(args).length === 0) {
+        throw new TypeError("Invalid arguments");
+      }
+      this.isEmbedded = false;
+      this.showUI = false;
+      this.embeddedContainerId = "";
+      this.embeddedClientHost = "*";
+      if (args.isEmbedded && args.isEmbedded === true) {
+        this.isEmbedded = true;
+      }
+      this.embeddedName = (this.isEmbedded && args.embeddedName) ? args.embeddedName : "savetomatlabdrive";
+      if ( !this.isEmbedded) {
+        if (! args.fileService || typeof args.fileService !== "object" || !args.fileService.saveUrlAsFile) {
+          throw new TypeError("Invalid fileService argument");
+        }
+        this.fileService = args.fileService;
+      } else {  // embedded widget uses its own fileService
+        this.fileService = this.createGDSFileService();
+      }
+      if (args.presentUI) {
+        this.showUI = true;
+      }
+      this.startingFolderPath = "/";
+      if (args.uiStartingFolderFullPath && typeof args.uiStartingFolderFullPath === "string" && args.uiStartingFolderFullPath.length && args.uiStartingFolderFullPath.indexOf("/") === 0) {
+        this.startingFolderPath = args.uiStartingFolderFullPath;
+      }
+      this.showNewFolderAction = false;
+      if (args.showNewFolderAction === true) {
+        this.showNewFolderAction = true;
+      }
+      this.showRenameAction = false;
+      if (args.showRenameAction === true) {
+        this.showRenameAction = true;
+      }
+      this.folderChooser = null;
+      _.bindAll(this, "createGDSFileService", "performSave");
+    },
+    getEmbeddedContainerId: function() {
+      return this.embeddedContainerId;
+    },
+    setEmbeddedContainerId: function(id) {
+      if (this.isEmbedded) {
+        this.embeddedContainerId = id;
+      }
+    },
+    getStartingPath: function() { return this.startingFolderPath; },
+    getEmbeddedClientHost: function() { return this.embeddedClientHost; },
+    setEmbeddedClientHost: function(host) { if (host && typeof host === "string" && host.length) { this.embeddedClientHost = host; } },
+    getEmbeddedName: function() { return this.embeddedName; },
+    setEmbeddedName: function(name) { this.embeddedName = name; },
+    getFileService: function() { return this.fileService; },
+    saveUIShouldBeDisplayed: function() { return this.showUI; },
+    newFolderActionShouldBeDisplayed: function() { return this.showNewFolderAction; },
+    renameActionShouldBeDisplayed: function() { return this.showRenameAction; },
+    getFolderChooser: function() { return this.folderChooser; },
+    setFolderChooser: function(chooser) { this.folderChooser = chooser; },
+
+    createFolderChooser: function(fileName) {
+      var folderChooser = null;
+      try {
+        folderChooser = new FolderChooser({
+          isEmbedded: true,
+          embeddedName: "folderchooser",
+          desiredWidthPx: "500",
+          desiredHeightPx: "730",
+          dialogTitle: MLDOStrings.saveToDriveModalTitle,
+          chooseButtonLabel: MLDOStrings.saveToDriveSaveButtonLabel,
+          closeButtonLabel: MLDOStrings.saveToDriveCancelButtonLabel,
+          showFileNameSelector: true,
+          startingFullPath: this.getStartingPath(),
+          suggestedFileName: fileName,
+          showNewFolderAction: this.newFolderActionShouldBeDisplayed(),
+          showRenameAction: this.renameActionShouldBeDisplayed()
+        });
+      } catch (e) {
+        folderChooser = null;
+        if (("console" in window) && window.console.log) {
+          console.log("Error creating FolderChooser: " + e.message);
+        }
+      }
+      return folderChooser;
+    },
+
+    refresh: function() {
+      if (this.getFolderChooser()) {
+        this.getFolderChooser().refresh();
+      }
+    },
+
+    render: function() { /* nothing to do */ },
+
+    performSave: function(url, folder, name, publicPromise) {
+      var internalPromise;
+      internalPromise = this.getFileService().saveUrlAsFile(url, folder, name);
+      internalPromise.done(function(response) {
+        publicPromise.resolve({status:DojoString.substitute(MLDOStrings.saveToDriveSuccess, [url, folder, name])});
+      })
+      .fail(function(err) {
+        publicPromise.reject(err);
+      });
+    },
+
+    saveUrlToDrive: function(url, folderFullPath, fileName) {
+      var context = this;
+      var promise;
+      var internalPromise;
+      var folderChooserPromise;
+      if (!url || typeof url !== "string") {
+        throw new TypeError("Invalid URL argument");
+      }
+      if (!this.saveUIShouldBeDisplayed() && (!folderFullPath || typeof folderFullPath !== "string")) {
+        throw new TypeError("Invalid folderFullPath argument");
+      }
+      if (!this.saveUIShouldBeDisplayed() && (!fileName || typeof fileName !== "string")) {
+        throw new TypeError("Invalid fileName argument");
+      }
+      promise = $.Deferred();
+      if (this.saveUIShouldBeDisplayed()) {
+        var folderChooser = this.createFolderChooser(fileName);
+        folderChooser.setSessionId(this.getFileService().gdsDAO.getSessionId());
+        var disposibleElement = document.createElement('div');
+        disposibleElement.classList.add("saveToFolderChooser");
+        this.$el.append(disposibleElement);
+        folderChooser.setElement(disposibleElement);
+        folderChooser.setEmbeddedContainerId(this.getEmbeddedContainerId());
+        folderChooser.setHostedWidgetName(this.getEmbeddedName());
+        this.setFolderChooser(folderChooser);
+        folderChooserPromise = folderChooser.start();
+        folderChooser.$el.on("show.bs.modal", function() {
+          $('#embeddedWidgetContainer.embeddedWidget > .horizontalIconContainer').hide();
+        });
+        folderChooser.$el.on("hidden.bs.modal", function() {
+          $('#embeddedWidgetContainer.embeddedWidget > .horizontalIconContainer').show();
+          window.parent.postMessage(JSON.stringify({ name: "widgetclosed:" + context.getEmbeddedName() + ":" + context.getEmbeddedContainerId() }), context.getEmbeddedClientHost());
+          context.setFolderChooser(null);
+        });
+        folderChooser.render();
+        folderChooserPromise.done(function(results) {
+          var folder;
+          if (results) {
+            results = results.selection;
+          }
+          var name;
+          if (results && ("folderPath" in results) && results.folderPath.length) {
+            folder = results.folderPath;
+          }
+          name = (results && results.fileName && results.fileName.length) ? results.fileName : fileName;
+          if (folder && folder.length && name && name.length) {
+            context.performSave(url, folder, name, promise);
+          } else {
+            promise.reject({errorCode: "OPERATION_CANCELLED", message: "cancelled"});
+          }
+        });
+      } else {
+        this.performSave(url, folderFullPath, fileName, promise);
+      }
+      return promise;
+    }
+
+  });
+
+});

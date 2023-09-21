@@ -1,0 +1,2802 @@
+define([
+  "underscore",
+  "backbone",
+  "jquery",
+  "bootstrap",
+  "mw-filename-utils/FileNameUtil",
+  "ClipboardManager",
+  "RenamePrompt",
+  "ViewFileView",
+  "templates/deleteDialog",
+  "templates/deleteAllDialog",
+  "CreateFolderView",
+  "OpenInMOView",
+  "simplefileuploadmgr",
+  "util",
+  "FileConflictView",
+  "InitiateSharingView",
+  "folderChooserView",
+  "dojo/i18n!nls/mldoStringResource",
+  "dojo/string"
+], function ( _, Backbone, $, Bootstrap, FileNameUtil, ClipboardManager, RenamePrompt,
+              ViewFileView, DeleteDialog, DeleteAllDialog, CreateFolderView, OpenInMOView,
+              SimpleFileUploadManager, Util, FileConflictView,
+              InitiateSharingView, FolderChooserView, MLDOStrings, DojoString ) {
+
+  const DO_NOT_SUPPRESS_NOTIFY = false;
+  const SUPPRESS_NOTIFY = true;
+
+  var ActionHandler = function(fileService, actionBtnMgr, attributes) {
+    if (!fileService || typeof fileService !== "object") {
+      throw new TypeError("Invalid fileService arguement");
+    }
+    this.fileService = fileService;
+    if (!actionBtnMgr || typeof actionBtnMgr !== "object") {
+      throw new TypeError("Invalid actionBtnMgr argument");
+    }
+    // an instance of the ActionButtonController class #4
+    this.actionBtnMgr = actionBtnMgr;
+    if (!attributes || typeof attributes !== "object") {
+      throw new TypeError("Invalid attributes argument");
+    }
+    this.directoryUploadEnabled = attributes.directoryUploadEnabled;
+    this.moveEnabled = attributes.moveEnabled;
+    this.showUploadDetails = attributes.showUploadDetails;
+    this.copyEnabled = attributes.copyEnabled || false;
+    this.sharingEnabled = attributes.sharingEnabled;
+    this.personalInvitationsEnabled = this.sharingEnabled && attributes.personalInvitationsEnabled;
+    this.editPermissionsEnabled = attributes.editPermissionsEnabled || false;
+    this.isIE11 = !!window.MSInputMethodContext && !!document.documentMode;
+    this.isMSEdge = (navigator && navigator.userAgent) ? /Edge\/\d+/.test(navigator.userAgent) : false;
+    this.shouldShowUnshareOption = attributes.shouldShowUnshareOption;
+    this.maxFileUploadSize = attributes.maxFileUploadSize;
+    this.inlineFileView = attributes.inlineFileView;
+    this.dragNotAllowed = function(e) {
+      e.preventDefault();
+      e.originalEvent.dataTransfer.dropEffect = 'none';
+    };
+
+    this.clipboard = new ClipboardManager();
+    this.pasteNameConflicts = [];
+    this.MAX_VIEWABLE_IMAGE_SIZE = 25 * 1024 * 1024;
+    this.MAX_VIEWABLE_TEXT_SIZE = 1 * 1024 * 1024;
+    this.MAX_CONCURRENT_FILE_DOWNLOADS = 25;
+    // ie11 doesn't do PDF well but EDGE does, as do the other supported browsers
+    if (this.isIE11) {
+      this.VIEWABLE_FILE_TYPES = [ "text/plain",
+                                   "text/html",
+                                   "text/css",
+                                   "text/javascript",
+                                   "image/jpeg",
+                                   "image/gif",
+                                   "image/png",
+                                   "image/svg+xml",
+                                   "audio/wav",
+                                   "audio/wave",
+                                   "audio/x-wav",
+                                   "application/ecmascript",
+                                   "application/javascript",
+                                   "application/x-javascript"
+                                 ];
+    } else {
+      this.VIEWABLE_FILE_TYPES = [ "text/plain",
+                                   "text/html",
+                                   "text/css",
+                                   "text/javascript",
+                                   "image/jpeg",
+                                   "image/gif",
+                                   "image/png",
+                                   "image/svg+xml",
+                                   "audio/wav",
+                                   "audio/wave",
+                                   "audio/x-wav",
+                                   "application/pdf",
+                                   "application/ecmascript",
+                                   "application/javascript",
+                                   "application/x-javascript"
+                                 ];
+    }
+
+    this.VIEWER_SERVICE_SUPPORTED_TYPES = { mlx: "live_code",
+                                            m: "plain_code" };
+
+    this._viewFileEnabled = attributes.viewFileEnabled;
+    this._viewInNewTabEnabled = attributes.viewInNewTabEnabled;
+    this._viewerServiceEnabled = attributes.viewerServiceEnabled;
+    this._viewerServiceURL = attributes.viewerServiceURL;
+    this._openWithEnabled = attributes.openWithEnabled;
+    this._mockOpenwith = attributes.mockOpenwith || false;
+    this._isViewingFile = false;
+    this._fileViewingInitiated = false;
+
+    // File upload control
+    this.uploadManager = null;
+
+    /* bind this to this class when any of these methods are run */
+    _.bindAll(this, "handleAction", "handleDownloadAction", "showNewFolderDialog",
+					          "handleFileDoubleClick", "openInNewWindow", "callOpenWithService",
+                    "handleRenameAction", "handleCutAction", "handleCopyAction",
+                    "handlePasteAction", "canOpenInMatlabOnline",
+                    "handleDeleteAction", "performRestore", "handleRestoreAction",
+                    "handlePermanentlyDeleteAction", "clipboardContainsData",
+                    "dispatchCanonicalizedTreeEvent",
+                    "handleUploadAction", "handleMultiSelectDelete", "handleLiveEditAction",
+                    "performSinglePaste", "handleMultiSelectPaste", "viewFile",
+                    "showPasteNameConflictDialog", "handleMultiSelectDownload",
+                    "handleMultiSelectPermanentlyDelete", "onDownloadURIReceived",
+                    "handleManageAction", "handleLinkAction", "handleLeaveAction",
+                    "handleMoveOrCopy", "handleMultiSelectMoveOrCopy", "performSingleMoveOrCopy", "performMultiMoveOrCopy",
+                    "handleGoToDriveAction", "handleAddToDriveAction", "handleDeclineInvitationAction", "handlePreviewShareLinkAction",
+                    "handleCopyToDriveAction");
+  };
+
+  ActionHandler.prototype = {
+
+    dispatchCanonicalizedTreeEvent: function(eventName, data) {
+      this.fileService.dispatchCanonicalizedTreeEvent(eventName, data);
+    },
+
+    getUploadManager: function() {
+      if (!this.uploadManager || typeof this.uploadManager !== "object") {
+        this.uploadManager = new SimpleFileUploadManager({
+          showUploadDetails: this.showUploadDetails,
+          fileService: this.fileService,
+          directoryUploadEnabled: this.directoryUploadEnabled,
+          maxFileUploadSize: this.maxFileUploadSize
+        });
+      }
+      return this.uploadManager;
+    },
+
+    isViewInNewTabEnabled: function() {
+      return this._viewInNewTabEnabled;
+    },
+    isFileViewEnabled: function() {
+      return this._viewFileEnabled;
+    },
+    isViewerServiceEnabled: function() {
+      return this._viewerServiceEnabled;
+    },
+    getViewServiceURL: function() {
+      return this._viewerServiceURL;
+    },
+    isOpenWithEnabled: function() {
+      return this._openWithEnabled;
+    },
+    mockOpenwith: function() {
+      return this._mockOpenwith;
+    },
+    canOpenInMatlabOnline: function(fileNameExtension) {
+      var OPEN_IN_MO_BLACKLISTED_EXTENSIONS = ["html", "xml", "pdf" ];
+
+      var currentApplicationId = this.fileService.gdsDAO.getApplicationId();
+      return ( this.isOpenWithEnabled() &&
+               (!currentApplicationId || currentApplicationId === "") &&
+               (fileNameExtension && typeof fileNameExtension === "string") &&
+               OPEN_IN_MO_BLACKLISTED_EXTENSIONS.indexOf(fileNameExtension.toLowerCase()) < 0 );
+    },
+    setIsViewingFile: function(val) {
+      this._isViewingFile = val;
+    },
+
+    getIsViewingFile: function() {
+      return this._isViewingFile;
+    },
+
+    setFileViewingInitiated: function(val) {
+      this._fileViewingInitiated = val;
+    },
+
+    getFileViewingInitiated: function() {
+      return this._fileViewingInitiated;
+    },
+
+    getActionButtonManager: function() {
+      return this.actionBtnMgr;
+    },
+    setGrid: function(grid) {
+      if (!grid || typeof grid !== "object") {
+        throw new TypeError("Invalid grid argument");
+      }
+      this.grid = grid;
+    },
+    getGrid: function() {
+      return this.grid;
+    },
+    // View file in browser
+    handleFileDoubleClick: function(e, data) {
+      var fileInfo = data.rowData;
+      var invitationId = data.invitationId;
+      if (this.isFileViewEnabled() && fileInfo && FileNameUtil.isFileInfo(fileInfo) && !fileInfo.isDirectory) {
+        var currentFolder = this.getCurrentFolder();
+        var fileName = fileInfo.name;
+        var path = FileNameUtil.pathFromFileInfo(fileInfo);
+        if (currentFolder !== "/" && !fileInfo.isFullPath) {
+          path = currentFolder + path;
+        }
+        if (this.fileService.treeEventId === "Preview") {
+          this.handlePreviewFile(path, fileInfo, invitationId);
+        } else {
+          this.handleOpenInBrowserAction(path, fileInfo);
+        }
+      }
+    },
+
+    cleanupDownloadIframes: function() {
+      $('.mldoHiddenDownloader').remove();
+    },
+    /*
+     * Actions: Action bar handler entry point
+     */
+    handleAction: function(data) {
+      if (data && data.detail && data.detail.actionName) {
+        var actionName = data.detail.actionName;
+        var invitationId = data.detail.invitationId;
+        var invitationName = data.detail.invitationName;
+        var invitationStatus = data.detail.invitationStatus;
+        var invitationFullPath = data.detail.invitationFullPath;
+        var invitationTombstoneId = data.detail.invitationTombstoneId;
+        var authenticated = data.detail.authenticated;
+        var fileInfos = this.getSelectedItemFileInfos();
+        var sortedFileInfos = (fileInfos && fileInfos.length) ? Util.sortFileInfosByPath(fileInfos) : [];
+        var showGoToLink = Util.areAllOriginalLocationsTheSame(fileInfos);
+
+        var fileInfo = fileInfos[0];
+        var path = fileInfo ? this.getSelectedItemFullPath(fileInfo) : this.getSelectedItemFullPath();
+        // override if there is a linkPath value
+        if (fileInfo && ("linkPath" in fileInfo) && fileInfo.linkPath.length) {
+          path = fileInfo.linkPath;
+        }
+        var fullPathFileInfo = this.getFullPathFileInfo(fileInfo);
+
+        switch (actionName) {
+          case 'open':
+              if(this.mockOpenwith()) {
+                let name = fileInfo ? fileInfo.name : this.getCurrentFolderInfo().name;
+                if (name === "/") {
+                  name = MLDOStrings.rootFolderNameMatlabDrive;
+                }
+                var msg1 = DojoString.substitute(MLDOStrings.viewOpenLiveEditorMock, [_.escape(name)]);
+                var msg2 = MLDOStrings.viewOpenLiveEditorNotSupported;
+                alert(msg1 + "\n" + msg2);
+                return;
+              }
+              if (fileInfos.length === 0 || fileInfos.length === 1) {
+                this.handleLiveEditAction(path, fileInfos.length === 0 ? this.getCurrentFolderInfo() : fileInfo, authenticated, invitationId, invitationName,
+                    invitationStatus, invitationFullPath, invitationTombstoneId);
+              }
+              break;
+          case 'upload':
+            this.handleUploadAction(false);
+            if (this.directoryUploadEnabled && Util.isDirectoryUploadSupported()) {
+               $("#simpleFileUploadModal").modal({backdrop: 'static'});
+            }
+            break;
+          case 'uploadfolder':
+            if (this.directoryUploadEnabled) {
+              this.handleUploadAction(true);
+              $("#simpleFileUploadModal").modal({backdrop: 'static'});
+            }
+            break;
+          case 'createfolder':
+            this.handleNewFolderAction();
+            break;
+          case 'download':
+            this.cleanupDownloadIframes();
+            if (fileInfos.length === 0) {
+              this.handleDownloadAction(this.fileService.getStoredCurrentFolder(), invitationId);
+            } else if (fileInfos.length === 1 && fileInfo && path) {
+              this.handleDownloadAction(path, invitationId);
+            } else if (fileInfos.length > 1) {
+              this.handleMultiSelectDownload(fileInfos, invitationId);
+            }
+            break;
+          case 'rename':
+            if (fileInfo) {
+              this.handleRenameAction(fileInfo);
+            }
+            break;
+          case 'move':
+            if (this.moveEnabled) {
+              if (fileInfos.length === 1 && fileInfo && fullPathFileInfo) {
+                this.handleMoveOrCopy(fullPathFileInfo, actionName);
+              } else if (fileInfos.length > 1) {
+                this.handleMultiSelectMoveOrCopy(sortedFileInfos, actionName);
+              }
+            }
+            break;
+          case 'copy':
+            if (this.copyEnabled) {
+              if (fileInfos.length === 1 && fileInfo && fullPathFileInfo) {
+                if (this.moveEnabled) {
+                  this.handleMoveOrCopy(fullPathFileInfo, actionName);
+                } else {
+                  this.handleCopyAction(fullPathFileInfo);
+                }
+              } else if (fileInfos.length > 1) {
+                if (this.moveEnabled) {
+                  this.handleMultiSelectMoveOrCopy(sortedFileInfos, actionName);
+                } else {
+                  this.handleMultiSelectCopy(sortedFileInfos);
+                }
+              }
+            }
+            break;
+          case 'cut':
+            if (fileInfos.length === 1 && fileInfo && fullPathFileInfo) {
+              this.handleCutAction(fullPathFileInfo);
+            } else if (fileInfos.length > 1) {
+              this.handleMultiSelectCut(sortedFileInfos);
+            }
+            break;
+          case 'paste':
+            if (fileInfo && !fileInfo.isDirectory) {
+              path = FileNameUtil.locationFromPath(path);
+            } else {
+              if (path !== '/') {
+                path = path + '/';
+              }
+            }
+            if (path) {
+              this.handlePasteAction(path);
+            }
+            break;
+          case 'delete':
+            if (fileInfos.length === 1 && fileInfo && path) {
+              this.handleDeleteAction(path, fileInfo);
+            } else if (fileInfos.length > 1) {
+              this.handleMultiSelectDelete(sortedFileInfos, 0, 0);
+            }
+            break;
+          case 'restore':
+            if (fileInfos.length === 1 && fileInfo && path) {
+              this.handleRestoreAction(path, fileInfo);
+            } else if (fileInfos.length > 1) {
+              this.handleMultiSelectRestore(sortedFileInfos, 0, 0, showGoToLink);
+            }
+            break;
+          case 'permanentlydelete':
+            if (fileInfos.length === 1 && fileInfo) {
+              this.handlePermanentlyDeleteAction(fileInfo);
+            } else if (fileInfos.length > 1) {
+              this.handleMultiSelectPermanentlyDelete(fileInfos);
+            }
+            break;
+          case 'permanentlydeleteall':
+            this.handlePermanentlyDeleteAllAction();
+            break;
+          case 'viewfile':
+            if (invitationId && typeof invitationId === "string") {
+              this.handlePreviewFile(path, fileInfo, invitationId);
+            } else {
+              this.handleOpenInBrowserAction(path, fileInfo);
+            }
+            break;
+          case 'viewInNewTab':
+            this.handleOpenInBrowserAction(path, fileInfo, true);
+            break;
+          case 'manage':
+            this.handleManageAction(path, (fileInfo ? fileInfo : fullPathFileInfo));
+            break;
+          case 'link':
+            this.handleLinkAction(path, (fileInfo ? fileInfo : fullPathFileInfo));
+            break;
+          case 'leave':
+            this.handleLeaveAction(path, (fileInfo ? fileInfo : fullPathFileInfo));
+            break;
+          case 'gotodrive':
+            this.handleGoToDriveAction(invitationId);
+            break;
+          case 'addtodrive':
+            this.handleAddToDriveAction(invitationId, authenticated);
+            break;
+          case 'decline':
+            this.handleDeclineInvitationAction(invitationId, invitationName);
+            break;
+          case 'sharelink':
+            this.handlePreviewShareLinkAction(invitationId);
+            break;
+          case 'copytodrive':
+            this.handleCopyToDriveAction(invitationId, invitationName, authenticated);
+            break;
+        }
+      }
+    },
+
+    handleUploadAction: function(chooseFolders) {
+      chooseFolders = (chooseFolders && chooseFolders === true) ? true : false;
+      var selectedPaths = this.getSelectedFolderFullPaths();
+      var currentFolder = this.getSelectedItemFullPath();
+      if (selectedPaths.length === 1) {
+        currentFolder = selectedPaths[0];
+      }
+      this.getUploadManager().render(currentFolder, chooseFolders);
+    },
+
+    handleNewFolderAction: function() {
+      this.showNewFolderDialog();
+    },
+
+    isSupportedMIMEType: function(downloadFileMimeType) {
+      var supported = false;
+      if ( (_.contains(this.VIEWABLE_FILE_TYPES, downloadFileMimeType)) ||
+           (/text\/\w+/.test(downloadFileMimeType)) ||
+           (/image\/\w+/.test(downloadFileMimeType)) ||
+           (/audio\/\w+/.test(downloadFileMimeType))
+          ) {
+            supported = true;
+          }
+      return supported;
+    },
+
+    handleLiveEditAction: function(path, fileInfo, authenticated, invitationId, invitationName, invitationStatus, invitationFullPath, invitationTombstoneId) {
+      if (!path || typeof path !== "string") {
+        throw new TypeError("Invalid path argument");
+      }
+      if (!fileInfo || typeof fileInfo !== "object" || !fileInfo.name) {
+        throw new TypeError("Invalid fileInfo argument");
+      }
+      if (typeof authenticated !== "boolean") {
+        throw new TypeError("Invalid authenticated argument");
+      }
+      if (fileInfo.isDirectory || this.canOpenInMatlabOnline(FileNameUtil.getFileNameExtension(fileInfo.name))) {
+        if (authenticated && !invitationId) {
+          // Open in MO if file is in user's Drive - in Files view
+          if (fileInfo.name === "/") {
+            fileInfo.name = MLDOStrings.rootFolderNameMatlabDrive;
+          }
+          this.callOpenWithService(path, fileInfo);
+        } else if (authenticated && invitationId && invitationFullPath && typeof invitationFullPath === "string" && invitationStatus && invitationStatus === "ACCEPTED") {
+          // or accepted Preview view
+          if (path === "/") {
+            fileInfo.name = invitationName;
+          }
+          path = invitationFullPath + (path === "/" ? "" : path);
+          fileInfo.path = path;
+          $.event.trigger('changetofilespage:mldo', {destination: invitationFullPath});
+          this.fileService.dispatchCanonicalizedTreeEvent("message:treecontroller",
+            { message: DojoString.substitute(MLDOStrings.invitationPreviewInvitationAlreadyAddedToDrive, [invitationName]), severity: "NORMAL"}, "Files");
+          this.callOpenWithService(path, fileInfo);
+        } else if (authenticated && invitationId && invitationTombstoneId) {
+          // Display error if in Trash
+          $.event.trigger("changetotrashpage:mldo");
+          this.fileService.focusRowAfterGridRefresh({path: "/" , tombstoneId: invitationTombstoneId, pageId: "Trash"});
+          this.fileService.dispatchCanonicalizedTreeEvent("message:treecontroller", {message: MLDOStrings.openInMOFileInTrash, severity: "ERROR"}, "Trash");
+        } else {
+          let openInMODialog = new OpenInMOView({
+            fileService: this.fileService,
+            actionHandler: this,
+            name: Util.getFileNameFromPath(path) === "" ? invitationName : Util.getFileNameFromPath(path),
+            invitationId: invitationId,
+            invitationName: invitationName,
+            authenticated: authenticated,
+            fileInfo: fileInfo
+          });
+          var openInMODialogContainer = document.createElement('div');
+          $('#modalContainer').append(openInMODialogContainer);
+          openInMODialog.setElement(openInMODialogContainer);
+          openInMODialog.render();
+        }
+      } else {
+        this.handleOpenInBrowserAction(path, fileInfo);
+      }
+    },
+
+    callOpenWithService: function(path, fileInfo) {
+      var context = this;
+      var owInfo = {
+        // This is the endpoint where the download request will be sent. MathWorks has multiple environment (e.g. integ1, preview etc.) so this is required to send download request to correct place.
+        gdsUrl: this.fileService.gdsDAO.gdsBaseUrl + "/files/",
+
+        // This is needed for Openwith to be able to differentiate requests from Mathworks examples and MLDO
+        repository: "MLDO",
+
+        // file path
+        path: path
+      };
+      let loadPromise;
+      let owMOOverride;
+      // TODO: create MO override endpoint in environment specific config file
+      if (context.fileService.gdsDAO.config.getLoginURL().includes("integ1")) {
+        owMOOverride = {
+          source: "https://matlab-integ1.mathworks.com",
+        };
+      } else if (context.fileService.gdsDAO.config.getLoginURL().includes("integ2")) {
+        owMOOverride = {
+          source: "https://matlab-integ2.mathworks.com",
+        };
+      } else if (context.fileService.gdsDAO.config.getLoginURL().includes("integ3")) {
+        owMOOverride = {
+          source: "https://matlab-integ3.mathworks.com",
+        };
+      }
+      // ow.start({ closeOnBackgroundClick: false });
+      loadPromise = ow.load(owInfo, owMOOverride);
+      loadPromise.then(
+        // success handler
+        function(response) {
+          //console.log("Response from open-with.load: " + response.status);
+        },
+        // error handler
+        function(err) {
+          context.fileService.notify(DojoString.substitute(MLDOStrings.actionHandlerOpenWithLoadFailed, [fileInfo.name]), "ERROR");
+          if (!fileInfo.isDirectory) {
+            context.handleOpenInBrowserAction(path, fileInfo);
+          }
+        }
+      );
+    },
+
+    closeFileView: function() {
+        var viewContainer = document.querySelector('#inlineFileViewContainer');
+        var selectString;
+        // if this is the embedded widgets page, then tree is just querySelector('.treeView')
+        if(document.querySelector('#embeddedWidgetContainer')){
+          selectString = '.treeView';
+        }else{
+          selectString = '.treeView div#jstree.fileDataContainer';
+        }
+        var tree = document.querySelector(selectString);
+        viewContainer.style.display = 'none';
+        tree.style.display = 'block';
+    },
+
+    viewFile: function(viewFileArgs, canUseOpenWith, invitationId) {
+      var context = this;
+      var inlineFileView = context.inlineFileView;
+      var fileViewer;
+      var name = viewFileArgs.name;
+      var isImageFile = viewFileArgs.isImageFile;
+      var downloadUrl = viewFileArgs.downloadUrl;
+      var path = viewFileArgs.path;
+      var fileInfo = viewFileArgs.fileInfo;
+      var isSupported = viewFileArgs.isSupported;
+      var renderType = viewFileArgs.renderType;
+      var fileNameExtension = viewFileArgs.fileNameExtension;
+      var cannotDisplayMsg = viewFileArgs.cannotDisplayMsg;
+      var viewerContructorArgs = {
+        fileName: name,
+        waitText: MLDOStrings.actionHandlerViewFilePleaseWaitText,
+        viewInNewTabEnabled: context.isViewInNewTabEnabled(),
+        path: path,
+        fileInfo: fileInfo,
+        deleteCallback: context.handleDeleteAction,
+        downloadCallback: context.handleDownloadAction,
+        openWindowCallback: context.openInNewWindow,
+        viewerServiceEnabled: context.isViewerServiceEnabled(),
+        liveEditorSupported: canUseOpenWith,
+        liveEditCallback: context.handleLiveEditAction,
+        mockOpenwith: context.mockOpenwith(),
+        inline: inlineFileView
+      };
+      if (isSupported) {
+        viewerContructorArgs.errorText = "";
+        viewerContructorArgs.iframeSrc = (isImageFile ? "" : downloadUrl);
+        viewerContructorArgs.imageSrc = (isImageFile ? downloadUrl : "");
+      } else {
+        viewerContructorArgs.errorText = cannotDisplayMsg;
+        viewerContructorArgs.iframeSrc = "about:blank";
+        viewerContructorArgs.imageSrc = "";
+      }
+      fileViewer = new ViewFileView(viewerContructorArgs);
+      this.fileViewer = fileViewer;
+      if (!isSupported) {
+        renderType = 'error';
+      } else {
+        if (isImageFile) {
+          renderType = 'image';
+        }
+      }
+      if (inlineFileView) {
+        var viewActionBarIcon = document.querySelector('.action_icon.view');
+        var renameActionBarIcon = document.querySelector('.action_icon.rename');
+        var moveActionBarIcon = document.querySelector('.action_icon.move');
+        var deleteActionBarIcon = document.querySelector('.action_icon.deleteFile');
+        var cutActionBarIcon = document.querySelector('.action_icon.cut');
+        var pasteActionBarIcon = document.querySelector('.action_icon.paste');
+        if(viewActionBarIcon) {
+          viewActionBarIcon.classList.add('fileViewDisabledIcon');
+        }
+        if(renameActionBarIcon) {
+          renameActionBarIcon.classList.add('fileViewDisabledIcon');
+        }
+        if(moveActionBarIcon) {
+          moveActionBarIcon.classList.add('fileViewDisabledIcon');
+        }
+        if(deleteActionBarIcon) {
+          deleteActionBarIcon.classList.add('fileViewDisabledIcon');
+        }
+        if(cutActionBarIcon) {
+          cutActionBarIcon.classList.add('fileViewDisabledIcon');
+        }
+        if(pasteActionBarIcon) {
+          pasteActionBarIcon.classList.add('fileViewDisabledIcon');
+        }
+        var viewContainer = document.querySelector('#inlineFileViewContainer');
+        if (viewContainer) {
+          var tempRoot = document.createElement('div');
+          if(tempRoot) {
+            viewContainer.appendChild(tempRoot);
+            fileViewer.setElement(tempRoot);
+            var selectString;
+            // if this is the embedded page, tree is just querySelector('.treeView')
+            if(document.querySelector('#embeddedWidgetContainer')){
+              selectString = '.treeView';
+            }
+            else{
+                selectString = '.treeView div#jstree.fileDataContainer';
+            }
+            var tree = document.querySelector(selectString);
+
+            tree.style.display = 'none';
+            viewContainer.style.display = 'block';
+          }
+        }
+        this.isInlineFileViewOpen = true;
+        this.currentFilePath = path;
+      }
+      else {
+        var fileViewerContainer = document.createElement('div');
+        $('#modalContainer').append(fileViewerContainer);
+        fileViewer.setElement(fileViewerContainer);
+      }
+      fileViewer.render(renderType);
+      if(inlineFileView) {
+        const closeButton = document.querySelector(".closeViewFileInlineButton");
+        if (closeButton) {
+          closeButton.addEventListener('click', function () {
+              context.closeFileViewerAndShowTree.bind(context)();
+              if (context.fileService.getTreeEventId() === "Files") {
+                $.event.trigger('navupdate:mldo', {path: context.getCurrentFolder()});
+              } else if (context.fileService.getTreeEventId() === "Preview") {
+                $.event.trigger('previewnavupdate:mldo', {path: context.getCurrentFolder(), invitationId: invitationId});
+              }
+              var path = context.getCurrentFolder();
+              context.fileService.updateBreadcrumbs(path);
+          });
+        }
+      }
+    },
+
+    closeFileViewerAndShowTree: function() {
+      if(!this.fileViewer) {
+        return;
+      }
+      const root = this.fileViewer.$el[0];
+        if(root) {
+          this.handleCloseFilePreview();
+          this.setIsViewingFile(false);
+          root.parentNode.removeChild(root);
+          $('.closeViewFileInlineButton').hide();
+          var viewActionBarIcon = document.querySelector('.action_icon.view');
+          var renameActionBarIcon = document.querySelector('.action_icon.rename');
+          var moveActionBarIcon = document.querySelector('.action_icon.move');
+          var deleteActionBarIcon = document.querySelector('.action_icon.deleteFile');
+          var cutActionBarIcon = document.querySelector('.action_icon.cut');
+          var pasteActionBarIcon = document.querySelector('.action_icon.paste');
+          if(viewActionBarIcon) {
+            viewActionBarIcon.classList.remove('fileViewDisabledIcon');
+          }
+          if(renameActionBarIcon) {
+            renameActionBarIcon.classList.remove('fileViewDisabledIcon');
+          }
+          if(moveActionBarIcon) {
+            moveActionBarIcon.classList.remove('fileViewDisabledIcon');
+          }
+          if(deleteActionBarIcon) {
+            deleteActionBarIcon.classList.remove('fileViewDisabledIcon');
+          }
+          if(cutActionBarIcon) {
+            cutActionBarIcon.classList.add('fileViewDisabledIcon');
+          }
+          if(pasteActionBarIcon) {
+            pasteActionBarIcon.classList.add('fileViewDisabledIcon');
+          }
+          this.isInlineFileViewOpen = false;
+          this.currentFilePath = null;
+        }
+    },
+
+    onDownloadURIReceived: function(responseData, xhr, openArgs) {
+      var context = this;
+      var path = openArgs.path;
+      var fileInfo = openArgs.fileInfo;
+      var useNewTab = openArgs.useNewTab;
+      var name = openArgs.name;
+      var winRef = openArgs.winRef;
+      var _isMacSafari = openArgs._isMacSafari;
+      var fileNameExtension = openArgs.fileNameExtension;
+      var downloadUrl = responseData.downloadUrl + "?preview=true";
+      if (downloadUrl && this.fileService.getOriginId()) {
+        if (downloadUrl.indexOf("?") > 0) {
+          downloadUrl += "&originId=" + this.fileService.getOriginId();
+        } else {
+          downloadUrl += "?originId=" + this.fileService.getOriginId();
+        }
+      }
+      var downloadFileSize = responseData.size;
+      var downloadFileName = responseData.name;
+      var downloadFileMimeType = responseData.contentType.toLowerCase();
+      var renderType = 'iframe';
+      var isImageFile = (downloadFileMimeType.indexOf('image') >= 0);
+      var isAudioFile = /audio\/\w+/.test(downloadFileMimeType);
+      var isPdfFile = (downloadFileMimeType === "application/pdf");
+      // we don't allow viewing of html or xml files because they can run script tags and be a security threat
+      var isHtmlOrXmlFile = ((downloadFileMimeType.indexOf('html') >= 0) || (downloadFileMimeType.indexOf('xml') >= 0) ||
+        fileNameExtension === "htm" || fileNameExtension === "html" || fileNameExtension === "xml");
+      var isSupported = true;
+      var cannotDisplayMsg = "";
+      var viewerValue = "live_code";
+
+      if (((isImageFile || isAudioFile) && downloadFileSize > context.MAX_VIEWABLE_IMAGE_SIZE) ||
+          (!(isImageFile || isAudioFile) && !isPdfFile && downloadFileSize > context.MAX_VIEWABLE_TEXT_SIZE) ||
+          (isPdfFile && downloadFileSize > context.MAX_VIEWABLE_IMAGE_SIZE)) {
+        isSupported = false;
+        cannotDisplayMsg = MLDOStrings.actionHandlerCannotDisplayMsgTooBig;
+      }
+      if (isSupported && ! context.isSupportedMIMEType(downloadFileMimeType)) {
+        isSupported = false;
+        cannotDisplayMsg = MLDOStrings.actionHandlerCannotDisplayMsgWrongType;
+      }
+      if (isSupported && (isHtmlOrXmlFile || isPdfFile)) {
+        isSupported = false;
+        cannotDisplayMsg = MLDOStrings.actionHandlerCannotDisplayMsgSecurity;
+      }
+      if (context.isViewerServiceEnabled()) {
+        if (fileNameExtension && fileNameExtension in context.VIEWER_SERVICE_SUPPORTED_TYPES && context.VIEWER_SERVICE_SUPPORTED_TYPES[fileNameExtension].length) {
+          viewerValue = context.VIEWER_SERVICE_SUPPORTED_TYPES[fileNameExtension];
+          isSupported = true;
+          cannotDisplayMsg = "";
+          isImageFile = false;
+          downloadUrl = context.getViewServiceURL() + "?viewer=" + viewerValue + "&url=" + encodeURIComponent(downloadUrl);
+        }
+      }
+
+      if (useNewTab) {
+        if (isSupported) {
+          context.openInNewWindow(_.escape(name), downloadUrl, isImageFile, winRef);
+        } else {
+          if (_isMacSafari && winRef) {
+            winRef.close(); // for mac
+          }
+          context.fileService.notify(cannotDisplayMsg, "ERROR");
+        }
+      } else {
+        var viewFileArgs = {
+          path: path,
+          fileInfo: fileInfo,
+          useNewTab: useNewTab,
+          name: name,
+          cannotDisplayMsg: cannotDisplayMsg,
+          isImageFile: isImageFile,
+          downloadUrl: downloadUrl,
+          renderType: renderType,
+          isSupported: isSupported,
+          fileNameExtension: fileNameExtension
+        };
+        var canUseOpenWith = context.canOpenInMatlabOnline(fileNameExtension);
+        context.viewFile(viewFileArgs, canUseOpenWith, openArgs.invitationId);
+      }
+    },
+
+    //handle close file preview button
+    handleCloseFilePreview: function() {
+      this.closeFileView();
+      this.fileViewer = undefined;
+    },
+
+    // View file in browser
+    handleOpenInBrowserAction: function(path, fileInfo, useNewTab) {
+      path = path || "";
+      if (typeof path !== "string") {
+        throw new TypeError("Invalid path argument");
+      }
+      if (!fileInfo || typeof fileInfo !== "object" || !fileInfo.name) {
+        throw new TypeError("Invalid fileInfo argument");
+      }
+      if (!this.isFileViewEnabled() || this.getFileViewingInitiated()) {
+        return;
+      }
+      if (this.getIsViewingFile()) {
+        this.closeFileViewerAndShowTree();
+      }
+      if (fileInfo.originalLocation) {
+        path = fileInfo.originalLocation + "/" + fileInfo.name;
+      }
+      var name = FileNameUtil.nameFromPath(path);
+      var fileNameExtension = FileNameUtil.getFileNameExtension(fileInfo.name);
+      var context = this;
+
+      var promise = this.fileService.getDownloadURI(path);
+      this.setFileViewingInitiated(true);
+      // Safari workaround
+      var _isMacSafari = (navigator && navigator.userAgent) ? (navigator.userAgent.indexOf('Safari') != -1 && navigator.userAgent.indexOf('Chrome') == -1 && !navigator.userAgent.match(/iP(ad|hone)/i)) : false;
+      var winRef = null;
+      if (_isMacSafari && useNewTab) {
+        winRef = window.open("", "_blank");
+      }
+      var openArgs = {
+        path: path,
+        fileInfo: fileInfo,
+        useNewTab: useNewTab,
+        name: name,
+        fileNameExtension: fileNameExtension,
+        winRef: winRef,
+        _isMacSafari: _isMacSafari
+      };
+      promise.done(function(responseData, xhr) {
+        context.onDownloadURIReceived(responseData, xhr, openArgs );
+        //only update address bar and breadcrumbs for inline view view
+        if(!useNewTab) {
+          context.fileService.updateBreadcrumbs(path);
+          $.event.trigger('navupdate:mldo', {path: path});
+          context.fileService.removeIconForFiles();
+          context.setIsViewingFile(true);
+        }
+      })
+      .fail(function(err) {
+        var msg = Util.getErrorMessageTranslator().getTranslatedMessage(err, "actionHandler.openFileView");
+        context.fileService.notify(msg, "ERROR");
+      })
+      .always(function() {
+        context.setFileViewingInitiated(false);
+      });
+    },
+
+    // View file on Preview page
+    handlePreviewFile: function(path, fileInfo, invitationId, useNewTab) {
+      if(!path || typeof path !== "string") {
+        throw new TypeError("Invalid path argument");
+      }
+      if (!fileInfo || typeof fileInfo !== "object" || !fileInfo.name) {
+        throw new TypeError("Invalid fileInfo argument");
+      }
+      if (!this.isFileViewEnabled() || this.getFileViewingInitiated()) {
+        return;
+      }
+      if (this.getIsViewingFile()) {
+        this.closeFileViewerAndShowTree();
+      }
+      var context = this;
+      var name = FileNameUtil.nameFromPath(path);
+      var fileNameExtension = FileNameUtil.getFileNameExtension(fileInfo.name);
+
+      var promise = this.fileService.previewFile(invitationId, path);
+      this.setFileViewingInitiated(true);
+      // Safari workaround
+      var _isMacSafari = (navigator && navigator.userAgent) ? (navigator.userAgent.indexOf('Safari') != -1 && navigator.userAgent.indexOf('Chrome') == -1 && !navigator.userAgent.match(/iP(ad|hone)/i)) : false;
+      var winRef = null;
+      if (_isMacSafari && useNewTab) {
+        winRef = window.open("", "_blank");
+      }
+      var openArgs = {
+        path: path,
+        fileInfo: fileInfo,
+        useNewTab: false,
+        name: name,
+        fileNameExtension: fileNameExtension,
+        winRef: winRef,
+        _isMacSafari: _isMacSafari,
+        invitationId: invitationId
+      };
+      promise.done(function(responseData, xhr) {
+        context.onDownloadURIReceived(responseData, xhr, openArgs );
+        context.fileService.updateBreadcrumbs(path);
+        $.event.trigger('previewnavupdate:mldo', {path: path, invitationId: invitationId});
+        context.fileService.removeIconForFiles();
+        context.setIsViewingFile(true);
+      })
+        .fail(function(err) {
+          var msg;
+          if (err.errorCode === 'RESOURCE_DOES_NOT_EXIST') {
+            msg = Util.getErrorMessageTranslator().getTranslatedMessage(err, "actionHandler.openFileView");
+          } else {
+            msg = Util.getErrorMessageTranslator().getTranslatedMessage(err, "actionHandler.getDownloadURI");
+          }
+          context.fileService.notify(msg, "ERROR");
+        })
+        .always(function() {
+          context.setFileViewingInitiated(false);
+        });
+    },
+
+    handleDownloadAction: function(path, invitationId) {
+      if(!path || typeof path !== "string") {
+        throw new TypeError("Invalid path argument");
+      }
+      var promise = this.fileService.getDownloadURI(path, invitationId);
+      this.fileService.notify(MLDOStrings.actionHandlerDownloadInProgress, "NORMAL");
+      var context = this;
+      var publicPromise = $.Deferred();
+      promise.done(function(responseData, xhr) {
+        var downloadUri;
+        if (typeof responseData === "object" && responseData.downloadUrl) {
+          downloadUri = responseData.downloadUrl + "?preview=false";
+        } else if (typeof responseData === "string") {
+          downloadUri = responseData;
+        }
+        context.downloadURL(downloadUri, publicPromise);
+      })
+      .fail(function(err) {
+        var msg = Util.getErrorMessageTranslator().getTranslatedMessage(err, "actionHandler.getDownloadURI");
+        context.fileService.notify(msg, "ERROR");
+        publicPromise.reject();
+      });
+      return publicPromise;
+    },
+
+    handleMultiSelectDownload: function(files, invitationId) {
+      if (!files || !Array.isArray(files) || !files.length) {
+        throw new TypeError("Invalid files argument");
+      }
+      var context = this;
+      var fileInfo;
+      var path;
+      if (files.length > this.MAX_CONCURRENT_FILE_DOWNLOADS) {
+        context.fileService.notify(DojoString.substitute(MLDOStrings.actionHandlerMaxConcurrentDownloads, [context.MAX_CONCURRENT_FILE_DOWNLOADS]), "ERROR");
+      } else {
+        fileInfo = files.pop();
+        path = fileInfo ? this.getSelectedItemFullPath(fileInfo) : this.getSelectedItemFullPath();
+        if (path) {
+          var downloadPromise = this.handleDownloadAction(path, invitationId);
+          downloadPromise.always(function() {
+            if (files && files.length) {
+              context.handleMultiSelectDownload(files, invitationId);
+            }
+          });
+        }
+      }
+    },
+
+    handleRenameAction: function(fileInfo) {
+      if(!fileInfo || typeof fileInfo !== "object") {
+        throw new TypeError("Invalid fileInfo argument");
+      }
+      this.dispatchCanonicalizedTreeEvent("renamefile:treecontroller", {fileInfos: [fileInfo]});
+    },
+
+    chooseMoveTargetPrompt: function(name, fullSourcePaths, fileOperation) {
+      var promise;
+      var configOptions = {
+        fileOperation : fileOperation,
+        showFileNameSelector: false,
+        showNewFolderAction: true,
+        showRenameAction: true,
+        startingFullPath: this.fileService.getStoredCurrentFolder(),
+        rootFolderName: MLDOStrings.defaultApplicationLabel,
+        dao: this.fileService.gdsDAO,
+        resetButtonLabel: MLDOStrings.widgetTestAppResetButton,
+        name: name,
+        originalSourcePaths: fullSourcePaths,
+        desiredHeightPx: 400
+      };
+      var FolderChooserView = require("folderChooserView");
+      var moveDialog = new FolderChooserView(configOptions);
+      var moveDialogContainer = document.createElement('div');
+      $('#modalContainer').append(moveDialogContainer);
+      moveDialog.setElement(moveDialogContainer);
+      promise = moveDialog.start();
+      moveDialog.render();
+      return promise;
+    },
+
+    handleMultiSelectMoveOrCopy: function(fileInfos, fileOperation) {
+      if (!fileInfos || !Array.isArray(fileInfos) || !fileInfos.length) {
+        throw new TypeError("Invalid fileInfos argument");
+      }
+      if (!fileOperation || typeof fileOperation !== "string" || ((fileOperation.toLowerCase() !== "move" && fileOperation.toLowerCase() !== "copy"))) {
+        throw new TypeError("Invalid fileOperation argument");
+      }
+      var selectedFileCount = fileInfos.length;
+      var context = this;
+      var fileInfo;
+      var fullPathFileInfo;
+      var fullPathFileInfos = [];
+      var fullSourcePaths = [];
+      this.pasteNameConflicts.length = 0;
+      for(var i = 0; i < selectedFileCount; i++) {
+        fileInfo = fileInfos[i];
+        fullPathFileInfo = this.getFullPathFileInfo(fileInfo);
+        fullPathFileInfos.push(fullPathFileInfo);
+        fullSourcePaths.push(fullPathFileInfo.path);
+      }
+      var promise = this.chooseMoveTargetPrompt(DojoString.substitute(MLDOStrings.actionHandlerMoveMany, [fullPathFileInfos.length]), fullSourcePaths, fileOperation);
+      promise.done(function(choosenTargetFolderResult) {
+        var needsRefresh = choosenTargetFolderResult.needsRefresh;
+        choosenTargetFolderResult = choosenTargetFolderResult.selection;
+        var targetFolder;
+        if (choosenTargetFolderResult && ("folderPath" in choosenTargetFolderResult) && choosenTargetFolderResult.folderPath.length) {
+          targetFolder = choosenTargetFolderResult.folderPath;
+        }
+        if (fullPathFileInfos.length && targetFolder) {
+          context.performMultiMoveOrCopy(fullPathFileInfos, targetFolder, fileOperation, 0, 0, true);
+        } else if (needsRefresh) {
+           context.fileService.refreshGrid();
+        }
+      });
+    },
+
+    handleMoveOrCopy: function(fileInfo, fileOperation) {
+      if(!fileInfo || typeof fileInfo !== "object") {
+        throw new TypeError("Invalid fileInfo argument");
+      }
+      if (!fileOperation || typeof fileOperation !== "string" || ((fileOperation.toLowerCase() !== "move" && fileOperation.toLowerCase() !== "copy"))) {
+        throw new TypeError("Invalid fileOperation argument");
+      }
+      var originalPath = fileInfo.path;
+      var name = fileInfo.name;
+      var context = this;
+
+      var fullSourcePaths = [ fileInfo.path ];
+      var promise = this.chooseMoveTargetPrompt(name, fullSourcePaths, fileOperation);
+      this.pasteNameConflicts.length = 0;
+
+      promise.done(function(results) {
+        var needsRefresh = results.needsRefresh;
+        results = results.selection;
+        var targetFolder;
+        if (results && ("folderPath" in results) && results.folderPath.length) {
+          targetFolder = results.folderPath;
+        }
+        if (originalPath && targetFolder && targetFolder.length) {
+          var targetPath = targetFolder === "/" ? targetFolder + name : targetFolder + "/" + name;
+          context.performSingleMoveOrCopy(originalPath, targetPath, targetFolder, fileInfo.isDirectory, fileOperation, DO_NOT_SUPPRESS_NOTIFY);
+        } else if (needsRefresh) {
+          context.fileService.refreshGrid();
+        }
+      });
+    },
+
+    performSingleMoveOrCopy: function(originalPath, targetPath, targetFolder, isFolder, fileOperation, suppressNotify) {
+      var context = this;
+      var name = Util.getFileNameFromPath(originalPath);
+      var promise;
+      // Are we moving the file/folder into one of its children?
+      if (targetPath.length > originalPath.length && targetPath.toString().substring(0, originalPath.length) === originalPath) {
+        context.fileService.notify(DojoString.substitute(MLDOStrings.actionHandlerIllegalMoveOrCopyTarget, [name]), "ERROR");
+        promise = $.Deferred();
+        promise.reject({errorCode: "ILLEGAL_MOVE_TARGET", message: "File/Folder moved or copied to its subfolders."});
+      } else {
+        if (fileOperation === "copy") {
+          promise = this.fileService.copy(originalPath, targetPath);
+        } else {
+          promise = this.fileService.move(originalPath, targetPath, false);
+        }
+        if (!suppressNotify) {
+          promise.done(function(data) {
+            // change current folder
+            if (targetFolder) {
+              $.event.trigger("changetofilespage:mldo", {destination: targetFolder});
+              context.fileService.focusRowAfterGridRefresh({path: "/" + name, pageId: "Files"});
+            }
+            var focusRowData = {path: targetPath};
+            context.fileService.focusRowAfterGridRefresh(focusRowData);
+            context.fileService.refreshGrid();
+            if (fileOperation === "copy") {
+              context.fileService.notify(DojoString.substitute(MLDOStrings.actionHandlerCopiedTo, [name, Util.getFolderNameFromPath(targetFolder, context.fileService.gdsDAO.getApplicationId())]), "NORMAL");
+              $.event.trigger("quotachange:mldo");
+            } else {
+              context.fileService.notify(DojoString.substitute(MLDOStrings.actionHandlerMovedTo, [name, Util.getFolderNameFromPath(targetFolder, context.fileService.gdsDAO.getApplicationId())]), "NORMAL");
+            }
+          }).fail(function(err) {
+            var shouldThrow = context.fileService.isThrowErrorOnMessageTranslationEnabled();
+            var msg = err.message;
+            var operationName = "actionHandler.performSingleMoveOrCopy";
+            var substitutionTokens;
+            switch(err.errorCode) {
+              case "RESOURCE_ALREADY_EXISTS":
+                context.pasteNameConflicts.push({
+                                      name: _.escape(name),
+                                      destinationFolderFullPath: targetFolder,
+                                      originalPath: originalPath,
+                                      status: 'TODO',
+                                      reason: ""
+                                    });
+                operationName += fileOperation;
+                if (isFolder) {
+                  substitutionTokens = [MLDOStrings.actionHandlerFolder, targetFolder, MLDOStrings.actionHandlerFolder];
+                } else {
+                  substitutionTokens = [MLDOStrings.actionHandlerFile, targetFolder, MLDOStrings.actionHandlerFile];
+                }
+                msg = Util.getErrorMessageTranslator().getTranslatedMessage(err, operationName, substitutionTokens, shouldThrow);
+                break;
+
+              default:
+                msg = err.message;
+            }
+            if (err.errorCode === null && msg === "Action aborted.") {
+              context.fileService.refreshGrid();
+              context.fileService.notify(MLDOStrings.actionHandlerLargeOperationNotification, "NORMAL");
+              context.clearClipboard();
+            } else {
+              if (!context.fileService.getTreeEventId().startsWith("Embedded")) {
+                context.fileService.notify(msg, "ERROR");
+              }
+            }
+            if (context.pasteNameConflicts.length > 0) {
+              context.showPasteNameConflictDialog(targetFolder, fileOperation);
+            }
+          });
+        } else { // suppressNotify is true
+          promise.fail(function(err) {
+            if (err.errorCode === "RESOURCE_ALREADY_EXISTS") {
+              context.pasteNameConflicts.push({
+                                    name: _.escape(name),
+                                    destinationFolderFullPath: targetFolder,
+                                    originalPath: originalPath,
+                                    status: 'TODO',
+                                    reason: ""
+                                  });
+            }
+          });
+        }
+      }
+      return promise;
+    },
+
+    performMultiMoveOrCopy: function(fileInfos, targetFolder, fileOperation, succeededCount, failedCount) {
+      if (!(fileInfos && fileInfos.length)) {
+        throw new TypeError("Invalid fileInfos argument");
+      }
+      if (isNaN(succeededCount)) {
+        throw new TypeError("Invalid succeededCount argument");
+      }
+      if (isNaN(failedCount)) {
+        throw new TypeError("Invalid failedCount argument");
+      }
+      var len = fileInfos.length;
+      var fileInfo;
+      var targetPath;
+      var context = this;
+      if (len === 1) {
+        fileInfo = fileInfos[0];
+        targetPath = targetFolder === "/" ? targetFolder + fileInfo.name : targetFolder + "/" + fileInfo.name;
+        var singlePromise = this.performSingleMoveOrCopy(fileInfo.path, targetPath, targetFolder, fileInfo.isDirectory, fileOperation, DO_NOT_SUPPRESS_NOTIFY);
+        singlePromise.done(function() {
+          ++succeededCount;
+        })
+          .fail(function() {
+            ++failedCount;
+          })
+          .always(function() {
+            var msg = "";
+            var status = "";
+            if (succeededCount > 0) {
+              if (fileOperation === "copy") {
+                msg += DojoString.substitute(MLDOStrings.actionHandlerMultiCopySuccess, [succeededCount, (succeededCount === 1 ? MLDOStrings.actionHandlerItem : MLDOStrings.actionHandlerItems), Util.getFolderNameFromPath(targetFolder, context.fileService.gdsDAO.getApplicationId())]);
+              } else {
+                msg += DojoString.substitute(MLDOStrings.actionHandlerMultiMoveSuccess, [succeededCount, (succeededCount === 1 ? MLDOStrings.actionHandlerItem : MLDOStrings.actionHandlerItems), Util.getFolderNameFromPath(targetFolder, context.fileService.gdsDAO.getApplicationId())]);
+              }
+              status = "NORMAL";
+            }
+            if (failedCount > 0) {
+              if (fileOperation === "copy") {
+                msg += DojoString.substitute(MLDOStrings.actionHandlerMultiCopyFailed, [failedCount, (failedCount === 1 ? MLDOStrings.actionHandlerItem : MLDOStrings.actionHandlerItems), Util.getFolderNameFromPath(targetFolder, context.fileService.gdsDAO.getApplicationId())]);
+              } else {
+                msg += DojoString.substitute(MLDOStrings.actionHandlerMultiMoveFailed, [failedCount, (failedCount === 1 ? MLDOStrings.actionHandlerItem : MLDOStrings.actionHandlerItems), Util.getFolderNameFromPath(targetFolder, context.fileService.gdsDAO.getApplicationId())]);
+              }
+              status = "ERROR";
+            }
+            if (succeededCount > 0) {
+              /*
+               * Get target folder path so we can expand it.
+               */
+              var targetFolderPath = Util.getRelativePath(fileInfo.path, context.fileService.getStoredCurrentFolder());
+              var targetFolderPathLen = targetFolderPath.length;
+              if (targetFolderPath !== '/' && targetFolderPathLen && targetFolderPathLen > 1 && targetFolderPath[targetFolderPathLen - 1] === "/") {
+                targetFolderPath = targetFolderPath.substring(0, targetFolderPathLen - 1);
+              }
+              if (targetFolder ) {
+                $.event.trigger("changetofilespage:mldo", {destination: targetFolder});
+                if (succeededCount === 1) {
+                  context.fileService.focusRowAfterGridRefresh({path: "/" + fileInfo.name, pageId: "Files"});
+                }
+              }
+            }
+            context.fileService.notify(msg, status);
+          });
+      } else if (len > 1) {
+        fileInfo = fileInfos.pop();
+        targetPath = targetFolder === "/" ? targetFolder + fileInfo.name : targetFolder + "/" + fileInfo.name;
+        var promise = this.performSingleMoveOrCopy(fileInfo.path, targetPath, targetFolder, fileInfo.isDirectory, fileOperation, SUPPRESS_NOTIFY);
+        promise.done(function() {
+          succeededCount++;
+        })
+          .fail(function() {
+            failedCount++;
+          })
+          .always(function() {
+            context.performMultiMoveOrCopy(fileInfos, targetFolder, fileOperation, succeededCount, failedCount);
+          });
+      }
+    },
+
+    handleCutAction: function(fileInfo) {
+      var selectedFileCount = this.getSelectedRowCount();
+      if(!fileInfo || typeof fileInfo !== "object") {
+        throw new TypeError("Invalid fileInfo argument");
+      }
+      this.clearClipboard();
+      this.clipboard.cut([fileInfo]);
+      this.getActionButtonManager().updatePaste(this.clipboard.containsData() && selectedFileCount < 2);
+    },
+
+    handleCopyAction: function(fileInfo) {
+      if (this.copyEnabled) {
+        var selectedFileCount = this.getSelectedRowCount();
+        if(!fileInfo || typeof fileInfo !== "object") {
+          throw new TypeError("Invalid fileInfo argument");
+        }
+        this.clearClipboard();
+        this.clipboard.copy([fileInfo]);
+        this.getActionButtonManager().updatePaste(this.clipboard.containsData() && selectedFileCount < 2);
+      }
+    },
+
+    handleMultiSelectCut: function(fileInfos) {
+      if (!(fileInfos && fileInfos.length)) {
+        throw new TypeError("Invalid fileInfos argument");
+      }
+      var selectedFileCount = this.getSelectedRowCount();
+      var len = fileInfos.length;
+      var context = this;
+      var fileInfo;
+      var fullPathFileInfos = [];
+      for(var i = 0; i < len; i++) {
+        fileInfo = fileInfos[i];
+        fullPathFileInfos.push(this.getFullPathFileInfo(fileInfo));
+      }
+      this.clearClipboard();
+      this.clipboard.cut(fullPathFileInfos);
+      this.getActionButtonManager().updatePaste(this.clipboard.containsData() && selectedFileCount < 2);
+    },
+
+    handleMultiSelectCopy: function(fileInfos) {
+      if (this.copyEnabled) {
+        if (!(fileInfos && fileInfos.length)) {
+          throw new TypeError("Invalid fileInfos argument");
+        }
+        var selectedFileCount = this.getSelectedRowCount();
+        var len = fileInfos.length;
+        var context = this;
+        var fileInfo;
+        var fullPathFileInfos = [];
+        for(var i = 0; i < len; i++) {
+          fileInfo = fileInfos[i];
+          fullPathFileInfos.push(this.getFullPathFileInfo(fileInfo));
+        }
+        this.clearClipboard();
+        this.clipboard.copy(fullPathFileInfos);
+        this.getActionButtonManager().updatePaste(this.clipboard.containsData() && selectedFileCount < 2);
+      }
+    },
+
+    performSinglePaste: function(clippedFileInfo, path, suppressNotify) {
+      if (!clippedFileInfo ||  typeof clippedFileInfo !== "object") {
+        throw new TypeError("Invalid clippedFileInfo argument");
+      }
+      if (!path || typeof path !== "string") {
+        throw new TypeError("Invalid path argument");
+      }
+      var context = this;
+      var fileOperation = "move";
+      if (this.copyEnabled) {
+        fileOperation = this.clipboard.isCopy() ? "copy" : "move";
+      }
+      var isFolder = clippedFileInfo.isDirectory;
+      var folderName = null;
+      folderName = Util.getFolderNameFromPath(path, context.fileService.gdsDAO.getApplicationId());
+      var originalPath = FileNameUtil.pathFromFileInfo(clippedFileInfo);
+      var newPath = path + clippedFileInfo.name;
+      /*
+       * Get target folder path so we can expand it.
+       */
+      var targetFolderPath = Util.getRelativePath(path, context.fileService.getStoredCurrentFolder());
+      var targetFolderPathLen = targetFolderPath.length;
+      if (targetFolderPath !== '/' && targetFolderPathLen && targetFolderPathLen > 1 && targetFolderPath[targetFolderPathLen - 1] === "/") {
+        targetFolderPath = targetFolderPath.substring(0, targetFolderPathLen - 1);
+      }
+      // are trying to paste the cut folder onto itself?
+      if (isFolder && originalPath === targetFolderPath) {
+        folderName = Util.getFolderNameFromPath(clippedFileInfo.location, context.fileService.gdsDAO.getApplicationId());
+      }
+      // perform action asynchronously
+      var promise;
+      if (fileOperation === "copy") {
+        promise = this.fileService.copy(originalPath, newPath);
+      } else {
+        promise = this.fileService.move(originalPath, newPath);
+      }
+      if (!suppressNotify) {
+        promise.done(function(data) {
+          if (targetFolderPath && targetFolderPath !== "/") {
+            context.dispatchCanonicalizedTreeEvent("focusrow:treecontroller", {path: targetFolderPath, parentFolder: targetFolderPath, shouldExpand: true});
+          }
+          var postPastePath = Util.getRelativePath(newPath, context.fileService.getStoredCurrentFolder());
+          var focusRowData = {path: postPastePath};
+          var selectedFileCount = context.getSelectedRowCount();
+          context.fileService.focusRowAfterGridRefresh(focusRowData);
+          context.fileService.refreshGrid();
+          context.clearClipboard();
+          context.getActionButtonManager().updatePaste(context.clipboard.containsData() && selectedFileCount < 2);
+          if (fileOperation === "copy") {
+            context.fileService.notify(DojoString.substitute(MLDOStrings.actionHandlerCopiedTo, [clippedFileInfo.name, Util.getFolderNameFromPath(path, context.fileService.gdsDAO.getApplicationId())]), "NORMAL");
+            $.event.trigger("quotachange:mldo");
+          } else {
+          context.fileService.notify(DojoString.substitute(MLDOStrings.actionHandlerPastedTo, [clippedFileInfo.name, Util.getFolderNameFromPath(path, context.fileService.gdsDAO.getApplicationId())]), "NORMAL");
+          }
+        })
+        .fail(function(err) {
+                var shouldThrow = context.fileService.isThrowErrorOnMessageTranslationEnabled();
+                var msg = err.message;
+                var operationName = "actionHandler.performSinglePaste";
+                var substitutionTokens;
+                switch(err.errorCode) {
+                  case "RESOURCE_ALREADY_EXISTS":
+                    context.pasteNameConflicts.push({
+                                          name: _.escape(clippedFileInfo.name),
+                                          destinationFolderFullPath: path,
+                                          originalPath: originalPath,
+                                          status: 'TODO',
+                                          reason: ""
+                                        });
+                    if (fileOperation === "copy") {
+                      operationName += "Copy";
+                    } else {
+                      operationName += "Move";
+                    }
+                    if (isFolder) {
+                      substitutionTokens = [MLDOStrings.actionHandlerFolder, folderName, MLDOStrings.actionHandlerFolder];
+                    } else {
+                      substitutionTokens = [MLDOStrings.actionHandlerFile, folderName, MLDOStrings.actionHandlerFile];
+                    }
+                    msg = Util.getErrorMessageTranslator().getTranslatedMessage(err, operationName, substitutionTokens, shouldThrow);
+                    break;
+
+                  default:
+                    msg = err.message;
+                }
+                if (err.errorCode === null && msg === "Action aborted.") {
+                  context.fileService.refreshGrid();
+                  context.fileService.notify(MLDOStrings.actionHandlerLargeOperationNotification, "NORMAL");
+                  context.clearClipboard();
+                } else {
+                  context.fileService.notify(msg, "ERROR");
+                }
+                if (context.pasteNameConflicts.length > 0) {
+                  context.showPasteNameConflictDialog(path, fileOperation);
+                }
+        });
+      } else { // suppressNotify is true
+        promise.fail(function(err) {
+          if (err.errorCode === "RESOURCE_ALREADY_EXISTS") {
+            context.pasteNameConflicts.push({
+                                  name: _.escape(clippedFileInfo.name),
+                                  destinationFolderFullPath: path,
+                                  originalPath: originalPath,
+                                  status: 'TODO',
+                                  reason: ""
+                                });
+          }
+        });
+      }
+      return promise;
+    },
+
+    showPasteNameConflictDialog: function(targetFolder, fileOperation) {
+      var context = this;
+      var operation = fileOperation || "move";
+      var target = targetFolder || context.fileService.getStoredCurrentFolder();
+      var pasteConflictDialogContainer = document.createElement('div');
+      var len = this.pasteNameConflicts.length || 0;
+      pasteConflictDialogContainer.setAttribute("id", "pasteConflictDialogContainer");
+      $('#modalContainer').append(pasteConflictDialogContainer);
+      var fConflictDialog = new FileConflictView({
+        dialogBodyText: DojoString.substitute((len > 1 ? MLDOStrings.fconflictFolderHasConflicts : MLDOStrings.fconflictFolderHasConflict), [context.pasteNameConflicts.length]),
+        filesArray: this.pasteNameConflicts,
+        targetFolder: target,
+        currentFolder: context.fileService.getStoredCurrentFolder(),
+        isMove: true,
+        replaceFileCallback: function(originalPath, destinationFolderPath, fileName) {
+            var promise;
+            if (operation === "copy") {
+              promise = context.fileService.copy(originalPath, destinationFolderPath + '/' + fileName, true);
+            } else {
+              promise = context.fileService.move(originalPath, destinationFolderPath + '/' + fileName, true);
+            }
+            promise.done(function() { context.clearClipboard({path: originalPath}); });
+            return promise;
+        },
+        keepFileSeparateCallback: function(originalPath, destinationFolderPath, fileName) {
+            var promise;
+            if (operation === "copy") {
+              promise = context.fileService.copy(originalPath, destinationFolderPath + '/' + fileName, false);
+            } else {
+              promise = context.fileService.move(originalPath, destinationFolderPath + '/' + fileName, false);
+            }
+            promise.done(function() { context.clearClipboard({path: originalPath}); if (operation === "copy") {$.event.trigger("quotachange:mldo");} });
+            return promise;
+        },
+        focusRowAfterGridRefreshCallback: function(args) {
+          return context.fileService.focusRowAfterGridRefresh(args);
+        },
+        dispatchTreeEventMethod: function(eventName, data) {
+          context.fileService.dispatchCanonicalizedTreeEvent(eventName, data);
+        }
+      });
+      fConflictDialog.setElement(pasteConflictDialogContainer);
+      fConflictDialog.render();
+    },
+
+    handlePasteAction: function(path) {
+      if(!path || typeof path !== "string") {
+        throw new TypeError("Invalid path argument");
+      }
+      var clippedFileInfoArray = JSON.parse(JSON.stringify(this.clipboard.getData()));
+      var sortedFileInfos = Util.sortFileInfosByPath(clippedFileInfoArray);
+      var clippedFileInfo = null;
+      this.pasteNameConflicts.length = 0;
+      if (clippedFileInfoArray && clippedFileInfoArray.length === 1) {
+        clippedFileInfo = clippedFileInfoArray[0];
+        this.performSinglePaste(clippedFileInfo, path, false);
+      } else if (clippedFileInfoArray && clippedFileInfoArray.length > 1) {
+        this.handleMultiSelectPaste(sortedFileInfos, path, 0, 0);
+      }
+    },
+
+    handleMultiSelectPaste: function(files, path, succeededCount, failedCount) {
+      if (!files || !Array.isArray(files) || !files.length) {
+        throw new TypeError("Invalid files argument");
+      }
+      if (!path || typeof path !== "string") {
+        throw new TypeError("Invalid path argument");
+      }
+      if (isNaN(succeededCount)) {
+        throw new TypeError("Invalid succeededCount argument");
+      }
+      if (isNaN(failedCount)) {
+        throw new TypeError("Invalid failedCount argument");
+      }
+      var context = this;
+      var len = files.length;
+      var fileOperation = "move";
+      if (this.copyEnabled) {
+        fileOperation = this.clipboard.isCopy() ? "copy" : "move";
+      }
+      if (len === 1) {
+        file = files[0];
+        var singlePromise = this.performSinglePaste(file, path, true);
+        singlePromise.done(function() {
+          ++succeededCount;
+        })
+        .fail(function() {
+          ++failedCount;
+        })
+        .always(function() {
+          var msg = "";
+          var status = "";
+          var selectedFileCount = context.getSelectedRowCount();
+          if (succeededCount > 0) {
+            if (fileOperation === "copy") {
+              msg += DojoString.substitute(MLDOStrings.actionHandlerMultiCopySuccess, [succeededCount, (succeededCount === 1 ? MLDOStrings.actionHandlerItem : MLDOStrings.actionHandlerItems), Util.getFolderNameFromPath(path, context.fileService.gdsDAO.getApplicationId())]);
+            } else {
+            msg += DojoString.substitute(MLDOStrings.actionHandlerMultiPasteSuccess, [succeededCount, (succeededCount === 1 ? MLDOStrings.actionHandlerItem : MLDOStrings.actionHandlerItems), Util.getFolderNameFromPath(path, context.fileService.gdsDAO.getApplicationId())]);
+            }
+            status = "NORMAL";
+          }
+          if (failedCount > 0) {
+            if (fileOperation === "copy") {
+              msg += DojoString.substitute(MLDOStrings.actionHandlerMultiCopyFailed, [failedCount, (failedCount === 1 ? MLDOStrings.actionHandlerItem : MLDOStrings.actionHandlerItems), Util.getFolderNameFromPath(path, context.fileService.gdsDAO.getApplicationId())]);
+            } else {
+            msg += DojoString.substitute(MLDOStrings.actionHandlerMultiPasteFailed, [failedCount, (failedCount === 1 ? MLDOStrings.actionHandlerItem : MLDOStrings.actionHandlerItems), Util.getFolderNameFromPath(path, context.fileService.gdsDAO.getApplicationId())]);
+            }
+            status = "ERROR";
+          }
+          if (succeededCount > 0) {
+            /*
+             * Get target folder path so we can expand it.
+             */
+            var targetFolderPath = Util.getRelativePath(path, context.fileService.getStoredCurrentFolder());
+            var targetFolderPathLen = targetFolderPath.length;
+            if (targetFolderPath !== '/' && targetFolderPathLen && targetFolderPathLen > 1 && targetFolderPath[targetFolderPathLen - 1] === "/") {
+              targetFolderPath = targetFolderPath.substring(0, targetFolderPathLen - 1);
+            }
+            var focusRowData = {path: targetFolderPath};
+            if (targetFolderPath && targetFolderPath !== "/") {
+              context.dispatchCanonicalizedTreeEvent("focusrow:treecontroller", {path: targetFolderPath, parentFolder: targetFolderPath, shouldExpand: true});
+            }
+            context.fileService.focusRowAfterGridRefresh(focusRowData);
+            context.fileService.refreshGrid();
+            if (! failedCount) {
+              context.clearClipboard();
+            }
+            context.getActionButtonManager().updatePaste(context.clipboard.containsData() && selectedFileCount < 2);
+            $.event.trigger("quotachange:mldo");
+          }
+          context.fileService.notify(msg, status);
+          if (context.pasteNameConflicts.length > 0) {
+            context.showPasteNameConflictDialog(path, fileOperation);
+          }
+        });
+      } else if (len > 1) {
+        file = files.pop();
+        var promise = this.performSinglePaste(file, path, true);
+        promise.done(function() {
+          succeededCount++;
+          context.clearClipboard(file);
+        })
+        .fail(function() {
+          failedCount++;
+        })
+        .always(function() {
+          context.handleMultiSelectPaste(files, path, succeededCount, failedCount);
+        });
+      }
+    },
+
+    performMultiSelectDelete: function(fileInfos, succeededCount, failedCount) {
+      if (!(fileInfos && fileInfos.length)) {
+        throw new TypeError("Invalid fileInfos argument");
+      }
+      if (isNaN(succeededCount)) {
+        throw new TypeError("Invalid succeededCount argument");
+      }
+      if (isNaN(failedCount)) {
+        throw new TypeError("Invalid failedCount argument");
+      }
+      var context = this;
+      var len = fileInfos.length;
+      var path;
+      var fileInfo;
+      var promise;
+
+      if (len > 0) {
+        fileInfo = fileInfos.pop();
+        path = fileInfo ? this.getSelectedItemFullPath(fileInfo) : this.getSelectedItemFullPath();
+        promise = this.performSingleDelete(path, fileInfo, true);
+        promise.done(function() {
+          ++succeededCount;
+        })
+        .fail(function(e) {
+          ++failedCount;
+        })
+        .always(function() {
+          var msg = "";
+          if (len === 1) {
+            if (succeededCount) {
+              msg += DojoString.substitute(MLDOStrings.actionHandlerMultiDeleteSuccess, [succeededCount]);
+            }
+            if (failedCount) {
+              msg += DojoString.substitute(MLDOStrings.actionHandlerMultiDeleteFailed, [failedCount]);
+            }
+            context.fileService.notify(msg, (!failedCount ? "NORMAL" : "ERROR"));
+            context.fileService.clearSelectionRefreshGrid();
+            $.event.trigger("quotachange:mldo");
+          } else if (len > 1) {
+            context.performMultiSelectDelete(fileInfos, succeededCount, failedCount);
+          }
+        });
+      }
+    },
+
+    handleMultiSelectDelete: function(fileInfos, succeededCount, failedCount) {
+      var appId = this.fileService.gdsDAO.getApplicationId();
+      if (appId === "addons") {
+        if (!(fileInfos && fileInfos.length)) {
+          throw new TypeError("Invalid fileInfos argument");
+        }
+        var context = this;
+        var len = fileInfos.length;
+        var fileInfo;
+        var promise;
+        var dialogTitle = MLDOStrings.actionHandlerDeleteDialogMultiTitle;
+        var dialogPromptText = len === 1 ? MLDOStrings.actionHandlerDeleteDialogMultiSingularPrompt : MLDOStrings.actionHandlerDeleteDialogMultiPluralPrompt;
+        //show modal dialog for confirmation
+        var htmlResult = DeleteDialog({deleteItemHeader: dialogTitle,
+                                       deleteItemBodyPrompt: dialogPromptText,
+                                       deleteButtonLabel: MLDOStrings.actionHandlerDeleteDialogDeleteButtonlabel,
+                                       cancelButtonLabel: MLDOStrings.actionHandlerDeleteDialogCancelButtonLabel,
+                                       shouldShowUnshareOption: false,
+                                       shouldUnshareLabel: "",
+                                       shouldUnshareExplanation: ""
+                                     });
+        $('#modalContainer').html(htmlResult);
+        var deleteModalDialog = $('#deleteItemDialog');
+        deleteModalDialog.on('shown.bs.modal', function() {
+            $(".cancelDeleteItem").focus();
+        });
+        deleteModalDialog.on('hidden.bs.modal', function() {
+          $('#deleteItemDialog').remove();
+        });
+        deleteModalDialog.on('dragover', context.dragNotAllowed);
+        deleteModalDialog.modal({backdrop: 'static'});
+        deleteModalDialog.on('click','.deleteItem', function(e){
+          e.preventDefault();
+          context.performMultiSelectDelete(fileInfos, 0, 0);
+        });
+      } else {
+        return this.performMultiSelectDelete(fileInfos, succeededCount, failedCount);
+      }
+    },
+
+    handleDeleteAction: function(path, fileInfo, suppressNotify) {
+      var appId = this.fileService.gdsDAO.getApplicationId();
+      if (appId === "addons") {
+        if( !fileInfo || typeof fileInfo !== "object") {
+          throw new TypeError("Invalid fileInfo argument");
+        }
+        var itemToDelete = _.escape(fileInfo.name);
+        var isFolder = fileInfo.isDirectory;
+        var context = this;
+        var dialogTitle = Util.toTitleCase(DojoString.substitute(MLDOStrings.actionHandlerDeleteDialogTitle, [isFolder ? MLDOStrings.actionHandlerFolder : MLDOStrings.actionHandlerFile]));
+        var dialogPromptText = isFolder ? DojoString.substitute(MLDOStrings.actionHandlerDeleteDialogFolderPrompt, [itemToDelete]) : DojoString.substitute(MLDOStrings.actionHandlerDeleteDialogFilePrompt, [itemToDelete]);
+        //show modal dialog for confirmation
+        var htmlResult = DeleteDialog({deleteItemHeader: dialogTitle,
+                                       deleteItemBodyPrompt: dialogPromptText,
+                                       deleteButtonLabel: MLDOStrings.actionHandlerDeleteDialogDeleteButtonlabel,
+                                       cancelButtonLabel: MLDOStrings.actionHandlerDeleteDialogCancelButtonLabel,
+                                       shouldShowUnshareOption: false,
+                                       shouldUnshareLabel: "",
+                                       shouldUnshareExplanation: ""
+                                     });
+        $('#modalContainer').html(htmlResult);
+        var deleteModalDialog = $('#deleteItemDialog');
+        deleteModalDialog.on('shown.bs.modal', function() {
+            $(".cancelDeleteItem").focus();
+        });
+        deleteModalDialog.on('hidden.bs.modal', function() {
+          $('#deleteItemDialog').remove();
+        });
+        deleteModalDialog.on('dragover', context.dragNotAllowed);
+        deleteModalDialog.modal({backdrop: 'static'});
+        deleteModalDialog.on('click','.deleteItem', function(e){
+            e.preventDefault();
+            context.performSingleDelete(path, fileInfo, false);
+        });
+
+      } else {
+        return this.performSingleDelete(path, fileInfo, suppressNotify);
+      }
+    },
+
+    performSingleDelete: function(path, fileInfo, suppressNotify) {
+      if (!path || typeof path !== "string") {
+        throw new TypeError("Invalid path argument");
+      }
+      if( !fileInfo || typeof fileInfo !== "object") {
+        throw new TypeError("Invalid fileInfo argument");
+      }
+      var itemToDelete = fileInfo.name;
+      var isFolder = fileInfo.isDirectory;
+      var isSharedFolder = fileInfo.isSharedFolder || false;
+      var isOwner = (!isSharedFolder || fileInfo.accessType.toUpperCase() === "OWNER");
+      var context = this;
+      var htmlResult = null;
+      var deleteModalDialog = null;
+      var promise = context.fileService.delete(path, isFolder);
+      try {
+        promise.done(function (data) {
+          var summary;
+          var tombstoneId = "";
+          var name;
+          var originalLocation;
+          var isDirectory = false;
+          var undoDelete;
+          var linkData;
+          if (data && (data.deletedFileSummary || data.deletedFolderSummary)) {
+            summary = data.deletedFileSummary ? data.deletedFileSummary : data.deletedFolderSummary;
+            if (data.deletedFolderSummary) {
+              isDirectory = true;
+            }
+            tombstoneId = summary.tombstone;
+            name = summary.name;
+            originalLocation = summary.parentResource.path;
+          }
+          if (tombstoneId) {
+            undoDelete = function() {
+              context.performRestore(tombstoneId, name, originalLocation, isDirectory, true);
+            };
+          }
+          if (undoDelete) {
+            linkData = {text: MLDOStrings.actionHandlerUndo, callback: undoDelete};
+          }
+          if (!suppressNotify) {
+            var folderMessageId = "";
+            if (linkData) {
+              folderMessageId = (isOwner) ? MLDOStrings.actionHandlerSingleSharedFolderOwnerDeleteSuccess : MLDOStrings.actionHandlerSingleSharedFolderDeleteSuccess;
+              context.fileService.notify(DojoString.substitute(isSharedFolder? folderMessageId : MLDOStrings.actionHandlerSingleDeleteSuccess, [itemToDelete]), "NORMAL", linkData);
+            } else {
+              context.fileService.notify(DojoString.substitute(isSharedFolder? MLDOStrings.actionHandlerSinglePermanentDeleteSharedFolderSuccess : MLDOStrings.actionHandlerSinglePermanentDeleteSuccess, [itemToDelete]), "NORMAL");
+            }
+            context.fileService.clearSelectionRefreshGrid();
+            $.event.trigger("quotachange:mldo");
+          }
+        })
+        .fail(function (err) {
+          var shouldThrow = context.fileService.isThrowErrorOnMessageTranslationEnabled();
+          var msg = Util.getErrorMessageTranslator().getTranslatedMessage(err, "actionHandler.performSingleDelete", [itemToDelete, err.message], shouldThrow);
+          context.fileService.notify(msg, "ERROR");
+        });
+      } catch(error) {
+        var msg = Util.getErrorMessageTranslator().getTranslatedMessage(error,
+                                                                        "actionHandler.performSingleDelete",
+                                                                        [itemToDelete, err.message],
+                                                                        context.fileService.isThrowErrorOnMessageTranslationEnabled());
+        context.fileService.notify(msg, "ERROR");
+      }
+      return promise;
+    },
+
+    performRestore: function(tombstoneId, name, originalLocation, isDirectory, hideLink, alternatePath, suppressNotify) {
+      var context = this;
+      var promise = null;
+      var itemType = isDirectory ? "folder" : "file";
+      var linkCallback;
+      if (!tombstoneId || !tombstoneId.length || typeof tombstoneId !== "string") {
+        throw new TypeError("Invalid tombstoneId argument");
+      }
+      if (alternatePath && (!alternatePath.length || typeof alternatePath !== "string")) {
+        throw new TypeError("Invalid alternatePath argument");
+      }
+      try {
+        promise = this.fileService.restore(tombstoneId, alternatePath);
+        promise.done(function(data) {
+          var destinationPath;
+          var destinationFolder;
+          var itemName;
+          var msg;
+          var linkData;
+          if (alternatePath) {
+            itemName = Util.getFileNameFromPath(alternatePath);
+            destinationPath = FileNameUtil.getParentPath(alternatePath);
+            destinationFolder = Util.getFolderNameFromPath(destinationPath, context.fileService.gdsDAO.getApplicationId());
+          } else {
+            itemName = name;
+            destinationPath = originalLocation;
+            destinationFolder = Util.getFolderNameFromPath(originalLocation, context.fileService.gdsDAO.getApplicationId());
+          }
+          msg = DojoString.substitute(MLDOStrings.actionHandlerPerformRestoreSuccess, [itemName, destinationFolder]);
+          if (!hideLink) {
+            linkCallback = function() {
+              $.event.trigger("changetofilespage:mldo", {destination: destinationPath});
+              context.fileService.focusRowAfterGridRefresh({path: "/" + itemName, pageId: "Files"});
+            };
+            linkData = {text: MLDOStrings.actionHandlerGoToLocation, callback: linkCallback};
+          }
+          if (!suppressNotify) {
+            context.fileService.notify(msg, "NORMAL", linkData);
+            context.fileService.clearSelectionRefreshGrid();
+            $.event.trigger("quotachange:mldo");
+          }
+        })
+        .fail(function(error) {
+          var message = error.message.length ? error.message.replace(tombstoneId, name) : MLDOStrings.actionHandlerServerError;
+          var prompt = DojoString.substitute(MLDOStrings.actionHandlerNameConflictPrompt, [name, originalLocation]);
+          if (error.errorCode === 'RESOURCE_ALREADY_EXISTS') {
+            var baseLocation = originalLocation;
+            var renamePrompt = new RenamePrompt({
+              initialText: name,
+              promptTitle: DojoString.substitute(MLDOStrings.actionHandlerRenamePromptTitle, [itemType.charAt(0).toUpperCase() + itemType.slice(1)]),
+              promptLabel: DojoString.substitute(MLDOStrings.actionHandlerRenamePromptLabel, [itemType.toLowerCase(), itemType.toLowerCase()]),
+              itemType: itemType,
+              callback: function(newName) {
+                var alternate;
+                var len = baseLocation.length;
+                if (baseLocation !== "/" && baseLocation.charAt(len - 1) !== "/") {
+                  baseLocation += "/";
+                }
+                alternate = baseLocation + newName;
+                context.performRestore.call(context, tombstoneId, name, originalLocation, isDirectory, false, alternate);
+              }
+            });
+            var renamePromptDialogContainer = document.createElement('div');
+            renamePromptDialogContainer.setAttribute("id", "renamePromptDialogContainer");
+            $('#modalContainer').append(renamePromptDialogContainer);
+            renamePrompt.setElement(renamePromptDialogContainer);
+            renamePrompt.render();
+          } else {
+            context.fileService.notify(DojoString.substitute(MLDOStrings.actionHandlerPerformRestoreFailed, [name, originalLocation, message]), "ERROR");
+          }
+        });
+      } catch( e ) {
+        context.fileService.notify(DojoString.substitute(MLDOStrings.actionHandlerPerformRestoreUnknownFailure, [name, e.message]), "ERROR");
+      }
+      return promise;
+    },
+
+    handleMultiSelectRestore: function(fileInfos, succeededCount, failedCount, showLink) {
+      if (!(fileInfos && fileInfos.length)) {
+        throw new TypeError("Invalid fileInfos argument");
+      }
+      if (isNaN(succeededCount)) {
+        throw new TypeError("Invalid succeededCount argument");
+      }
+      if (isNaN(failedCount)) {
+        throw new TypeError("Invalid failedCount argument");
+      }
+      var context = this;
+      var len = fileInfos.length;
+      var path;
+      var fileInfo;
+      var promise;
+
+      if (len > 0) {
+        fileInfo = fileInfos.pop();
+        path = fileInfo ? this.getSelectedItemFullPath(fileInfo) : this.getSelectedItemFullPath();
+        promise = this.handleRestoreAction(path, fileInfo, undefined, true);
+        promise.done(function() {
+          ++succeededCount;
+        })
+        .fail(function(e) {
+          ++failedCount;
+        })
+        .always(function() {
+          var msg = "";
+          var linkCallback;
+          var linkData;
+          if (len === 1) {
+            if (succeededCount) {
+              msg += DojoString.substitute(MLDOStrings.actionHandlerMultiRestoreSuccess, [succeededCount]);
+            }
+            if (failedCount) {
+              msg += DojoString.substitute(MLDOStrings.actionHandlerMultiRestoreFailed, [failedCount]);
+            }
+            if (showLink) {
+              linkCallback = function() {
+                $.event.trigger("changetofilespage:mldo", {destination: fileInfo.originalLocation});
+              };
+              linkData = {text: MLDOStrings.actionHandlerGoToLocation, callback: linkCallback};
+            }
+            context.fileService.notify(msg, (!failedCount ? "NORMAL" : "ERROR"), linkData);
+            context.fileService.clearSelectionRefreshGrid();
+            $.event.trigger("quotachange:mldo");
+          } else if (len > 1) {
+            context.handleMultiSelectRestore(fileInfos, succeededCount, failedCount, showLink);
+          }
+        });
+      }
+    },
+
+    handleRestoreAction: function(path, fileInfo, newLocation, suppressNotify) {
+      if (path && typeof path !== "string") {
+        throw new TypeError("Invalid path argument");
+      }
+      if (!fileInfo || typeof fileInfo !== "object" || !fileInfo.tombstoneId || !fileInfo.name || !fileInfo.originalLocation) {
+        throw new TypeError("Invalid fileInfo argument");
+      }
+      if (newLocation && typeof newLocation !== "string") {
+        throw new TypeError("Invalid newLocation argument");
+      }
+      var itemToRestore = fileInfo.name;
+      var location = fileInfo.originalLocation;
+      var tombstoneId = fileInfo.tombstoneId;
+      var isDirectory = fileInfo.isDirectory;
+      return this.performRestore(tombstoneId, itemToRestore, location, isDirectory, false, newLocation, suppressNotify);
+    },
+
+    performSinglePermanentDelete: function(fileInfo, suppressNotify) {
+      if( !fileInfo || typeof fileInfo !== "object") {
+        throw new TypeError("Invalid fileInfo argument");
+      }
+      var tombstoneId = fileInfo.tombstoneId;
+      var itemToDelete = fileInfo.name;
+      var isFolder = fileInfo.isDirectory;
+      var isSharedFolder = fileInfo.isSharedFolder || false;
+      var shouldUnshare = (fileInfo.hasOwnProperty("shouldUnshare") && fileInfo.shouldUnshare) || false;
+      var promise;
+      var context = this;
+      try {
+          promise = context.fileService.permanentlyDelete(tombstoneId, shouldUnshare);
+          if (! suppressNotify) {
+              var notifyMessage = DojoString.substitute(MLDOStrings.actionHandlerSinglePermanentDeleteSuccess, [itemToDelete]);
+              promise.done(function (data) {
+              if(isSharedFolder) {
+                if(shouldUnshare) {
+                  notifyMessage = DojoString.substitute(MLDOStrings.actionHandlerSingleUnshareAndPermanentDeleteSharedFolderSuccess, [itemToDelete]);
+                } else {
+                    notifyMessage = DojoString.substitute(MLDOStrings.actionHandlerSinglePermanentDeleteSharedFolderSuccess, [itemToDelete]);
+                }
+              }
+              context.fileService.notify(notifyMessage, "NORMAL");
+              context.fileService.clearSelectionRefreshGrid();
+              $.event.trigger("quotachange:mldo");
+            })
+            .fail(function (err) {
+              var msg = Util.getErrorMessageTranslator().getTranslatedMessage(err,
+                                                                              "actionHandler.performSinglePermanentDelete",
+                                                                              [itemToDelete, err.message],
+                                                                              context.fileService.isThrowErrorOnMessageTranslationEnabled());
+              context.fileService.notify(msg, "ERROR");
+            }).always(function() {
+              $('#deleteItemDialog').off('dragover');
+            });
+          }
+          return promise;
+      } catch(error) {
+        var msg = Util.getErrorMessageTranslator().getTranslatedMessage(error,
+                                                                        "actionHandler.performSinglePermanentDelete",
+                                                                        [itemToDelete, error.message],
+                                                                        context.fileService.isThrowErrorOnMessageTranslationEnabled());
+        context.fileService.notify(msg, "ERROR");
+      }
+      return promise;
+    },
+
+    performMultiSelectPermanentDelete: function(fileInfos, succeededCount, failedCount) {
+      if (!fileInfos || !Array.isArray(fileInfos) || !fileInfos.length) {
+        throw new TypeError("Invalid fileInfos argument");
+      }
+      if (isNaN(succeededCount)) {
+        throw new TypeError("Invalid succeededCount argument");
+      }
+      if (isNaN(failedCount)) {
+        throw new TypeError("Invalid failedCount argument");
+      }
+      var len = fileInfos.length;
+      var context = this;
+      var fileInfo;
+      var tombstoneId;
+      var itemToDelete;
+      var isFolder;
+      var promise;
+      if (len === 1) {
+        fileInfo = fileInfos[0];
+        tombstoneId = fileInfo.tombstoneId;
+        itemToDelete = fileInfo.name;
+        isFolder = fileInfo.isDirectory;
+        try {
+          promise = this.performSinglePermanentDelete(fileInfo, true);
+          promise.done(function (data) {
+            ++succeededCount;
+            context.fileService.notify(DojoString.substitute(MLDOStrings.actionHandlerMultiPermanentDeleteSuccess, [succeededCount]), "NORMAL");
+            context.fileService.clearSelectionRefreshGrid();
+            $.event.trigger("quotachange:mldo");
+          })
+          .fail(function (err) {
+            if (err.errorCode !== "RESOURCE_DOES_NOT_EXIST") {
+              ++failedCount;
+              var msg = Util.getErrorMessageTranslator().getTranslatedMessage(err,
+                                                                              "actionHandler.performMultiSelectPermanentDelete",
+                                                                              [failedCount, err.message],
+                                                                              context.fileService.isThrowErrorOnMessageTranslationEnabled());
+              context.fileService.notify(msg, "ERROR");
+            } else {
+              ++succeededCount;
+            }
+          }).always(function() {
+            $('#deleteItemDialog').off('dragover');
+          });
+        } catch (e) {
+          var msg = Util.getErrorMessageTranslator().getTranslatedMessage(e,
+                                                                          "actionHandler.performMultiSelectPermanentDelete",
+                                                                          [e.message],
+                                                                          context.fileService.isThrowErrorOnMessageTranslationEnabled());
+          context.fileService.notify(msg, "ERROR");
+        }
+      } else if (len > 1) {
+        fileInfo = fileInfos.pop();
+        tombstoneId = fileInfo.tombstoneId;
+        itemToDelete = fileInfo.name;
+        promise = context.performSinglePermanentDelete(fileInfo, true);
+        promise.done(function (data) {
+          ++succeededCount;
+        })
+        .fail(function (err) {
+          if (err.errorCode !== "RESOURCE_DOES_NOT_EXIST") {
+            ++failedCount;
+          } else {
+            ++succeededCount;
+          }
+        }).always(function() {
+          context.performMultiSelectPermanentDelete(fileInfos, succeededCount, failedCount);
+        });
+      }
+    },
+
+    handlePermanentlyDeleteAction: function(fileInfo) {
+      if( !fileInfo || typeof fileInfo !== "object") {
+        throw new TypeError("Invalid fileInfo argument");
+      }
+      var tombstoneId = fileInfo.tombstoneId;
+      var itemToDelete = _.escape(fileInfo.name);
+      var isFolder = fileInfo.isDirectory;
+      var isSharedFolder = fileInfo.isSharedFolder || false;
+      var isOwner = (!isSharedFolder || fileInfo.accessType.toUpperCase() === "OWNER");
+      var context = this;
+      var dialogTitle = Util.toTitleCase(DojoString.substitute(MLDOStrings.actionHandlerDeleteDialogTitle, [isFolder ? MLDOStrings.actionHandlerFolder : MLDOStrings.actionHandlerFile]));
+      var sharedFolderMessageId = isOwner ? MLDOStrings.actionHandlerDeleteDialogSharedFolderOwnerPrompt : MLDOStrings.actionHandlerDeleteDialogSharedFolderPrompt;
+      var dialogPromptText = isFolder ?
+        (DojoString.substitute(isSharedFolder? sharedFolderMessageId : MLDOStrings.actionHandlerDeleteDialogFolderPrompt, [itemToDelete]) ) :
+        DojoString.substitute(MLDOStrings.actionHandlerDeleteDialogFilePrompt, [itemToDelete]);
+      //show modal dialog for confirmation
+      var shouldUnshareLabel = "";
+      var shouldUnshareExplanation = "";
+      if(isOwner) {
+        if(isSharedFolder && context.shouldShowUnshareOption) {
+            shouldUnshareLabel = DojoString.substitute(MLDOStrings.actionHandlerDeleteDialogShouldUnshareFolderLabel, [itemToDelete]);
+            shouldUnshareExplanation = MLDOStrings.actionHandlerDeleteDialogShouldUnshareFolderExplanation;
+        } else {
+            shouldUnshareLabel = DojoString.substitute(MLDOStrings.actionHandlerDeleteDialogShouldUnshareSubFoldersLabel, [itemToDelete]);
+            shouldUnshareExplanation = MLDOStrings.actionHandlerDeleteDialogShouldUnshareSubFoldersExplanation;
+        }
+      }
+      var htmlResult = DeleteDialog({deleteItemHeader: dialogTitle,
+                                     deleteItemBodyPrompt: dialogPromptText,
+                                     deleteButtonLabel: MLDOStrings.actionHandlerDeleteDialogDeleteButtonlabel,
+                                     cancelButtonLabel: MLDOStrings.actionHandlerDeleteDialogCancelButtonLabel,
+                                     shouldShowUnshareOption: isOwner && isFolder && context.shouldShowUnshareOption,
+                                     shouldUnshareLabel: shouldUnshareLabel,
+                                     shouldUnshareExplanation: shouldUnshareExplanation
+                                   });
+      $('#modalContainer').html(htmlResult);
+      var deleteModalDialog = $('#deleteItemDialog');
+      deleteModalDialog.on('shown.bs.modal', function() {
+          $(".cancelDeleteItem").focus();
+      });
+      deleteModalDialog.on('hidden.bs.modal', function() {
+        $('#deleteItemDialog').remove();
+      });
+      deleteModalDialog.on('dragover', context.dragNotAllowed);
+      deleteModalDialog.modal({backdrop: 'static'});
+      deleteModalDialog.on('click','.deleteItem', function(e){
+          e.preventDefault();
+          if(isOwner && isFolder && context.shouldShowUnshareOption) {
+              var shouldUnshare = $('input[name="shouldUnshare"]:checked').val();
+              fileInfo.shouldUnshare = shouldUnshare;
+          }
+          context.performSinglePermanentDelete(fileInfo, false);
+      });
+    },
+
+    filterOutSharedContent: function(fileInfos) {
+      var results = [];
+      if (fileInfos && fileInfos.length) {
+        var info;
+        for (var i = 0; i < fileInfos.length; i++) {
+          if (!fileInfos[i].isSharedContent) {
+            results.push(fileInfos[i]);
+          }
+        }
+        if (results.lenth > 1) {
+          results.reverse();
+        }
+      }
+      return results;
+    },
+
+    handleMultiSelectPermanentlyDelete: function(rawFileInfos, succeededCount, failedCount) {
+      if (!(rawFileInfos && rawFileInfos.length)) {
+        throw new TypeError("Invalid fileInfos argument");
+      }
+      var context = this;
+      var fileInfos = this.filterOutSharedContent(rawFileInfos);
+      var len = fileInfos.length;
+      var isFolder;
+      var isSharedFolder;
+      var isOwner;
+      for (var i = 0; i < len; i++) {
+        isFolder = fileInfos[i].isDirectory;
+        isSharedFolder = fileInfos[i].isSharedFolder || false;
+        isOwner = (!isSharedFolder || fileInfos[i].accessType.toUpperCase() === "OWNER");
+        if (isOwner && isFolder) {
+          break;
+        }
+      }
+      var itemToDelete = "these items";
+      var shouldUnshareLabel = "";
+      var shouldUnshareExplanation = "";
+      if(isOwner) {
+        if(isSharedFolder && context.shouldShowUnshareOption) {
+            shouldUnshareLabel = MLDOStrings.actionHandlerDeleteDialogShouldUnshareMultipleFoldersLabel;
+            shouldUnshareExplanation = MLDOStrings.actionHandlerDeleteDialogShouldUnshareMultipleFoldersExplanation;
+        } else {
+            shouldUnshareLabel = MLDOStrings.actionHandlerDeleteDialogShouldUnshareMultipleSubFoldersLabel;
+            shouldUnshareExplanation = MLDOStrings.actionHandlerDeleteDialogShouldUnshareSubFoldersExplanation;
+        }
+      }
+      var promise;
+      var dialogTitle = MLDOStrings.actionHandlerDeleteDialogMultiTitle;
+      var dialogPromptText = len === 1 ? MLDOStrings.actionHandlerDeleteDialogMultiSingularPrompt : MLDOStrings.actionHandlerDeleteDialogMultiPluralPrompt;
+      //show modal dialog for confirmation
+      var htmlResult = DeleteDialog({deleteItemHeader: dialogTitle,
+                                     deleteItemBodyPrompt: dialogPromptText,
+                                     deleteButtonLabel: MLDOStrings.actionHandlerDeleteDialogDeleteButtonlabel,
+                                     cancelButtonLabel: MLDOStrings.actionHandlerDeleteDialogCancelButtonLabel,
+                                     shouldShowUnshareOption: isOwner && isFolder && context.shouldShowUnshareOption,
+                                     shouldUnshareLabel: shouldUnshareLabel,
+                                     shouldUnshareExplanation: shouldUnshareExplanation
+                                   });
+      $('#modalContainer').html(htmlResult);
+      var deleteModalDialog = $('#deleteItemDialog');
+      deleteModalDialog.on('shown.bs.modal', function() {
+          $(".cancelDeleteItem").focus();
+      });
+      deleteModalDialog.on('hidden.bs.modal', function() {
+        $('#deleteItemDialog').remove();
+      });
+      deleteModalDialog.on('dragover', context.dragNotAllowed);
+      deleteModalDialog.modal({backdrop: 'static'});
+      deleteModalDialog.on('click','.deleteItem', function(e){
+        e.preventDefault();
+        if(isOwner && isFolder && context.shouldShowUnshareOption) {
+            var shouldUnshare = $('input[name="shouldUnshare"]:checked').val();
+            for (var i = 0; i < len; i++) {
+              fileInfos[i].shouldUnshare = shouldUnshare;
+            }
+        }
+        context.performMultiSelectPermanentDelete(fileInfos, 0, 0);
+      });
+    },
+
+    handlePermanentlyDeleteAllAction: function() {
+      var context = this;
+      //show modal dialog for confirmation
+      var htmlResult = DeleteAllDialog({
+        deleteAllTitle: MLDOStrings.actionHandlerPermanentlyDeleteAllDialogTitle,
+        deleteAllPrompt: MLDOStrings.actionHandlerDeleteAllDialogPrompt,
+        deleteButtonLabel: MLDOStrings.actionHandlerDeleteDialogDeleteButtonlabel,
+        cancelButtonLabel: MLDOStrings.actionHandlerDeleteDialogCancelButtonLabel
+      });
+      $('#modalContainer').html(htmlResult);
+      var deleteModalDialog = $('#deleteItemDialog');
+      deleteModalDialog.on('shown.bs.modal', function() {
+          $(".cancelDeleteItem").focus();
+      });
+      deleteModalDialog.on('hidden.bs.modal', function() {
+        $('#deleteItemDialog').remove();
+      });
+      deleteModalDialog.on('dragover', context.dragNotAllowed);
+      deleteModalDialog.modal({backdrop: 'static'});
+      deleteModalDialog.on('click','.deleteItem', function(e){
+          e.preventDefault();
+          try {
+              var promise = context.fileService.permanentlyDeleteAll();
+              promise.done(function (data) {
+                  context.fileService.notify(MLDOStrings.actionHandlerTrashEmptied, "NORMAL");
+                  context.fileService.clearSelectionRefreshGrid();
+                  $.event.trigger("quotachange:mldo");
+              })
+              .fail(function (err) {
+                  context.fileService.notify(DojoString.substitute(MLDOStrings.actionHandlerTrashEmptyFailed, [err.message]), "ERROR");
+              }).always(function() {
+                $('#deleteItemDialog').off('dragover');
+              });
+          } catch(error) {
+              context.fileService.notify(DojoString.substitute(MLDOStrings.actionHandlerTrashEmptyFailed, [err.message]), "ERROR");
+          }
+      });
+    },
+
+    handleManageAction: function(path, fileInfo) {
+      if (this.sharingEnabled && this.personalInvitationsEnabled) {
+        if (!path || typeof path !== "string") {
+          throw new TypeError("Invalid path argument");
+        }
+        if( !fileInfo || typeof fileInfo !== "object") {
+          throw new TypeError("Invalid fileInfo argument");
+        }
+        if (!fileInfo.isDirectory) {
+          throw new TypeError("Only folders can be shared");
+        }
+        var context = this;
+        var displayType = "manage";
+        if (fileInfo.accessType && fileInfo.accessType.toLowerCase() !== "owner") {
+          displayType = "view";
+        }
+        var promise = this.fileService.getFolderSettings(path);
+        promise.done(function(data) {
+          if (data && data.fileAttributes && data.fileAttributes.shareable) {
+            context.openManageShareDialog(path, fileInfo, displayType);
+          } else {
+            context.fileService.notify(DojoString.substitute(MLDOStrings.initiateSharingDialogResourceNotSharable, [Util.getFolderNameFromPath(path)]), "ERROR");
+          }
+        }).fail(function(err) {
+          var isThrowTranslationErrorEnabled = (context.fileService.isThrowTranslationErrorEnabled && typeof context.fileService.isThrowTranslationErrorEnabled === 'function') ?
+              context.fileService.isThrowTranslationErrorEnabled() : false;
+          var msg = Util.getErrorMessageTranslator().getTranslatedMessage(err, "actionHandler.getFolderSettings", [err.message], isThrowTranslationErrorEnabled);
+          context.fileService.notify(msg, "ERROR");
+        });
+      }
+    },
+
+    handleLinkAction: function(path, fileInfo) {
+      if (this.sharingEnabled) {
+        if (!path || typeof path !== "string") {
+          throw new TypeError("Invalid path argument");
+        }
+        if( !fileInfo || typeof fileInfo !== "object") {
+          throw new TypeError("Invalid fileInfo argument");
+        }
+        if (!fileInfo.isDirectory) {
+          throw new TypeError("Only folders can be shared");
+        }
+        var context = this;
+        var promise = this.fileService.getFolderSettings(path);
+        promise.done(function(data) {
+          if (data && data.fileAttributes && data.fileAttributes.shareable) {
+            context.openManageShareDialog(path, fileInfo, "links");
+          } else {
+            context.fileService.notify(DojoString.substitute(MLDOStrings.initiateSharingDialogResourceNotSharable, [Util.getFolderNameFromPath(path)]), "ERROR");
+          }
+        }).fail(function(err) {
+          var isThrowTranslationErrorEnabled = (context.fileService.isThrowTranslationErrorEnabled && typeof context.fileService.isThrowTranslationErrorEnabled === 'function') ?
+              context.fileService.isThrowTranslationErrorEnabled() : false;
+          var msg = Util.getErrorMessageTranslator().getTranslatedMessage(err, "actionHandler.getFolderSettings", [err.message], isThrowTranslationErrorEnabled);
+          context.fileService.notify(msg, "ERROR");
+        });
+      }
+    },
+
+    handleLeaveAction: function(path, fileInfo) {
+      if (this.sharingEnabled) {
+        if (!path || typeof path !== "string") {
+          throw new TypeError("Invalid path argument");
+        }
+        if( !fileInfo || typeof fileInfo !== "object") {
+          throw new TypeError("Invalid fileInfo argument");
+        }
+        if (!fileInfo.isDirectory || !fileInfo.isSharedFolder) {
+          throw new TypeError("Only leaving shared folders is allowed");
+        }
+        this.handleDeleteAction(path, fileInfo, false);
+      }
+    },
+
+    handleGoToDriveAction: function(invitationId) {
+      if( !invitationId || typeof invitationId !== "string") {
+        throw new TypeError("Invalid invitationId argument");
+      }
+      var context = this;
+      var promise = this.fileService.getInvitation(invitationId);
+      promise.done(function(data) {
+        var path;
+        if (data.invitation && data.invitation.resource && data.invitation.resource.path) {
+          path = data.invitation.resource.path;
+          var parentPath = Util.getParentPath(path);
+          var folderName = Util.getFolderNameFromPath(path);
+          $.event.trigger("changetofilespage:mldo", {destination: parentPath});
+          context.fileService.focusRowAfterGridRefresh({path: "/" + folderName, parentFolder: "/" + folderName, pageId: "Files"});
+        } else if (data.invitation && data.invitation.tombstone) {
+          $.event.trigger("changetotrashpage:mldo");
+          context.fileService.focusRowAfterGridRefresh({path: "/" , tombstoneId: data.invitation.tombstone, pageId: "Trash"});
+        }
+      })
+        .fail(function(err) {
+          context.fileService.notify(err.message, "ERROR");
+        });
+    },
+
+    handleAddToDriveAction: function (invitationId, authenticated, deferredPromise) {
+      var context = this;
+      if( !invitationId || typeof invitationId !== "string") {
+        throw new TypeError("Invalid invitationId argument");
+      }
+      if (!authenticated) {
+        $.event.trigger("changetosharingpage:mldo", {invitationId: invitationId, command: "accept"});
+      } else {
+        var CFOPromise = this.fileService.createPersonalFromOpenSharingInvitation(invitationId);
+        CFOPromise.done(function(data) {
+          if (data && data.invitation && data.invitation.invitationId && data.invitation.status === "PENDING") {
+            context.performInvitationAcceptance.call(context, data.invitation.invitationId, data.invitation.name, data.invitation.name, deferredPromise);
+          } else if (data.invitation && data.invitation.status === "ACCEPTED") {
+            if (data.invitation.tombstone) {
+              $.event.trigger("changetotrashpage:mldo");
+              context.fileService.focusRowAfterGridRefresh({path: "/", tombstoneId: data.invitation.tombstone, pageId: "Trash"});
+            } else {
+              $.event.trigger('changetofilespage:mldo', {destination: data.invitation.resource.path});
+            }
+            context.fileService.notify(DojoString.substitute(MLDOStrings.invitationPreviewInvitationAlreadyAddedToDrive, [data.invitation.name]), "NORMAL");
+          }
+        }).fail(function(err) {
+          context.fileService.notify(err.message, "ERROR");
+          });
+        return deferredPromise;
+      }
+    },
+
+    performInvitationAcceptance: function(invitationId, originalName, name, deferredPromise) {
+      var context = this;
+      var message;
+      if (invitationId) {
+        var promise = this.fileService.acceptSharingInvitation(invitationId, "/" + name);
+        promise.done(function(data) {
+          $.event.trigger('changetofilespage:mldo', {destination: (data && data.invitation && data.invitation.resource) ? data.invitation.resource.path : "/"});
+          context.fileService.dispatchCanonicalizedTreeEvent("message:treecontroller",
+            {message: DojoString.substitute(MLDOStrings.invitationPreviewInvitationAccepted, [name]), severity: "NORMAL"}, "Files");
+          if (deferredPromise && typeof deferredPromise === "object") {
+            deferredPromise.resolve("/" + name);
+          }
+        })
+          .fail(function(err) {
+            if (err.errorCode === "RESOURCE_ALREADY_EXISTS") {
+              var renamePrompt = new RenamePrompt({
+                initialText: name,
+                promptTitle: DojoString.substitute(MLDOStrings.sharingPageAcceptInvitationNameConflictDialogTitle, [originalName]),
+                promptLabel: DojoString.substitute(MLDOStrings.sharingPageAcceptInvitationNameConflictDialogLabel, [name]),
+                itemType: "folder",
+                promptAsInfo: false,
+                callback: function(newName) {
+                  context.performInvitationAcceptance.call(context, invitationId, originalName, newName, deferredPromise);
+                }
+              });
+              var renamePromptDialogContainer = document.createElement('div');
+              renamePromptDialogContainer.setAttribute("id", "renamePromptDialogContainer");
+              $('#modalContainer').append(renamePromptDialogContainer);
+              renamePrompt.setElement(renamePromptDialogContainer);
+              renamePrompt.render();
+            } else {
+              context.fileService.dispatchCanonicalizedTreeEvent("message:treecontroller", {message: err.message, severity: "ERROR"}, context.fileService.treeEventId);
+            }
+          });
+      }
+    },
+
+    handleDeclineInvitationAction: function(invitationId, invitationName) {
+      var context = this;
+      if( !invitationId || typeof invitationId !== "string") {
+        throw new TypeError("Invalid invitationId argument");
+      }
+      var promise;
+      var message;
+      if (invitationId) {
+        promise = context.fileService.declineSharingInvitation(invitationId);
+        promise.done(function() {
+          $.event.trigger("changetosharingpage:mldo");
+          message = DojoString.substitute(MLDOStrings.invitationPreviewInvitationDeclined, [invitationName]);
+          // PageId set to "Sharing" as notification to be displayed on Shared Content page
+          context.fileService.dispatchCanonicalizedTreeEvent("message:treecontroller", {message: message, severity: "NORMAL"}, "Sharing");
+        })
+          .fail(function(err) {
+            if (err.errorCode === "SESSION_NOT_FOUND") {
+              $.event.trigger("changetosharingpage:mldo", {invitationId: invitationId, command: "decline"});
+            } else {
+              message = Util.getErrorMessageTranslator().getTranslatedMessage(err, "invitationPreview.declineInvitation");
+              context.fileService.dispatchCanonicalizedTreeEvent("message:treecontroller", {message: message, severity: "ERROR"}, "Preview");
+            }
+          });
+      }
+    },
+
+    handlePreviewShareLinkAction: function (invitationId) {
+      if (this.sharingEnabled) {
+        if (!invitationId || typeof invitationId !== "string") {
+          throw new TypeError("Invalid invitationId argument");
+        }
+        var context = this;
+        var promise = this.fileService.getPreviewInvitation(invitationId);
+        var currentUserData = this.fileService.getCurrentUserData();
+        var currentUserEmail = (currentUserData && ("emailAddress" in currentUserData) && currentUserData.emailAddress.length)? currentUserData.emailAddress : "";
+        promise.done(function(data) {
+          if (data && data.invitationEntityId && data.invitationEntityId.invitationId) {
+            var shareDialog = new InitiateSharingView({
+              fileService: context.fileService,
+              invitationId: data.invitationEntityId.invitationId,
+              path: data.fullPath,
+              folderInfo: {
+                name: data.name,
+                filePermissions : {canWrite: false},
+                hasActiveLink: true,
+                accessType: currentUserEmail? data.initiator === currentUserEmail : "READ_ONLY"
+              },
+              type: "links",
+              editPermissionsEnabled: this.editPermissionsEnabled,
+              personalInvitationsEnabled: this.personalInvitationsEnabled
+            });
+            var shareDialogContainer = document.createElement('div');
+            $('#modalContainer').append(shareDialogContainer);
+            shareDialog.setElement(shareDialogContainer);
+            shareDialog.render();
+          } else {
+            context.fileService.notify(DojoString.substitute(MLDOStrings.initiateSharingDialogInvitationDoesNotExist, [invitationId]), "ERROR");
+          }
+        }).fail(function(err) {
+          var isThrowTranslationErrorEnabled = (context.fileService.isThrowTranslationErrorEnabled && typeof context.fileService.isThrowTranslationErrorEnabled === 'function') ?
+            context.fileService.isThrowTranslationErrorEnabled() : false;
+          var msg = Util.getErrorMessageTranslator().getTranslatedMessage(err, "actionHandler.handlePreviewShareLinkAction", [err.message], isThrowTranslationErrorEnabled());
+          context.fileService.dispatchCanonicalizedTreeEvent("message:treecontroller", {message: msg, severity: "ERROR"}, "Preview");
+        });
+      }
+    },
+
+    handleCopyToDriveAction: function (invitationId, invitationName, authenticated, deferredPromise) {
+      var context = this;
+      if (!invitationId || typeof invitationId !== "string") {
+        throw new TypeError("Invalid invitationId argument");
+      }
+      if (!invitationName || typeof invitationName !== "string") {
+        throw new TypeError("Invalid invitationName argument");
+      }
+      if (!authenticated) {
+        $.event.trigger("changetofilespage:mldo", {invitationId: invitationId, invitationName: invitationName, command: "copy"});
+      } else {
+        return context.performCopyToDrive(invitationId, invitationName, invitationName, deferredPromise);
+      }
+    },
+
+    performCopyToDrive: function (invitationId, invitationName, newName, deferredPromise) {
+      if (!invitationId || typeof invitationId !== "string") {
+        throw new TypeError("Invalid invitationId argument");
+      }
+      var context = this;
+      var originalPath = "/";
+      var targetFolder = "/";
+      var targetPath = targetFolder + newName;
+      var promise = this.fileService.copyFolderFromInvitation(invitationId, originalPath, targetPath);
+      if (!DO_NOT_SUPPRESS_NOTIFY) {
+        promise.done(function() {
+          context.onCopyToDriveSuccess(newName, targetPath);
+          if (deferredPromise && typeof deferredPromise === "object") {
+            deferredPromise.resolve(targetPath);
+          }
+        }).fail(function(err) {
+          context.onCopyToDriveFailure(err, invitationId, invitationName, newName, deferredPromise);
+        });
+        return deferredPromise;
+      } else { // suppressNotify is true
+        promise.fail(function(err) {
+          if (err.errorCode === "RESOURCE_ALREADY_EXISTS") {
+            context.pasteNameConflicts.push({
+              name: _.escape(name),
+              destinationFolderFullPath: targetFolder,
+              originalPath: originalPath,
+              status: 'TODO',
+              reason: ""
+            });
+          }
+        });
+      }
+    },
+
+    onCopyToDriveSuccess: function(name, targetPath) {
+      // change current folder
+      $.event.trigger("changetofilespage:mldo", {destination: targetPath});
+      this.fileService.refreshGrid();
+      var message = DojoString.substitute(MLDOStrings.actionHandlerCopiedTo, [name, MLDOStrings.defaultApplicationLabel]);
+      this.fileService.dispatchCanonicalizedTreeEvent("message:treecontroller", {message: message, severity: "NORMAL"}, "Files");
+    },
+
+    onCopyToDriveFailure: function(err, invitationId, invitationName, newName, deferredPromise) {
+      var msg = err.message;
+      var context = this;
+      if (err.errorCode === "RESOURCE_ALREADY_EXISTS") {
+        var renamePrompt = new RenamePrompt({
+          initialText: name,
+          promptTitle: DojoString.substitute(MLDOStrings.sharingPageCopyInvitationNameConflictDialogTitle, [invitationName]),
+          promptLabel: DojoString.substitute(MLDOStrings.sharingPageAcceptInvitationNameConflictDialogLabel, [newName]),
+          itemType: "folder",
+          promptAsInfo: false,
+          callback: function(newName) {
+            context.performCopyToDrive(invitationId, invitationName, newName, deferredPromise);
+          }
+        });
+        var renamePromptDialogContainer = document.createElement('div');
+        renamePromptDialogContainer.setAttribute("id", "renamePromptDialogContainer");
+        $('#modalContainer').append(renamePromptDialogContainer);
+        renamePrompt.setElement(renamePromptDialogContainer);
+        renamePrompt.render();
+      }
+      else if (err.errorCode === null && msg === "Action aborted.") {
+        this.fileService.refreshGrid();
+        this.fileService.dispatchCanonicalizedTreeEvent("message:treecontroller", {message: MLDOStrings.actionHandlerLargeOperationNotification, severity: "NORMAL"}, this.fileService.treeEventId);
+        this.clearClipboard();
+      } else {
+        this.fileService.dispatchCanonicalizedTreeEvent("message:treecontroller", {message: msg, severity: "ERROR"}, this.fileService.treeEventId);
+      }
+    },
+
+    openManageShareDialog: function(path, fileInfo, dialogType) {
+      if (this.sharingEnabled) {
+        if (!path || typeof path !== "string") {
+          throw new TypeError("Invalid path argument");
+        }
+        if( !fileInfo || typeof fileInfo !== "object") {
+          throw new TypeError("Invalid fileInfo argument");
+        }
+        if (!fileInfo.isDirectory) {
+          throw new TypeError("Only folders can be shared");
+        }
+        var currentUserData = this.fileService.getCurrentUserData();
+        var currentUserEmail = (currentUserData && ("emailAddress" in currentUserData) && currentUserData.emailAddress.length)? currentUserData.emailAddress : "";
+        var shareDialog = new InitiateSharingView({
+          fileService: this.fileService,
+          path: path,
+          folderInfo: fileInfo,
+          type: dialogType,
+          editPermissionsEnabled: this.editPermissionsEnabled,
+          currentUserEmail: currentUserEmail,
+          personalInvitationsEnabled: this.personalInvitationsEnabled
+        });
+        var shareDialogContainer = document.createElement('div');
+        $('#modalContainer').append(shareDialogContainer);
+        shareDialog.setElement(shareDialogContainer);
+        shareDialog.render();
+      }
+    },
+
+    /*
+     * Actions: Utility methods
+     */
+     getCurrentFolder: function() {
+       return this.fileService.getStoredCurrentFolder();
+     },
+
+     getCurrentFolderInfo: function() {
+       return this.fileService.getCurrentFolderInfo();
+     },
+
+     getSelectedRows: function() {
+       if (!this.getGrid() || typeof this.getGrid() !== "object") {
+         throw new TypeError("Grid member variable not set.");
+       }
+       var selectedRows = [];
+       var row = null;
+       var self = this;
+       /*
+        * This is inner knowledge of FileBrowser and Dgrid.
+        * We shouldn't be using this.  There should be a public API
+        * for getting the current selection's FileInfo (including full path),
+        * as well as the selected node.
+        */
+        //TODO Replace with public API
+       var selectedIndices = Object.keys(this.getGrid().selection);
+       selectedIndices.forEach(function(index) {
+         row = self.getGrid().row(index);
+         selectedRows.push(row);
+       });
+       return selectedRows;
+     },
+
+     getSelectedItemFileInfos: function() {
+       var selectedItems = this.getGrid().getSelectedFileInfos();
+       // work around for bug in gridHelper.js
+       if (selectedItems && selectedItems.length === 1 && !selectedItems[0]) {
+         selectedItems = [];
+       }
+       return selectedItems;
+     },
+
+     getSelectedItemFullPath: function(fileInfo) {
+       if (fileInfo && (typeof fileInfo !== "object" || !fileInfo.name)) {
+         throw new TypeError("Invalid fileInfo argument");
+       }
+       var path = null;
+       if (fileInfo) {
+         path = FileNameUtil.pathFromFileInfo(fileInfo);
+         // override if there is a linkPath value
+         if (("linkPath" in fileInfo) && fileInfo.linkPath.length) {
+           path = fileInfo.linkPath;
+         }
+       }
+       var currentFolder = this.fileService.getStoredCurrentFolder();
+       if (currentFolder !== "/" && path) {
+         path = currentFolder + path;
+       }
+       if (!path) {
+         path = currentFolder;
+       }
+       return path;
+     },
+
+     getFullPathFileInfo: function(fileInfo) {
+       var path = fileInfo ? this.getSelectedItemFullPath(fileInfo) : this.getSelectedItemFullPath();
+       var fullPathFileInfo = null;
+       if(!fileInfo) {
+           fullPathFileInfo = FileNameUtil.folderInfoFromPath(path);
+           fullPathFileInfo.isSharedFolder = this.getCurrentFolderInfo().isSharedFolder;
+       }
+       else {
+           if (fileInfo.isDirectory) {
+               fullPathFileInfo = FileNameUtil.folderInfoFromPath(path);
+           } else {
+               fullPathFileInfo = FileNameUtil.fileInfoFromPath(path);
+           }
+       }
+       if (fullPathFileInfo && fullPathFileInfo.location && fullPathFileInfo.name) {
+         fullPathFileInfo.path = fullPathFileInfo.location + fullPathFileInfo.name;
+         fullPathFileInfo.parent = FileNameUtil.getParentPath(fullPathFileInfo.path);
+       }
+       if (fileInfo && fileInfo.isDirectory) {
+         fullPathFileInfo.isSharedFolder = fileInfo.isSharedFolder;
+       }
+       return fullPathFileInfo;
+     },
+
+     getSelectedItemsFullPaths: function() {
+       var paths = [];
+       var fileInfos = this.getSelectedItemFileInfos();
+       var self = this;
+       fileInfos.forEach(function(selectedInfo) {
+         var path = self.getSelectedItemFullPath(selectedInfo);
+         paths.push(path);
+       });
+       return paths;
+     },
+
+     getSelectedFolderFullPaths: function() {
+       var selectedInfos = this.getSelectedItemFileInfos();
+       var paths = [];
+       var self = this;
+       selectedInfos.forEach(function(selectedInfo) {
+         var path = self.getSelectedItemFullPath(selectedInfo);
+         var fileInfo = FileNameUtil.fileInfoFromPath(path);
+         if (!selectedInfo.isDirectory) {
+           path = FileNameUtil.getParentPath(path);
+         }
+         paths.push(path);
+       });
+       return paths;
+     },
+
+    clearClipboard: function(fileInfo) {
+      var findWithAttr = function(array, attr, value) {
+                            for(var i = 0; i < array.length; i += 1) {
+                                if(array[i][attr] === value) {
+                                    return i;
+                                }
+                            }
+                            return -1;
+                        };
+      var len = 0;
+      if (this.clipboard && this.clipboard._data && this.clipboard._data.length) {
+        len = this.clipboard._data.length;
+      }
+      if (fileInfo) {
+        var index = findWithAttr(this.clipboard._data, "path", fileInfo.path);
+        if (index >= 0) {
+          this.clipboard._data.splice(index, 1);
+        }
+      } else {
+        this.clipboard.clear();
+      }
+    },
+
+    clipboardContainsData: function() {
+      return this.clipboard.containsData();
+    },
+
+    downloadBlob: function(url, name, promise) {
+      if (!url || typeof url !== "string") {
+        throw new TypeError("Invalid url argument");
+      }
+      if (!name || typeof name !== "string") {
+        throw new TypeError("Invalid name argument");
+      }
+      var xhr = new XMLHttpRequest();
+      xhr.open('GET', url, true);
+      xhr.responseType = 'blob';
+      xhr.onload = function(e) {
+        if (this.status == 200) {
+          var myBlob = this.response;
+          navigator.msSaveBlob(myBlob, name);
+          // myBlob is now the blob that the object URL pointed to.
+          if (promise && promise.resolve) {
+            promise.resolve({});
+          }
+        }
+      };
+      xhr.send();
+    },
+
+    openInNewWindow: function(name, url, isImage, winRef) {
+      if (!name || typeof name !== "string") {
+        throw new TypeError("Invalid name argument");
+      }
+      if (!url || typeof url !== "string") {
+        throw new TypeError("Invalid url argument");
+      }
+      var context = this;
+      // Work around issue in MS EDGE where new tab title is "Blank page"
+      // even if document.title is set properly.
+      var fakeUrl = "";
+
+      // Needed by EDGE to allow setting new tab title
+      if (context.isMSEdge && !context.isIE11) {
+        fakeUrl = name;
+      }
+
+      var w = winRef || window.open(fakeUrl, "_blank");
+      var doc = w.document;
+      doc.title = name;
+      doc.close();
+      if (context.isMSEdge) {
+        $(doc).ready(function() {
+          doc.open();
+          if (isImage) {
+            doc.write("<script> document.title = \"" + name + "\"; </script><img style=\"\" src=\"" + url + "\">");
+          } else {
+            doc.write("<script> document.title = \"" + name + "\"; </script><iframe style=\"width:100%;height:100%;border:none;\" src=\"" + url + "\">");
+          }
+          doc.close();
+          doc.title = name;
+          setTimeout(function() {
+            w.location.reload();
+          }, 20);
+        });
+      } else {
+        $(doc).ready(function() {
+          if (isImage) {
+            var img = doc.createElement('img');
+            img.src = url;
+            doc.body.appendChild(img);
+            doc.title = name;
+          } else {
+            var frame = doc.createElement('iframe');
+            // Seem to need setting width and height twice.
+            frame.style.width = "100%";
+            frame.style.height = "100%";
+            frame.style.border = "none";
+            frame.src = url;
+            frame.onload = function() {
+              frame.style.width = "100%";
+              frame.style.height = "100%";
+              frame.style.border = "none";
+              doc.title = name;
+            };
+            doc.body.appendChild(frame);
+          }
+          doc.body.style.margin = "0px";
+        });
+      }
+    },
+
+    downloadURL: function(url, promise) {
+      url = url || "";
+      if (url && this.fileService.getOriginId()) {
+        if (url.indexOf("?") > 0) {
+          url += "&originId=" + this.fileService.getOriginId();
+        } else {
+          url += "?originId=" + this.fileService.getOriginId();
+        }
+      }
+      var hiddenIFrameClassName = 'mldoHiddenDownloader';
+      var iframe = document.createElement('iframe');
+      iframe.className = hiddenIFrameClassName;
+      iframe.style.display = 'none';
+      document.body.appendChild(iframe);
+      iframe.src = url;
+      if (promise && promise.resolve) {
+        promise.resolve({});
+      }
+    },
+
+    showNewFolderDialog: function() {
+      var selectedFolders = this.getSelectedFolderFullPaths();
+      var selectedFolder = this.getSelectedItemFullPath();
+      if (selectedFolders.length === 1) {
+        selectedFolder = selectedFolders[0];
+      }
+      var createFolderDialog = new CreateFolderView({
+        fileService: this.fileService,
+        path: selectedFolder,
+        root: this.getCurrentFolder()
+      });
+      var createFolderDialogContainer = document.createElement('div');
+      $('#modalContainer').append(createFolderDialogContainer);
+      createFolderDialog.setElement(createFolderDialogContainer);
+      createFolderDialog.render();
+    },
+
+    getSelectedRowCount: function() {
+      var selectedCount = 0;
+      var selectedItems= this.getGrid().getSelectedFileInfos();
+      // I would assume if nothing selected, it would return null or an array of size 0.
+      // However, the current implementation returns an array of length 1, with an "undefined" element in it.
+      // Confusingly, if one row is selected, it also returns an array of length 1. However, the element is a FileInfo object.
+      // I test for both (in case they ever fix it)
+      if (!selectedItems|| selectedItems.length === 0 || (selectedItems.length === 1 && ! selectedItems[0])) {
+        selectedCount = 0;
+      } else {
+        selectedCount = selectedItems.length;
+      }
+      return selectedCount;
+    },
+
+    isPlatformMac: function() {
+      return navigator.platform.toUpperCase().indexOf("MAC") !== -1;
+    }
+
+   /* End of Actions */
+  };
+
+  return ActionHandler;
+});

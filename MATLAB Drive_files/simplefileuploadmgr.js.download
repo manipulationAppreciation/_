@@ -1,0 +1,796 @@
+define([
+  "underscore",
+  "jquery",
+  "bootstrap",
+  "backbone",
+  "util",
+  "templates/simpleUpload",
+  "dojo/i18n!nls/mldoStringResource",
+  "dojo/string"
+], function( _, $, Bootstrap, Backbone, Util, simpleFileUploadTemplate, MLDOStrings, DojoString) {
+
+  var _isMacSafari = (navigator.userAgent.indexOf('Safari') != -1 &&
+                      navigator.userAgent.indexOf('Chrome') == -1 &&
+                      !navigator.userAgent.match(/iP(ad|hone)/i));
+
+  return Backbone.View.extend({
+
+      template: simpleFileUploadTemplate,
+
+      events: {
+      },
+
+      initialize: function(args) {
+        var formDataSupported = (typeof FormData !== 'undefined');
+        var options = args || {};
+        if (typeof options !== "object" || Object.keys(options).length === 0) {
+          throw new TypeError("Invalid args argument");
+        }
+        this.totalBytesToUpload = 0;
+        this.totalLoadedBytes = 0;
+        if (!options.fileService || typeof options.fileService !== "object" ||
+            !options.fileService.getStoredCurrentFolder ||
+            typeof options.fileService.getStoredCurrentFolder !== "function") {
+          throw new TypeError("Invalid fileService argument");
+        }
+        this.directoryUploadEnabled = options.directoryUploadEnabled;
+        this.fileService = options.fileService;
+        this.maxFileUploadSize = options.maxFileUploadSize;
+        this.fileName = null;
+        this.folder = null;
+        this.displayOnDialog = true;
+        this.fileConflictArray = [];
+
+        // Detailed upload
+        this.buildStatusSummary = function(numCompleted, numFailed, numCancelled) {
+          var uploadResultsText = "";
+          var $statusContent = null;
+          if (numCancelled || numFailed) {
+            uploadResultsText += '<div class="notificationErrorWrapper"><span class="notificationImageError" aria-hidden="true"></span><span class="notificationContentTextError">';
+            if (numCancelled) {
+              uploadResultsText += MLDOStrings.simpleUploadStatusCancelled;
+            } else {
+              uploadResultsText += MLDOStrings.simpleUploadStatusWithErrors;
+            }
+            if (numCompleted) {
+              if (numCancelled && numFailed) {
+                uploadResultsText +=  DojoString.substitute(MLDOStrings.simpleUploadSummary, [numCompleted, numCancelled, numFailed]) + '</span></div>';
+              } else if (numCancelled) {
+                uploadResultsText +=  DojoString.substitute(MLDOStrings.simpleUploadSummaryNoFailed, [numCompleted, numCancelled]) + '</span></div>';
+              } else {
+                uploadResultsText +=  DojoString.substitute(MLDOStrings.simpleUploadSummaryNoCancelled, [numCompleted, numFailed]) + '</span></div>';
+              }
+            } else { // no completions
+              if (numCancelled && numFailed) {
+                uploadResultsText +=  DojoString.substitute(MLDOStrings.simpleUploadSummaryNoCompleted, [numCancelled, numFailed]) + '</span></div>';
+              } else if (numCancelled) {
+                uploadResultsText +=  DojoString.substitute(MLDOStrings.simpleUploadSummaryNoCompletedNoFailed, [numCancelled]) + '</span></div>';
+              } else {
+                uploadResultsText +=  DojoString.substitute(MLDOStrings.simpleUploadSummaryNoCompletedNoCancelled, [numFailed]) + '</span></div>';
+              }
+            }
+          } else {
+            uploadResultsText += '<div class="notificationWrapper"><span class="notificationImageSuccess" aria-hidden="true"></span><span class="notificationContentText">' + MLDOStrings.simpleUploadCompletedText;
+            uploadResultsText += DojoString.substitute(MLDOStrings.simpleUploadNumCompleted, [numCompleted, (numCompleted === 1 ? MLDOStrings.simpleUploadFile : MLDOStrings.simpleUploadFiles)]) + '</span></div>';
+          }
+          $statusContent = $(uploadResultsText);
+          return $statusContent;
+        };
+
+        // Detailed upload
+        this.uploadCompletionHandler = function(folder, uploadFileArray) {
+          var context = this;
+          this.totalBytesToUpload = 0;
+          this.totalLoadedBytes = 0;
+          if (folder && uploadFileArray && uploadFileArray.length) {
+            var fullPath = folder;
+            var relativeFolderPath = Util.getRelativePath(folder, this.fileService.getStoredCurrentFolder());
+            var total = uploadFileArray.length;
+            var numFailed = this.getUploadResultStatusCount(uploadFileArray, 'FAIL');
+            var numCancelled = this.getUploadResultStatusCount(uploadFileArray, 'CANCEL');
+            var numCompleted = this.getUploadResultStatusCount(uploadFileArray, 'COMPLETE');
+            var uploadFile = this.getLastUploadedFile(uploadFileArray);
+            var uploadResultsText = "";
+            var $statusContent = null;
+
+            // Do these no matter what
+            $('.progress.uploadProgress').hide();
+            this.getProgressContainer().hide();
+            this.getProgressFileName().text("");
+            this.getProgressItemCount().text("");
+            this.getCancelButton().text(MLDOStrings.simpleUploadCloseButtonLabel);
+            this.getCancelButton().off('click', this.recursiveCancel);
+            this.getCancelButton().on('click', function(e) {
+              context.getCancelButton().attr('data-dismiss', 'modal');
+              context.getModalContainer().off('dragover');
+            });
+            $('.modal-header button.close').on('click', function(e) { $('.modal-header button.close').attr('data-dismiss', 'modal'); });
+
+            this.getUploadModal().on("hidden.bs.modal", function() {
+              // Do these only if at least one file was uploaded
+              if (uploadFile) {
+                if (total === 1) {
+                  if (fullPath !== '/') {
+                    fullPath += '/';
+                  }
+                  fullPath += uploadFile.fileName;
+                }
+                if(numCompleted) {
+                  if (folder !== "/") {
+                    context.fileService.dispatchCanonicalizedTreeEvent("focusrow:treecontroller",
+                      {path: relativeFolderPath, parentFolder: relativeFolderPath, shouldExpand: true});
+                  }
+                  context.fileService.focusRowAfterGridRefresh({path: Util.getRelativePath(fullPath, context.fileService.getStoredCurrentFolder())});
+                  context.fileService.refreshGrid();
+                }
+              }
+            });
+
+            $statusContent = this.buildStatusSummary(numCompleted, numFailed, numCancelled);
+            $('#mldoUploadTitle').text(MLDOStrings.simpleUploadCompletedText);
+            $('#mldo-upload-notification-container').show().html($statusContent);
+
+            var $resultText = this.buildUploadFileList(uploadFileArray);
+            this.getStatusTextContainer().show().html($resultText);
+            // update quota usage if a file was uploaded.
+            if (numCompleted) {
+              $.event.trigger("quotachange:mldo");
+            }
+            if (this.fileConflictArray.length > 0) {
+              $('#nameResolveButton').show().focus();
+              this.getResolveButton().on("click", this.handleResolveButtonClick);
+            } else {
+              $('button#uploadCancelButton').focus();
+            }
+          }
+        };
+
+        // bind 'this' in the listed methods to the current 'this', even when called by other modules.
+        _.bindAll(this, "render", "submitHander", "uploadButtonClickHandler", "uploadCompletionHandler", "getXHR",
+                        "onProgressHandler", "handleSelectFileName", "recursiveCancel", "recursiveUpload", "escCancel",
+                        "handleResolveButtonClick", "openFileNameConflictDialog");
+      },
+
+      getDisplayOnDialog: function() {
+        return this.displayOnDialog;
+      },
+      getUploadFrame: function() {
+        return $('#file_upload_target');
+      },
+      getCancelButton: function() {
+        return $('#uploadCancelButton');
+      },
+      getResolveButton: function() {
+        return $('#nameResolveButton');
+      },
+      getUploadUrl: function() {
+        return this.fileService.getUploadUrl();
+      },
+      getModalContainer: function() {
+        return $('#modalContainer');
+      },
+      getUploadModal: function() {
+        return $('#simpleFileUploadModal');
+      },
+      getUploadForm: function() {
+        return $('#simpleUploadForm');
+      },
+      getUploadButton: function() {
+        return $('#uploadButton');
+      },
+      getUploadButtonId: function() {
+        return '#uploadButton';
+      },
+      getSessionId: function() {
+        return $('#simpleUploadForm #sessionId');
+      },
+      getFiles: function() {
+        return $('#simpleUploadForm #fileInput');
+      },
+      getFolder: function() {
+        return $('#simpleUploadForm #folder');
+      },
+      getProgressContainer: function() {
+        return $('#progressContainer');
+      },
+      getProgressFileName: function() {
+        return $('#uploadFileName');
+      },
+      getProgressBar: function() {
+        return $('#fileUploadProgress');
+      },
+      getStatusTextContainer: function() {
+        return $('#uploadStatusTextContainer');
+      },
+      getProgressItemCount: function() {
+        return $('#itemsBeingUploaded');
+      },
+      getProgressText: function() {
+        return $('#progressUpdateText');
+      },
+      dragNotAllowed: function(e) {
+        e.preventDefault();
+        e.originalEvent.dataTransfer.dropEffect = 'none';
+      },
+
+      handleResolveButtonClick: function() {
+        if (this.fileConflictArray.length > 0) {
+          this.getUploadModal().on("hidden.bs.modal", this.openFileNameConflictDialog);
+        }
+      },
+
+      openFileNameConflictDialog: function() {
+        $.event.trigger("resolvenameconflict:mldo", {fileConflictArray: this.fileConflictArray, folder: this.folder});
+      },
+
+      displayErrorOnDialog: function(err) {
+        var msg = Util.getErrorMessageTranslator().getTranslatedMessage(err, "fileUpload.displayErrorOnDialog");
+        var $errorContent = $('<span class="notificationImageError" aria-hidden="true"></span><span class="notificationContentTextError">' + msg + '</span>');
+        this.getProgressContainer().hide();
+        this.getProgressFileName().empty();
+        this.getStatusTextContainer().hide();
+        $('#mldo-upload-notification-container').addClass('importantDialogError');
+        $('#mldo-upload-notification-container').show().html($errorContent);
+        this.getUploadForm().show();
+        this.getUploadButton().show();
+      },
+
+      clearError: function() {
+        $('#mldo-upload-notification-container').empty().hide();
+      },
+
+      setTotalBytesToUpload: function(byteCount) {
+        this.totalBytesToUpload = byteCount;
+      },
+
+      getTotalBytesToUpload: function() {
+        return this.totalBytesToUpload;
+      },
+
+      onProgressHandler: function(e) {
+        if (e && e.lengthComputable) {
+          var percentComplete = 0;
+          if (this.totalLoadedBytes >= this.totalBytesToUpload) {
+            return;
+          }
+          if (e.loaded >= e.total) {
+            this.totalLoadedBytes += e.loaded;
+            percentComplete = (this.totalLoadedBytes / this.totalBytesToUpload).toFixed(2) * 100;
+          } else {
+            percentComplete = ((e.loaded + this.totalLoadedBytes) / this.totalBytesToUpload).toFixed(2) * 100;
+          }
+          var progressAmount = (percentComplete / 100) * this.totalBytesToUpload;
+          var progressText = this.getProgressText().text(DojoString.substitute(MLDOStrings.simpleUploadProgressText, [Util.getReadableFileSizeString(progressAmount), Util.getReadableFileSizeString(this.totalBytesToUpload)]));
+          var progressBar = this.getProgressBar();
+          progressBar.attr('aria-valuenow', percentComplete).css('width', percentComplete + '%');
+        }
+      },
+
+      escCancel: function(e) {
+        var code = e.keyCode;
+        if (code === 27) {
+          this.getCancelButton().click();
+        }
+      },
+
+      getXHR: function() {  // custom xhr
+        var myXhr = $.ajaxSettings.xhr();
+        var context = this;
+        var doAbort = function() { myXhr.abort(); };
+        var setUIDisplay = function() {context.displayOnDialog = false; };
+        if (myXhr.upload) {  // check if upload property exists
+            this.getProgressContainer().show();
+
+            // Reset the "Completing upload. Please wait..."
+//            context.getStatusTextContainer().hide();
+            context.getProgressBar().removeClass('active');
+
+            myXhr.upload.onprogress = this.onProgressHandler;
+            myXhr.upload.onload = function(e) {
+              context.getCancelButton().off('click', doAbort);
+              $('.modal-header button.close').off('click', doAbort);
+              context.getProgressItemCount().text("");
+              context.getProgressText().text("");
+              context.getStatusTextContainer().show();
+              context.getProgressBar().addClass('active');
+            };
+        }
+        // allow aborting upload process by clicking either "X" or "Cancel"
+        this.getCancelButton().on('click', setUIDisplay);
+        this.getCancelButton().on('click', doAbort);
+        $('.modal-header button.close').on('click', doAbort);
+        return myXhr;
+      },
+
+      // This method takes a promise, instead of simply returning a promise,
+      // because it can immediately resolve the promise before the consumer
+      // has started to listen to it.  So, the consumer creates a promise and
+      // passes it in. Thus, it listens to the resolve.  In the case of the
+      // FileReader, the resolve happens later, asynchronously.
+      validateFile: function(file, item, validationPromise) {
+        var reasonFileInvalid = ""; // no error - it's good
+        var usingReader = false;
+        if (file && isNaN(file.size)) {
+          throw new TypeError("Invalid file argument");
+        }
+        if (!validationPromise || typeof validationPromise !== "object" || !validationPromise.resolve || !validationPromise.reject) {
+          throw new TypeError("Invalid validationPromise argument");
+        }
+        // Is the file too big?
+        if (file.size > this.maxFileUploadSize) {
+          var fileUploadLimit = this.maxFileUploadSize / (1073741824); // conversion from bytes to GB
+          reasonFileInvalid = DojoString.substitute(MLDOStrings.simpleUploadFileTooLargeToUpload, [fileUploadLimit]) + "<br />" +
+                              DojoString.substitute(MLDOStrings.simpleUploadCanWithConnector,
+                                ["<a target=\"_blank\" href=\"https://www.mathworks.com/products/matlab-drive.html?s_tid=MLD_MLDO#matlab-drive-connector\">" +
+                                MLDOStrings.simpleUploadMatlabDriveConnector + "</a>"]);
+        }
+
+        if (!reasonFileInvalid) {
+          // Is it a folder?  Folder upload not allowed.
+          // Check if it's a folder.
+          // First try the easiest way using webkitGetAsEntry if available
+          if (item && item.webkitGetAsEntry) {
+            var entry = item.webkitGetAsEntry();
+            if (entry && (!entry.isFile || entry.isFolder)) {
+              reasonFileInvalid = MLDOStrings.simpleUploadFolderUploadForbidden;
+            }
+            // if webkitGetAsEntry not available check if it's a folder by using FileReader
+            // On windows a folder is either 0 bytes or 4096.  On Mac it can be any size.
+          } else if ((((file.size === 0 || file.size === 4096) && !_isMacSafari) || _isMacSafari) && FileReader) {
+            usingReader = true;
+            var reader = new FileReader();
+            reader.onload = function() {
+              reasonFileInvalid = "";
+              validationPromise.resolve(reasonFileInvalid);
+            };
+            reader.onerror = function() {
+              reasonFileInvalid = MLDOStrings.simpleUploadFolderUploadForbidden;
+              validationPromise.resolve(reasonFileInvalid);
+            };
+            try {
+              reader.readAsText(file);
+            } catch(err) {
+              usingReader = false;
+              reasonFileInvalid = MLDOStrings.simpleUploadFolderUploadForbidden;
+              validationPromise.resolve(reasonFileInvalid);
+            }
+          }
+        }
+        // The onload and onerror event handlers do resolve themselves
+        if (!usingReader) {
+          validationPromise.resolve(reasonFileInvalid);
+        }
+      },
+
+      recursiveUpload: function(folder, uploadFiles, getXHR, count, total) {
+        var context = this;
+        if (!folder || typeof folder !== "string" || !folder.length) {
+          throw new TypeError("Invalid folder argument");
+        }
+        if (!uploadFiles || typeof uploadFiles !== "object" || !uploadFiles.length) {
+          throw new TypeError("Invalid uploadFiles argument");
+        }
+        if (!getXHR || typeof getXHR !== "function") {
+          throw new TypeError("Invalid getXHR argument");
+        }
+        if (isNaN(count) || count < 1) {
+          throw new TypeError("Invalid count argument");
+        }
+        if (isNaN(total) || total < 1) {
+          throw new TypeError("Invalid total argument");
+        }
+        var uploadFile = uploadFiles[count - 1];
+        while (uploadFile && uploadFile.status !== 'TODO') {
+          count++;
+          uploadFile = uploadFiles[count - 1];
+        }
+        if (uploadFile && uploadFile.fileName && uploadFile.file) {
+          // Detailed upload
+          this.getProgressFileName().text(uploadFile.fileName);
+          this.getProgressItemCount().text(DojoString.substitute(MLDOStrings.simpleUploadProgressStatus, [count, total]));
+          uploadFile.status = 'PROCESSING';
+          var promise = this.fileService.uploadFile(folder, uploadFile.fileName, uploadFile.file, getXHR);
+          promise.done(function(data) {
+            uploadFile.status = 'COMPLETE';
+          }).fail(function(err) {
+            // FILE CONFLICT
+            uploadFile.reason = Util.getErrorMessageTranslator().getTranslatedMessage(err, "fileUpload.recursiveUpload");
+            if (!err.errorCode && err.message === "Action aborted.") {
+              uploadFile.status = 'CANCEL';
+            } else if (err.errorCode === "RESOURCE_ALREADY_EXISTS") {
+              uploadFile.status = 'FAIL';
+              context.fileConflictArray.push(uploadFile);
+            } else {
+              uploadFile.status = 'FAIL';
+            }
+          }).always(function() {
+            count++;
+            if (count <= total) {
+              context.recursiveUpload(folder, uploadFiles, getXHR, count, total);
+            } else {
+              context.uploadCompletionHandler(folder, uploadFiles);
+            }
+          });
+        } else if ( count > total) {
+          context.uploadCompletionHandler(folder, uploadFiles);
+        }
+      },
+
+      recursiveCancel: function(e) {
+        var context = this;
+        if (e && e.data && e.data.fileArray && e.data.folder) {
+          var uploadFileArray = e.data.fileArray;
+          var folder = e.data.folder;
+          var total = uploadFileArray.length;
+          for (var cancelIndex = total - 1; cancelIndex >= 0; --cancelIndex) {
+            var cancelItem = uploadFileArray[cancelIndex];
+            if (cancelItem.status === 'TODO') {
+              cancelItem.status = 'CANCEL';
+              cancelItem.reason = MLDOStrings.simpleUploadUploadCancelled;
+            }
+          }
+        }
+      },
+
+      getCanonicalFileName: function(file) {
+        var fileName = "";
+        if (file && typeof file === "object") {
+          if (file.webkitRelativePath && file.webkitRelativePath.length && file.webkitRelativePath.indexOf("/") >= 0) {
+            fileName = file.webkitRelativePath;
+          } else if (file.fullPath && file.fullPath.length && file.fullPath.indexOf("/") >= 0) {
+            fileName = file.fullPath.substring(1);
+          } else {
+            fileName = file.name;
+          }
+        }
+        return fileName;
+      },
+
+      catagorizeFileValidity: function(uploadFileArray, file, reason) {
+        if (!uploadFileArray || !Array.isArray(uploadFileArray)) {
+          throw new TypeError("Invalid uploadFileArray argument");
+        }
+        if (!file || typeof file !== "object" || !file.name || isNaN(file.size)) {
+          throw new TypeError("Invalid file argument");
+        }
+        if (reason && typeof reason !== "string") {
+          throw new TypeError("Invalid reason argument");
+        }
+        var arrayEntry = null;
+        var badFileEntry = null;
+        if (reason) {
+          badFileEntry = {};
+          badFileEntry.file = file;
+          badFileEntry.fileName = file.name;
+          badFileEntry.status = 'FAIL';
+          badFileEntry.reason = reason;
+          uploadFileArray.push(badFileEntry);
+        } else {
+          arrayEntry = {};
+          arrayEntry.file = file;
+          arrayEntry.fileName = this.getCanonicalFileName(file);
+          arrayEntry.status = 'TODO';
+          uploadFileArray.push(arrayEntry);
+          this.totalBytesToUpload += (file.size + 450); // mysterious extra bytes sent in upload event.total
+          this.totalLoadedBytes = 0;
+        }
+      },
+
+      validateAndCatagorizeFile: function(uploadFileArray, file, item) {
+        var context = this;
+        var validationPromise = $.Deferred();
+        this.validateFile(file, item, validationPromise);
+        validationPromise.done(function(reason) {
+          context.catagorizeFileValidity(uploadFileArray, file, reason);
+        });
+      },
+
+      // Since the validation of each file is asynchronous, they may finish
+      // at different times.  When each does finish, it adds an object to
+      // the fileArray.  So, if it's all finished, the length of the arrayEntry
+      // will be the expected length.
+      confirmAllFileValidated: function(expectedLength, fileArray) {
+        var allConfirmed = false;
+        if (fileArray && fileArray.length === expectedLength) {
+          allConfirmed = true;
+        }
+        return allConfirmed;
+      },
+
+      finishBaseSubmit: function(sessionId, uploadFileArray) {
+        var context = this;
+        if (sessionId && uploadFileArray && uploadFileArray.length && this.folder) {
+            this.fileService.gdsDAO.setSessionId(sessionId);
+            this.fileName = "placeHolder";
+            this.getCancelButton().on('click', {fileArray: uploadFileArray, folder: this.folder}, this.recursiveCancel);
+            $('.modal-header button.close').on('click', {fileArray: uploadFileArray, folder: this.folder}, this.recursiveCancel);
+            this.getCancelButton().removeAttr('data-dismiss');
+            $('.modal-header button.close').removeAttr('data-dismiss');
+            this.recursiveUpload(this.folder, uploadFileArray, this.getXHR, 1, uploadFileArray.length);
+        } else {
+            this.displayErrorOnDialog({errorCode: "", message: MLDOStrings.simpleUploadInvalidData});
+            setTimeout(function() {context.getCancelButton().click();}, 2000);
+        }
+      },
+
+      repeatCheckValidationComplete: function(sessionId, length, uploadFileArray) {
+        var context = this;
+        var allConfirmed = context.confirmAllFileValidated(length, uploadFileArray);
+        var intervalCount = 0;
+        var myInterval;
+        if (allConfirmed) {
+          context.finishBaseSubmit(sessionId, uploadFileArray);
+        } else {
+              myInterval = setInterval(function() {
+              allConfirmed = context.confirmAllFileValidated(length, uploadFileArray);
+              intervalCount++;
+              if (allConfirmed || intervalCount > 5000) {
+                clearInterval(myInterval);
+                context.finishBaseSubmit(sessionId, uploadFileArray);
+              }
+            }, 100);
+          }
+      },
+
+      baseSubmitHandler: function(files, items, length, sessionId, folder) {
+        if (!files || typeof files !== "object") {
+          throw new TypeError("Invalid files argument");
+        }
+        if (items && typeof items !== "object") {
+          throw new TypeError("Invalid items argument");
+        }
+        if (isNaN(length)) {
+          throw new TypeError("Invalid length argument");
+        }
+        if (!sessionId || typeof sessionId !== "string") {
+          throw new TypeError("Invalid sessionId argument");
+        }
+        if (!folder || typeof folder !== "string") {
+          throw new TypeError("Invalid folder argument");
+        }
+        var formDataSupported = (typeof FormData !== 'undefined');
+        // update UI
+        this.getUploadForm().hide();
+        //while upload in progress, hide upload button and make cancel button the primary
+        this.getUploadButton().hide();
+        this.getCancelButton().addClass('btn-primary');
+        if (document.activeElement) {
+          document.activeElement.blur();
+        }
+        this.getCancelButton().focus();
+
+        // Newer browsers support FormData and posting forms, and files, via AJAX.
+        // If the current browser supports it, use it.
+        // Otherwise, use the older iframe/form submit method.
+        //
+        // Currently, we only do single file upload.
+        if (formDataSupported) {
+          var context = this;
+          this.fileName = null;
+          var fname = null;
+          var file = null;
+          var item = null;
+          this.folder = _.unescape(folder);
+          var uploadUrl = this.getUploadUrl();
+          var uploadFileArray = [];
+          if (length === 0) {
+            this.displayErrorOnDialog({errorCode: "", message: MLDOStrings.simpleUploadEmptyFolderUploadWarning});
+          } else if (length > 0) {
+            for(var reason = null, index = 0; index < length; index++) {
+              file = files[index];
+              if (items && items.length) {
+                item = items[index];
+              }
+              this.validateAndCatagorizeFile(uploadFileArray, file, item);
+            }
+            // wait until all files have been (asynchronously) validated then continue
+            // the upload process.
+            this.repeatCheckValidationComplete (sessionId, length, uploadFileArray);
+          }
+
+          // prevent default form submit
+          return false;
+        } else {
+          // use alternate method by allowing default form submit to happen
+          return true;
+        }
+      },
+
+      dragAndDropSubmitHandler: function(e, sessionId, folder) {
+        var files = (e && e.files)? e.files : null;
+        var items = (e && e.items)? e.items : null;
+        var length = (files && files.length)? files.length : 0;
+        this.render();
+        this.getUploadModal().modal({backdrop: 'static', keyboard: false});
+        return this.baseSubmitHandler(files, items, length, sessionId, folder);
+      },
+
+      submitHander: function(e) {
+        var files = this.getFiles().prop('files');
+        var length = (files && files.length)? files.length : 0;
+        var sessionId = this.getSessionId().val(); // _.escape(this.getSessionId().val());
+        var folder = this.getFolder().val(); // _.escape(this.getFolder().val());
+        return this.baseSubmitHandler(files, null, length, sessionId, folder);
+      },
+
+      getFirstUploadedFile: function(uploadFileArray) {
+        var item = null;
+        if (uploadFileArray && uploadFileArray.length) {
+          var total = uploadFileArray.length;
+          for (var index = 0; index < total; index++, item = null) {
+            item = uploadFileArray[index];
+            if (item.status === 'COMPLETE') {
+              break;
+            }
+          }
+        }
+        return item;
+      },
+
+      getLastUploadedFile: function(uploadFileArray) {
+        var item = null;
+        if (uploadFileArray && uploadFileArray.length) {
+          var total = uploadFileArray.length;
+          for (var index = total - 1; index >= 0; --index, item = null) {
+            item = uploadFileArray[index];
+            if (item.status === 'COMPLETE') {
+              break;
+            }
+          }
+        }
+        return item;
+      },
+
+      getUploadResultStatusCount: function(uploadFileArray, status) {
+        var count = 0;
+        if (uploadFileArray && uploadFileArray.length && status) {
+          var total = uploadFileArray.length;
+          for (var item = null, index = 0; index < total; index++, item = null) {
+            item = uploadFileArray[index];
+            if (item.status === status) {
+              ++count;
+            }
+          }
+        }
+        return count;
+      },
+
+      buildUploadFileList: function(uploadFileArray) {
+        var resultText = "";
+        var todoList = "";
+        var completeList = "";
+        var failList = "";
+        var cancelList = "";
+        var total = 0;
+        if (uploadFileArray && uploadFileArray.length) {
+          total = uploadFileArray.length;
+          resultText += '<ul style="margin-left:0px;">';
+          for(var node = null, res = 0; res < total; res++) {
+            node = uploadFileArray[res];
+            switch(node.status) {
+            case 'TODO':
+              todoList += '<li><div class="normalFileIcon"></div><div class="uploadTodo">' + _.escape(node.fileName) + '</div><div class="statusIconContainer"><span class="glyphicon glyphicon-remove" aria-hidden="true"></span></div></li>';
+              break;
+            case 'COMPLETE':
+              completeList += '<li><div class="normalFileIcon"></div><div class="uploadComplete">' + _.escape(node.fileName) + '</div><div class="statusIconContainer"><span class="notificationImageSuccess" aria-hidden="true"></span></div></li>';
+              break;
+            case 'FAIL':
+              failList += '<li><div class="uploadFail"><div class="normalFileIcon"></div><div style="display:inline-block">' + _.escape(node.fileName) + '</div><div class="uploadFailReason">' + node.reason + '</div></div><div class="statusIconContainer"><span class="notificationImageError" aria-hidden="true"></span></div></li>';
+              break;
+            case 'CANCEL':
+              cancelList += '<li><div class="uploadCancel"><div class="normalFileIcon"></div><div style="display:inline-block">' + _.escape(node.fileName) + '</div><div class="uploadFailReason">' + _.escape(node.reason) + '</div></div><div class="statusIconContainer"><span class="notificationImageError" aria-hidden="true"></span></div></li>';
+              break;
+            }
+          }
+          resultText += completeList + todoList + failList + cancelList;
+          resultText += '</ul>';
+        }
+        return $(resultText);
+      },
+
+      uploadButtonClickHandler: function(e) {
+        $('#mldo-upload-notification-container').removeClass('importantDialogError');
+        this.getUploadForm().submit();
+      },
+
+      setUploadType: function(chooseFolders, currentFolder) {
+        var fileInput = document.getElementById("fileInput");
+        if (chooseFolders) {
+          if (fileInput) {
+            fileInput.webkitdirectory = true;
+            $("#mldoUploadTitle").text(DojoString.substitute(MLDOStrings.simpleUploadFolderTitle, [Util.getFolderNameFromPath(currentFolder, this.fileService.gdsDAO.getApplicationId())]));
+            $("#simpleUploadFormFileChooseLabel").text(MLDOStrings.simpleUploadFolderSelectionText);
+        }
+        } else {
+          if (fileInput) {
+            fileInput.webkitdirectory = false;
+            $("#mldoUploadTitle").text(DojoString.substitute(MLDOStrings.simpleUploadTitle, [Util.getFolderNameFromPath(currentFolder, this.fileService.gdsDAO.getApplicationId())]));
+            $("#simpleUploadFormFileChooseLabel").text(MLDOStrings.simpleUploadFilesSelectionText);
+          }
+        }
+      },
+
+      render: function(currentFolder, chooseFolders) {
+        var context = this;
+        var escapedCurrentFolder = _.escape(currentFolder) || '/';
+        this.fileConflictArray.length = 0;
+        this.displayOnDialog = true;
+        var formDataSupported = (typeof FormData !== 'undefined');
+        var supportDirectoryUpload = (this.directoryUploadEnabled && Util.isDirectoryUploadSupported());
+
+        // create modal dialog from template
+        var templateParameters = {};  // new object
+        templateParameters.currentFolder = escapedCurrentFolder;
+        templateParameters.title = DojoString.substitute(MLDOStrings.simpleUploadTitle, [Util.getFolderNameFromPath(templateParameters.currentFolder, this.fileService.gdsDAO.getApplicationId())]);
+        templateParameters.selectionText = MLDOStrings.simpleUploadFilesSelectionText;
+        templateParameters.uploadStatusText = MLDOStrings.simpleUploadStatusText;
+        templateParameters.resolveButtonLabel = MLDOStrings.simpleUploadResolveButtonLabel;
+        templateParameters.uploadButtonLabel = MLDOStrings.simpleUploadUploadButtonLabel;
+        templateParameters.uploadCancelButtonLabel = MLDOStrings.simpleUploadUploadCancelButtonLabel;
+        templateParameters.uploadURL = this.uploadUrl;
+        templateParameters.sessionId = this.fileService.gdsDAO.getSessionId() || '';
+        templateParameters.useFolderUpload = (supportDirectoryUpload && chooseFolders);
+        templateParameters.uploadTypeChoiceGroupLabelText = MLDOStrings.simpleUploadUploadTypeChoiceGroupLabelText;
+        templateParameters.uploadFilesChoiceLabelText = MLDOStrings.simpleUploadUploadUploadFilesChoiceLabelText;
+        templateParameters.uploadDirectoryChoiceLabelText = MLDOStrings.simpleUploadUploadUploadDirectoryChoiceLabelText;
+        templateParameters.simpleUploadEmptyFolderUploadWarning = MLDOStrings.simpleUploadEmptyFolderUploadWarning;
+        var htmlResult = this.template(templateParameters);
+
+        this.getModalContainer().empty();
+        this.getModalContainer().html(htmlResult);
+        if (supportDirectoryUpload) {
+          this.setUploadType(chooseFolders, escapedCurrentFolder);
+        }
+        this.getUploadModal().on("shown.bs.modal", function() {
+          $("input#fileInput").focus();
+        });
+        this.getUploadModal().on("hidden.bs.modal", function() {
+          $("#simpleFileUploadModal").remove();
+        });
+        this.getUploadModal().on('dragover', this.dragNotAllowed);
+        //disable upload until a file has been selected
+        this.getUploadButton().addClass('disabled');
+        this.getUploadButton().attr('disabled', true);
+
+        if (formDataSupported) {
+          // if form data is supported, we want to keep the dialog around to display the progress bar.
+          this.getUploadButton().removeAttr('data-dismiss');
+        } else {
+          // iframe is used by older browsers to do upload (it will contain the resposne from the server)
+          var $uploadIframe = this.getUploadFrame();
+          $uploadIframe.off();
+          // set the callbacks on the iframe
+          $uploadIframe.on("load", function(e){
+            this.getCancelButton().click();
+            this.fileService.notify(MLDOStrings.simpleUploadFileUploadSuccess, 'NORMAL');
+            this.fileService.refreshGrid();
+          });
+        }
+
+        // Intercept the submit method. If this is a modern browser that support FormData,
+        // use it and show a progress bar, etc.
+        // Otherwise, just pass through and do an old-style iframe form post.
+        this.getUploadForm().on('submit', this.submitHander);
+        this.getUploadModal().find(this.getUploadButtonId()).on('click', this.uploadButtonClickHandler);
+        this.getFiles().on('change', this.handleSelectFileName);
+        $("#simpleFileUploadModal").on("keyup", this.escCancel);
+      },
+
+      handleSelectFileName: function(e) {
+         e.preventDefault();
+         var name = this.getFiles().val(); // _.escape(this.getFiles().val());
+         if (name) {
+           this.clearError();
+           // enable when file chosen;
+           this.getUploadButton().removeClass('disabled');
+           this.getUploadButton().attr('disabled', false);
+         } else {
+           // disable when no file chosen
+           this.getUploadButton().addClass('disabled');
+           this.getUploadButton().attr('disabled', true);
+         }
+      }
+
+    });
+
+}); // require

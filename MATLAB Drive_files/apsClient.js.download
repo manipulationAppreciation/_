@@ -1,0 +1,722 @@
+// Expose the class either via AMD, CommonJS or the global object
+// NOTE: Prerequisites _, $, Util, MLDOStrings, DojoString need to be
+// loaded BEFORE loading this file, if not using AMD/requirejs.
+//
+(function(root, factory) {
+  if (typeof define === 'function' && define.amd) {
+    define([
+      "underscore",
+      "jquery",
+      "util",
+      "dojo/i18n!nls/mldoStringResource",
+      "dojo/string"
+    ], function( _, $, Util, MLDOStrings, DojoString) { return factory( _, $, Util, MLDOStrings, DojoString);});
+  } else if (typeof exports === 'object') {
+    module.exports = factory();
+  } else {
+    root.APSClient = factory();
+  }
+}(this, function( _, $, Util, MLDOStrings, DojoString) {
+
+  APSClient = function(config) {
+    if (!config ||
+        !config.getApsAuthURL || !config.getApsAuthURL() ||
+        !config.getApsLoginURL || !config.getApsLoginURL() ||
+        !config.getApsBrokerURL || !config.getApsBrokerURL() ||
+        !("isAdditionalApplicationsEnabled" in config) ||
+        !("getApsAuthProxyURL" in config) ||
+        !config.getApsResourceTopic || !config.getApsResourceTopic() ||
+        !config.getApsInvitationTopic || !config.getApsInvitationTopic() ||
+        !config.getApsStorageTopic || !config.getApsStorageTopic() ||
+        !("getApsSupportedApps" in config) ) {
+      throw new Error("APSClient given invalid construction arguments.");
+    }
+    this.apsToken = null;
+    this.userId = "";
+    this.WS = null;
+    this.isSecure = location.protocol === "https:";
+    this.webSocket = null;
+    this.additionApplicationsEnabled = config.isAdditionalApplicationsEnabled() || false;
+    this.supportedApplications = this.additionApplicationsEnabled ? config.getApsSupportedApps() : [];
+    this.sharingEnabled = (config.isSharingEnabled && config.isSharingEnabled()) || false;
+    this.authProxyUrl = config.getApsAuthProxyURL();
+    this.authUrl = config.getApsAuthURL();
+    this.loginUrl = config.getApsLoginURL();
+    this.brokerUrl = config.getApsBrokerURL();
+    this.storageTopic = config.getApsStorageTopic();
+    this.resourceTopic = config.getApsResourceTopic();
+    this.resourceAttributesTopic = (config.getApsResourceAttributesTopic && typeof config.getApsResourceAttributesTopic === "function") ? config.getApsResourceAttributesTopic() : "";
+    this.invitationTopic = this.sharingEnabled ? config.getApsInvitationTopic() : "";
+    this.keepAliveHandle = null;
+    this.instanceGuid = Util.getInstanceGUID();
+    this.subscriptionCount = 0;
+    // bind 'this' in the listed methods to the current 'this', even when called by other modules.
+    _.bindAll(this, "start", "initialize", "receiveMessage", "openConnection", "closeConnection", "stop", "keepAlive",
+                    "stopKeepAlive", "getInstanceGUID", "getUserId", "handleReceivedError", "handleReceivedData",
+                    "processOpenConnectionResponse", "startKeepAlive", "processUnsubscribeResponse", "processReceivedMessage",
+                    "handleAjaxSuccess", "handleAjaxError", "getSubscriptionCount", "incrementSubscriptionCount",
+                    "decrementSubscriptionCount", "sendApsMessage");
+  };
+  APSClient.prototype = {
+
+    getInstanceGUID: function() {
+      return this.instanceGuid;
+    },
+
+    getUserId: function() {
+      return this.userId;
+    },
+
+    getStorageTopic: function() {
+      return this.storageTopic;
+    },
+
+    getResourceTopic: function() {
+      return this.resourceTopic;
+    },
+
+    getResourceAttributesTopic: function() {
+      return this.resourceAttributesTopic;
+    },
+
+    getInvitationTopic: function() {
+      return this.invitationTopic;
+    },
+
+    getSubscriptionCount: function() {
+      return this.subscriptionCount;
+    },
+
+    isAddionalApplicationsEnabled: function() {
+      return this.additionApplicationsEnabled;
+    },
+
+    isSharingEnabled: function() {
+      return this.sharingEnabled;
+    },
+
+    getSupportedApplications: function() {
+      return this.supportedApplications;
+    },
+
+    incrementSubscriptionCount: function() {
+      this.subscriptionCount++;
+    },
+
+    decrementSubscriptionCount: function() {
+      if (this.subscriptionCount > 0) {
+        this.subscriptionCount--;
+      }
+    },
+
+    log: function(msg) {
+      if (("console" in window) && window.console.log && msg && msg.length) {
+        console.log(msg);
+      }
+    },
+
+    getWebSocketClass: function() {
+      var socketClass = null;
+      var fn = window || this; // get the global object (in a browser it's window)
+      if (("WebSocket" in fn)) {
+        socketClass = WebSocket;
+      }
+      return socketClass;
+    },
+
+    handleAjaxSuccess: function (responseData, status, xhr) {
+      var gotApsToken = false;
+      var errorMessage = null;
+
+      if (!responseData || ( // no response data at all
+           (!responseData.faults || !responseData.faults.length) &&  // or no faults and
+           (!responseData.messages) )) // no messages
+      {
+        errorMessage = MLDOStrings.apsInvalidResponse;
+      }
+
+      if (responseData && responseData.messages && responseData.messages.createTokenResponse && responseData.messages.createTokenResponse[0].fault) {
+        errorMessage = MLDOStrings.apsInvalidResponse;
+      }
+
+      if (!errorMessage && responseData && responseData.faults && responseData.faults.length) {
+        errorMessage = responseData.faults[0].message;
+      }
+
+      if (!errorMessage && responseData && responseData.messages) {
+        let apsLoginResponse = null;
+
+        if (apsLoginResponse && apsLoginResponse.messageFaults && apsLoginResponse.messageFaults.length) {
+          errorMessage = apsLoginResponse.messageFaults[0].message;
+        }
+
+        // Version 2.0.0
+        if (responseData.messages.createTokenResponse && responseData.messages.createTokenResponse.length){
+          let apsTokenInfo = responseData.messages.createTokenResponse[0];
+          this.apsToken = apsTokenInfo.token;
+          gotApsToken = true;
+          this.userId = apsTokenInfo.apsUserId;
+          this.start();
+        } else {
+          errorMessage = MLDOStrings.apsInvalidToken;
+        }
+
+      }
+      if (!gotApsToken && errorMessage) {
+        this.notify('ERROR', errorMessage);
+      }
+    },
+
+    handleAjaxError: function (errObj, errType, errText) {
+      var message = "APS Client Error: ";
+      if (errObj.status === 0 && errObj.statusText == "error") {
+        message += "Refer to JavaScript console.";
+      } else {
+        message += errObj.status + "  " + errObj.statusText;
+      }
+      this.notify('ERROR', message);
+    },
+
+    initialize: function(token) {
+      this.WS = this.getWebSocketClass();
+      if (!this.WS) {
+        throw new Error("WebSocket not supported.");
+      }
+      var context = this;
+      if (!token) {
+        throw new Error("Missing authorization token.");
+      }
+      var requestData = this.getApsRequestData(this.getInstanceGUID(), token);
+      var headers = {};
+      headers["X-FORWARDED-HOST"] = this.loginUrl;
+      if (this.authProxyUrl) {
+       headers["x-mw-authnz-host"] = this.authUrl; // not authProxyUrl
+      }
+      var ajaxArgs = {
+       url: (this.authProxyUrl && this.authProxyUrl.length)? this.authProxyUrl : this.authUrl,
+       type: 'post',
+       data: JSON.stringify(requestData),
+       contentType: 'application/json',
+       headers: headers,
+       success: this.handleAjaxSuccess,
+       error: this.handleAjaxError
+     };
+     $.ajax(ajaxArgs);
+    },
+
+    getApsRequestData: function(guid, token) {
+      var data;
+      if (guid && guid.length && token && token.length) {
+        data = {
+          uuid: guid,
+          version: "2.0.0",
+          messages: {
+            createToken: [{
+              credentials: {
+                token: {
+                  tokenType: "MWA",
+                  value: token
+                }
+              },
+              context: "pubsub"
+            }]
+          }
+        };
+      }
+      return data;
+    },
+
+    parseMessage: function(message) {
+      var m = {};
+      if (message && message.length) {
+        message.replace(/([^=]+)=([^=]+)\n/g, function($0, param, value) {
+          m[param] = value;
+        });
+      }
+      return m;
+    },
+
+    handleReceivedError: function(data) {
+      if (data && data.error) {
+        this.webSocket.close();
+        this.notify('ERROR', data.error);
+      }
+    },
+
+    sendApsMessage: function(message) {
+      if (this.webSocket) {
+        this.webSocket.send(JSON.stringify(message));
+      } else {
+        this.log("APS webSocket not initialized.");
+      }
+    },
+
+    getTopics: function() {
+      var appNames = this.getSupportedApplications();
+      var topics = {
+        storage: [this.getStorageTopic()],
+        resource: [this.getResourceTopic()],
+        invitation: [this.getInvitationTopic()]
+      };
+      if (this.getResourceAttributesTopic()) {
+        topics.resource.push(this.getResourceAttributesTopic());
+      }
+      if (this.isAddionalApplicationsEnabled() && appNames.length) {
+        for (var i = 0, len = appNames.length; i < len; i++) {
+          topics.resource.push(this.getResourceTopic() + "/" + appNames[i]);
+          if (this.getResourceAttributesTopic()) {
+            topics.resource.push(this.getResourceAttributesTopic() + "/" + appNames[i]);
+          }
+          topics.invitation.push(this.getInvitationTopic() + "/" + appNames[i]);
+        }
+      }
+      return topics;
+    },
+
+    createOpenConnectionMessage: function() {
+      var openConnectionMessage = this.createMessage("openConnection");
+      return openConnectionMessage;
+    },
+
+    createSubscribeMessage: function(topic) {
+      var subscribeMessage;
+      if (topic && topic.length) {
+        subscribeMessage = this.createMessage("subscribe", topic);
+      }
+      return subscribeMessage;
+    },
+
+    createUnsubscribeMessage: function(topic) {
+      var unsubscribeMessage;
+      if (topic && topic.length) {
+        unsubscribeMessage = this.createMessage("unsubscribe", topic);
+      }
+      return unsubscribeMessage;
+    },
+
+    subscribeToTopics: function(topics) {
+      var subscribeMessage;
+      // 0: connecting; 1: open; 2: closing; 3: closed
+      if (topics && topics.length && this.webSocket && (this.webSocket.readyState === 0 || this.webSocket.readyState === 1)) {
+        for (var i = 0, len = topics.length; i < len; i++) {
+          subscribeMessage = this.createSubscribeMessage(topics[i]);
+          this.sendApsMessage(subscribeMessage);
+        }
+      }
+    },
+
+    subscribeToAllTopics: function() {
+      var topics = this.getTopics();
+      this.subscribeToTopics(topics.resource);
+      if (this.isSharingEnabled()) {
+        this.subscribeToTopics(topics.invitation);
+      }
+      this.subscribeToTopics(topics.storage);
+    },
+
+    unsubscribeFromTopics: function(topics) {
+      var unsubscribeMessage;
+      // 0: connecting; 1: open; 2: closing; 3: closed
+      if (topics && topics.length && this.webSocket && (this.webSocket.readyState === 0 || this.webSocket.readyState === 1)) {
+        for (var i = 0, len = topics.length; i < len; i++) {
+          unsubscribeMessage = this.createUnsubscribeMessage(topics[i]);
+          this.sendApsMessage(unsubscribeMessage);
+        }
+      }
+    },
+
+    unsubscribeFromAllTopics: function() {
+      var topics = this.getTopics();
+      this.unsubscribeFromTopics(topics.resource);
+      if (this.isSharingEnabled()) {
+        this.unsubscribeFromTopics(topics.invitation);
+      }
+      this.unsubscribeFromTopics(topics.storage);
+    },
+
+    processOpenConnectionResponse: function(data) {
+      if (data.openConnectionResponse ) {
+        if (data.openConnectionResponse.messageFaults && data.openConnectionResponse.messageFaults.length) {
+          this.notify('ERROR', "APS initialization error: " + data.openConnectionResponse.messageFaults[0].message);
+          return;
+        }
+        this.subscribeToAllTopics();
+      }
+    },
+
+    processFaults: function(data) {
+      if (data.faults && data.faults.length) {
+        this.notify('ERROR', "APS initialization error: " + data.faults[0].message);
+        return;
+      }
+    },
+
+    processUnsubscribeResponse: function() {
+      if (this.webSocket && !this.getSubscriptionCount()) {
+        this.webSocket.close();
+      }
+    },
+
+    startKeepAlive: function(data) {
+      var context = this;
+      var ping = function() { context.keepAlive(); };
+      if (data && data.subscribeResponse && data.subscribeResponse.topic === "/" + this.getUserId() + this.getStorageTopic()) {
+        this.keepAliveHandle = setInterval(ping, 30000);
+      }
+    },
+
+    stopKeepAlive: function() {
+      if (this.keepAliveHandle) {
+        clearInterval(this.keepAliveHandle);
+        this.keepAliveHandle = null;
+      }
+    },
+
+    setEventApplicationNameIfTopicMatches: function(operationData, topic) {
+      var appNames = this.getSupportedApplications();
+      if (this.isAddionalApplicationsEnabled() && topic.length && appNames.length) {
+        for (var i = 0, len = appNames.length; i < len; i++) {
+          if (( (topic.indexOf(this.getResourceTopic() + "/" + appNames[i]) > 0) ||
+              (this.getResourceAttributesTopic() && (topic.indexOf(this.getResourceAttributesTopic() + "/" + appNames[i]) > 0)) ||
+              (topic.indexOf(this.getInvitationTopic() + "/" + appNames[i]) > 0) ) &&
+              operationData.triggerUpdateEvent) {
+                operationData.eventApplicationName = appNames[i].toLowerCase(); // to lower case
+                break;
+          }
+        }
+      }
+    },
+
+    getOperationDataFromMessage: function(m, topic) {
+      var operationData = null;
+      if (m && (!m.originId || m.originId !== this.getInstanceGUID())) {
+        if (m.operation) {
+          operationData = {
+            eventApplicationName: "",
+            actionName: "",
+            origPath: "",
+            changedPath: "",
+            triggerUpdateEvent: false,
+            triggerStorageUpdateEvent: false,
+            affectedPage: "both"
+          };
+          switch (m.operation) {
+            case "fileRemoved":
+            case "folderRemoved":
+              if (m.path) {
+                operationData.triggerUpdateEvent = true;
+                operationData.changedPath = m.path;
+                operationData.actionName = "deleted";
+                operationData.affectedPage = "both";
+              }
+              break;
+            case "fileCreated":
+            case "folderCreated":
+              if (m.path) {
+                operationData.triggerUpdateEvent = true;
+                operationData.changedPath = m.path;
+                operationData.actionName = "created";
+                operationData.affectedPage = "files";
+              }
+              break;
+            case "fileRenamedMoved":
+            case "folderRenamedMoved":
+              if (m.targetPath && m.path) {
+                var newPath = m.targetPath.split("/");
+                var oldPath = m.path.split("/");
+                if (newPath.length !== oldPath.length) {
+                  operationData.actionName = "moved";
+                } else {
+                  for (var pathIndex = 0; pathIndex < newPath.length - 1; pathIndex++) {
+                    if (newPath[pathIndex] !== oldPath[pathIndex]) {
+                      operationData.actionName = "moved";
+                      break;
+                    }
+                  }
+                  if (! operationData.actionName) {
+                    operationData.actionName = "renamed";
+                  }
+                }
+                operationData.triggerUpdateEvent = true;
+                operationData.changedPath = m.targetPath;
+                operationData.origPath = m.path;
+                operationData.affectedPage = "files";
+              }
+              break;
+            case "fileModified":
+            case "folderModified":
+              if (m.path) {
+                operationData.triggerUpdateEvent = true;
+                operationData.changedPath = m.path;
+                operationData.actionName = "uploaded";
+                operationData.affectedPage = "files";
+              }
+              break;
+            case "fileDeleted":
+            case "folderDeleted":
+              if (m.path) {
+                operationData.triggerUpdateEvent = true;
+                operationData.actionName = "permanently deleted";
+                operationData.changedPath = m.path;
+                operationData.affectedPage = (m.operation === "folderDeleted") ? "both" : "trash";
+              }
+              break;
+            case "fileRestored":
+            case "folderRestored":
+              if (m.targetPath) {
+                operationData.triggerUpdateEvent = true;
+                operationData.actionName = "restored";
+                operationData.changedPath = m.targetPath;
+                operationData.origPath = m.path;
+                operationData.affectedPage = "both";
+              }
+              break;
+            case "fileCopied":
+            case "folderCopied":
+              if (m.targetPath) {
+                operationData.triggerUpdateEvent = true;
+                operationData.actionName = "copied";
+                operationData.changedPath = m.targetPath;
+                operationData.origPath = m.path;
+                operationData.affectedPage = "files";
+              }
+              break;
+            case "invitationCreated":
+            case "invitationUpdated":
+            case "invitationDeleted":
+              operationData.triggerUpdateEvent = true;
+              operationData.actionName = "invitation changed";
+              operationData.affectedPage = "sharing";
+              break;
+            case "storageChanged":
+              operationData.triggerStorageUpdateEvent = true;
+              break;
+            case "attributesChanged":
+              if (m.attributeName === "SharedFolder") {
+                operationData.triggerUpdateEvent = true;
+                operationData.affectedPage = "both";
+              }
+          }
+          this.setEventApplicationNameIfTopicMatches(operationData, topic);
+        }
+      }
+      return operationData;
+    },
+
+    getActionMessage: function(actionName, actionItem, actionParent) {
+      var i18nString = "";
+      var index = "apsAction";
+
+      switch (actionName) {
+        case 'permanently deleted':
+          index += "PermanentlyDeletedFrom";
+          break;
+        case 'deleted':
+          index += "DeletedFrom";
+          break;
+        case 'moved':
+          index += "MovedTo";
+          break;
+        case 'uploaded':
+          index += "UploadedTo";
+          break;
+        case 'restored':
+          index += "RestoredTo";
+          break;
+        case 'created':
+          index += "CreatedIn";
+          break;
+        case 'renamed':
+          index += "RenamedTo";
+          break;
+        case 'copied':
+          index += "CopiedTo";
+          break;
+        case 'invitation changed':
+          index += "InvitationChangedOn";
+          break;
+        default:
+          index += actionName;
+      }
+      if(MLDOStrings[index]) {
+        i18nString = DojoString.substitute(MLDOStrings[index], [actionItem, actionParent]);
+      } else {
+        this.log("Missing I18N string for: " + index);
+      }
+      return i18nString;
+    },
+
+    processReceivedMessage: function(data) {
+      if (data.message) {
+        var m = this.parseMessage(data.message);
+        var topic = data.topic || "";
+        var operationData = null;
+
+        if (!m.originId || m.originId !== this.getInstanceGUID()) {
+          operationData = this.getOperationDataFromMessage(m, topic);
+        }
+
+        if (operationData && operationData.triggerUpdateEvent) {
+          var actionItem = Util.getFileNameFromPath(operationData.changedPath);
+          var actionParent = Util.getParentFolderFromPath(operationData.changedPath);
+          var actionMsg = this.getActionMessage(operationData.actionName, actionItem, actionParent);
+
+          $.event.trigger('refresh:aps', {
+                                            path: operationData.changedPath,
+                                            origPath: operationData.origPath,
+                                            page: operationData.affectedPage,
+                                            application: operationData.eventApplicationName
+                                          });
+          this.notify('NORMAL', actionMsg);
+        }
+
+        if (operationData && operationData.triggerStorageUpdateEvent) {
+          $.event.trigger('refreshstorage:aps');
+        }
+      }
+    },
+
+    handleReceivedData: function(data) {
+      if (data && typeof data === "object") {
+
+        if (data.faults && data.faults.length) {
+          this.processFaults(data);
+        }
+
+        if (data.openConnectionResponse ) {
+          this.processOpenConnectionResponse(data);
+        }
+
+        if (data.subscribeResponse) {
+          this.incrementSubscriptionCount();
+          if (data.subscribeResponse.topic === "/" + this.getUserId() + this.getStorageTopic()) {
+            this.startKeepAlive(data);
+          }
+        }
+
+        if (data.unsubscribeResponse) {
+          this.decrementSubscriptionCount();
+          this.processUnsubscribeResponse();
+        }
+
+        if (data.message) {
+          this.processReceivedMessage(data);
+        }
+      }
+    },
+
+    receiveMessage: function(event) {
+      var data;
+      try {
+        data = JSON.parse(event.data);
+      } catch (e) {
+        this.log("JSON parse error: " + e);
+      }
+      // Handle errors
+      if (data && data.error) {
+        this.handleReceivedError(data);
+        return;
+      } else {
+        this.handleReceivedData(data);
+      }
+    },
+
+    openConnection: function(e) {
+        // Web Socket is connected, open service channel
+        var openChannelMessage = this.createOpenConnectionMessage();
+        // 0: connecting; 1: open; 2: closing; 3: closed
+        if (this.webSocket && (this.webSocket.readyState === 0 || this.webSocket.readyState === 1)) {
+          this.sendApsMessage(openChannelMessage);
+        }
+    },
+
+    closeConnection: function(e) {
+      this.stopKeepAlive();
+    },
+
+    stop: function() {
+      this.stopKeepAlive();
+      this.unsubscribeFromAllTopics();
+      if (this.webSocket) {
+        this.webSocket.close();
+      }
+    },
+
+    createMessage: function(msgType, topic) {
+      var message;
+      if (msgType && msgType.length ) {
+        switch (msgType) {
+          case "subscribe":
+          case "unsubscribe":
+            if (topic && topic.length) {
+              message = {};
+              message[msgType] = {
+                 topic: "/" + this.getUserId() + topic,
+                 version: "1.0.0",
+                 uuid : this.getUserId()
+              };
+            }
+            break;
+          case "openConnection":
+            message = {
+              version: "2.0.0",
+              token: this.apsToken
+            };
+            message[msgType] = {
+             clientInfo: {
+               serviceName: "gds",
+               instanceId: this.getInstanceGUID()
+             },
+             messageFormat: {
+               protocol: "pubsub",
+               version: "1.0.3"
+             }
+           };
+            break;
+        }
+      }
+      return message;
+    },
+
+    start: function() {
+      if (!this.WS) {
+        throw new Error("WebSocket not supported.");
+      }
+      if (this.isSecure) {
+        this.webSocket = new this.WS("wss:\/\/" + this.brokerUrl);
+      } else {
+        this.webSocket = new this.WS("ws:\/\/" + this.brokerUrl);
+      }
+      this.webSocket.onopen = this.openConnection;
+      this.webSocket.onclose = this.closeConnection;
+      this.webSocket.onmessage = this.receiveMessage;
+    },
+
+    keepAlive: function() {
+      var context = this;
+      var pingData = JSON.stringify({data: "keepAlive ping"});
+      try {
+        this.webSocket.send(pingData);
+      } catch (e) {
+        context.stop();
+        context.start();
+      }
+    },
+
+    notify: function(msgType, msg) {
+      $.event.trigger('notification:aps', {severity: msgType, message: msg});
+    },
+
+    isAlive: function() {
+      var alive = false;
+      // 0: connecting; 1: open; 2: closing; 3: closed
+      if (this.webSocket && (this.webSocket.readyState === 0 || this.webSocket.readyState === 1)) {  // 1 means socket is open and connected
+        alive = true;
+      }
+      return alive;
+    }
+
+  };
+
+  return APSClient;
+})); // require

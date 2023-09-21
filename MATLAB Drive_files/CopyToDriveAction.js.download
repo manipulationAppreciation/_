@@ -1,0 +1,53 @@
+define([
+  "dojo/_base/declare",
+  "mw-filebrowser/actions/Action",
+  "dojo/i18n!nls/mldoStringResource"
+], function (declare, Action, MLDOStrings) {
+  return declare(Action, {
+    constructor: function (args) {
+      args = args || {};
+      var context = args.context;
+      var makeActionAvailable = args.showAction || false;
+      this.name =  MLDOStrings.previewPageCopyToDriveLabel;
+      this.enabled = makeActionAvailable;
+      this.label = MLDOStrings.previewPageCopyToDriveLabel;
+      this.getInvitationDetailsMethod = args.getInvitationDetailsMethod;
+      this.id = "copyToDriveAction";
+      this.section = {
+        id: "mldoAddToDriveAction",
+        enabled: false,
+        isApplicableTo: function() { return false; },
+        label: "sub2",
+        parent: {
+          id: "mldoAddToDriveAction",
+          name: MLDOStrings.previewPageAddLabel,
+          label: MLDOStrings.previewPageAddLabel,
+          allowSubMenu: true,
+          forceSubMenu: true
+        }
+      };
+      this.isApplicableTo = function () {
+        let invitationStatus;
+        if (this.getInvitationDetailsMethod && typeof this.getInvitationDetailsMethod === "function" && this.getInvitationDetailsMethod()) {
+          invitationStatus = this.getInvitationDetailsMethod().invitationStatus;
+        }
+        if (invitationStatus === "ACCEPTED") {
+          this.enabled = false;
+        } else {
+          this.enabled =  makeActionAvailable && true;
+        }
+        return this.enabled;
+      };
+      this.callback = function () {
+        let invitationDetails;
+        if (this.getInvitationDetailsMethod && typeof this.getInvitationDetailsMethod === "function" && this.getInvitationDetailsMethod()) {
+          invitationDetails = this.getInvitationDetailsMethod();
+        }
+        if (invitationDetails && typeof invitationDetails === "object") {
+          context.handleCopyToDriveAction(invitationDetails.invitationId, invitationDetails.invitationName, invitationDetails.authenticated);
+        }
+      };
+    }
+  });
+
+});

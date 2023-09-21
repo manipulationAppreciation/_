@@ -1,0 +1,52 @@
+define([
+    "dojo/_base/declare",
+    "mw-filebrowser/actions/Action",
+    "mw-keybindings/DefaultKeys",
+    "dojo/keys",
+    "mw-filename-utils/FileNameUtil",
+    "dojo/i18n!nls/mldoStringResource",
+    "dojo/string"
+], function (declare, Action, DefaultKeys, keys, FileNameUtil, MLDOStrings, DojoString) {
+  return declare(Action, {
+    constructor: function (args) {
+        args = args || {};
+        var context = args.context;
+        var makeActionAvailable = args.showAction || false;
+        this.name =  "permantentlyDeleteAction";
+        this.label = MLDOStrings.contextMenuPermanentlyDeleteLabel;
+        this.enabled = makeActionAvailable;
+        this.section = {
+            id: "MISC",
+            name: "MISC",
+            allowSubMenu: false,
+            forceSubMenu: false
+        };
+        this.keyCode = keys.DELETE;
+        this.shortcut = "Delete";
+        this.supportsKeyBinding = true;
+        this.isApplicableTo = function (path) {
+          var selectedFileCount = context.getSelectedRowCount();
+          if (selectedFileCount < 1) {
+            this.enabled = false;
+          } else {
+            var fileInfos = context.getSelectedItemFileInfos();
+            var fileInfo = fileInfos[0];
+            this.enabled = makeActionAvailable && FileNameUtil.isFileInfo(fileInfo) && !fileInfo.isSharedContent;
+          }
+          return this.enabled;
+        };
+        this.callback = function (action) {
+          var fileInfos = context.getSelectedItemFileInfos();
+          var fileInfo = fileInfos[0];
+          if (this.isApplicableTo()) {
+            if (fileInfos.length === 1 && fileInfo) {
+              context.handlePermanentlyDeleteAction(fileInfo);
+            } else if (fileInfos.length > 1) {
+              context.handleMultiSelectPermanentlyDelete(fileInfos);
+            }
+          }
+      };
+    }
+  });
+
+});

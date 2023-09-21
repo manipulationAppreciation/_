@@ -1,0 +1,9 @@
+// BEGIN Adobe DTM
+try {
+  _satellite.pageBottom();
+} catch (e) {
+  if (("console" in window) && window.console.log) {
+    console.log(e);
+  }
+}
+// END Adobe DTM

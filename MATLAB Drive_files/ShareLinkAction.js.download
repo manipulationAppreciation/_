@@ -1,0 +1,38 @@
+define([
+    "dojo/_base/declare",
+    "mw-filebrowser/actions/Action",
+    "dojo/i18n!nls/mldoStringResource",
+], function (declare, Action, MLDOStrings) {
+  return declare(Action, {
+    constructor: function (args) {
+        args = args || {};
+        var context = args.context;
+        var makeActionAvailable = args.showAction || false;
+        this.name =  "shareLinkAction";
+        this.enabled = makeActionAvailable;
+        this.getInvitationDetailsMethod = args.getInvitationDetailsMethod;
+        this.label = MLDOStrings.contextMenuShareLinkLabel;
+        this.section = {
+          id: "MISC",
+          name: "MISC",
+          allowSubMenu: false,
+          forceSubMenu: false
+        };
+        this.isApplicableTo = function () {
+          return this.enabled;
+        };
+        this.callback = function () {
+          if (this.isApplicableTo()) {
+            let invitationDetails;
+            if (this.getInvitationDetailsMethod && typeof this.getInvitationDetailsMethod === "function" && this.getInvitationDetailsMethod()) {
+              invitationDetails = this.getInvitationDetailsMethod();
+            }
+            if (invitationDetails && typeof invitationDetails === "object") {
+              context.handlePreviewShareLinkAction(invitationDetails.invitationId);
+            }
+          }
+        };
+    }
+  });
+
+});

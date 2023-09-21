@@ -1,0 +1,1152 @@
+/**
+ *  This implements a tree file view using FileBrowser.
+ *  All classes need to translate from GDS data to jsTree Node data are contained here.
+ *  The TreeController does the actual rendering.
+ *
+ * The expected usage is to create an instance of the controller,
+ * passing in a function for getting GDS data; a function for notifying the
+ * controlling application; and the context for running those functions.
+ *
+ * The controller's render method, which takes the id of an html element into which to
+ * render the jsTree is called by the controlling application.
+ */
+define([
+    "dojo/_base/declare",
+    "dojo/_base/lang",
+    "dojo/aspect",
+    "dojo/ready",
+    "dojo/dom-class",
+    "dgrid/util/touch",
+    "mw-filename-utils/FileNameUtil",
+    "mw-filebrowser/FileBrowser",
+    "actionbtnmanager",
+    "underscore",
+    "backbone",
+    "dojo/on",
+    "util",
+    "filebrowser/gdsdata/FbNodeData",
+    "mldofileservice",
+    "sharingFileService",
+    "filebrowser/actions/ActionHandler",
+    "filebrowser/actions/contextmenu/ActionRegistry",
+    "filebrowser/columns/ColumnRegistry",
+    "RenamePrompt",
+    "dojo/i18n!nls/mldoStringResource",
+    "dojo/string",
+    "filebrowser/actions/contextmenu/MldoActionsContextMenuBuilder",
+    "require"
+], function(declare, lang, aspect, ready, domClass, TouchUtil, FileNameUtil,
+            FileBrowser, ActionButtonController, _, ackbone, on,
+            Util, FbNodeData, MLDOFileServiceController, SharingFileService,
+            ActionHandler, ActionRegistry, ColumnRegistry, RenamePrompt,
+            MLDOStrings, DojoString, MldoActionsContextMenuBuilder, require) {
+
+  // Allow grid selectionMode override if the override value is recognized
+  function isValidSeletionModeValue(selectionMode) {
+    var isValid = false;
+    if (selectionMode && typeof selectionMode === 'string' && selectionMode.length) {
+      switch (selectionMode) {
+        case "extended":
+        case "multiple":
+        case "single":
+        case "custom":
+        case "toggle":
+        case "none":
+          isValid = true;
+          break;
+        default:
+          isValid = false;
+      }
+    }
+    return isValid;
+  }
+  /*
+    This module uses the latest JavaScript features async and await.  Not all browsers support this.
+    If the browser doesn't support it, the load (i.e. require) will fail.  In that case, our
+    variable DragAndDropBehavior will be undefined.
+    If the load does succeed, DragAndDropBehavior will be an object with a function setFileBrowserDropEventHandler.
+  */
+  var DragAndDropBehavior;
+  try {
+    require(["filebrowser/FolderDragAndDropBehavior"], function(FolderDragAndDropBehavior) {
+      ready(function() {
+        DragAndDropBehavior = FolderDragAndDropBehavior;
+      });
+    });
+  } catch(e) {
+    DragAndDropBehavior = null;
+  }
+
+  var FbTreeController = function(options) {
+    this.gdsDAO = options.gdsDAO || null;
+    if (!this.gdsDAO) {
+      throw new Error("Missing required GDS DAO argument.");
+    }
+    this.id = options.id;
+    this.viewFileEnabled = options.viewFileEnabled;
+    this.viewInNewTabEnabled = options.viewInNewTabEnabled;
+    this.viewerServiceEnabled = options.viewerServiceEnabled;
+    this.viewerServiceURL = options.viewerServiceURL;
+    this.openWithEnabled = options.openWithEnabled;
+    this.mockOpenwith = options.mockOpenwith || false;
+    this.directoryUploadEnabled = (options && options.directoryUploadEnabled === true) ? true : false;
+    this.moveEnabled = (options && options.moveEnabled === true) ? true : false;
+    this.copyEnabled = (options && options.copyEnabled === true) ? true : false;
+    this.enableNavigation = (options && options.enableNavigation === false)? false : true;
+    this.prohibitChangeTreeRoot = (options && options.prohibitChangeTreeRoot === true) ? true : false;
+    this.noHtmlStorage = (options && options.noHtmlStorage === true) ? true : false;
+    this.showUploadDetails = (options && options.showUploadDetails === false) ? false : true;
+    this.sharingEnabled = (options && options.sharingEnabled === true) ? true : false;
+    this.personalInvitationsEnabled = (this.sharingEnabled && options && options.personalInvitationsEnabled === true) ? true : false;
+    this.editPermissionsEnabled = (options && options.editPermissionsEnabled === true) ? true : false;
+    this.inlineFileView = (options && options.inlineFileView === true) ? true : false;
+    this.fileServiceController = (this.id === "Sharing" ? new SharingFileService() : new MLDOFileServiceController());
+    this.shouldShowUnshareOption = (options && options.shouldShowUnshareOption) ? true : false;
+    this.selectionMode = (options && options.selectionMode && isValidSeletionModeValue(options.selectionMode)) ? options.selectionMode : "";
+    this.getMaxFileUploadSize = options.getMaxFileUploadSize;
+    this.isInfoPanelEnabled = options.isInfoPanelEnabled;
+    this.folderDownloadEnabled = (options && options.folderDownloadEnabled === true) ? true : false;
+    var initializationParams = {
+      gdsDAO: this.gdsDAO,
+      enableNavigation: options.enableNavigation,
+      noHtmlStorage: options.noHtmlStorage,
+      listContentsMethod: options.listContentsMethod,
+      getDownloadURIMethod: options.getDownloadURIMethod,
+      breadcrumbsBaseSelector: options.breadcrumbsBaseSelector,
+      treeEventId: this.id,
+      invitationId: options.invitationId
+    };
+    this.fileServiceController.initialize(initializationParams);
+
+    var tc = this;
+
+    // We turn off DnD if Moderizr.touchevents is true.  However,
+    // We also turn it off in general for the trash page.  So,
+    // To make sure we're really off due to being mobile we check
+    // for both here.
+    var isMobile = Util.isMobileBrowser() && !options.allowDnD;
+
+    /*
+     * Make ActionRegistry based on specified desired actions passed in
+     */
+    var actionButtonController = new ActionButtonController({
+                                                              isSharingEnabled: this.sharingEnabled,
+                                                              isPersonalInvitationsEnabled: this.personalInvitationsEnabled,
+                                                              folderUploadEnabled: this.directoryUploadEnabled,
+                                                              moveEnabled: this.moveEnabled,
+                                                              folderDownloadEnabled: this.folderDownloadEnabled,
+                                                              openWithEnabled: this.openWithEnabled
+                                                            });
+    this.actionHandler = new ActionHandler(this.fileServiceController,
+                                           actionButtonController,
+                                           {
+                                             showUploadDetails: this.showUploadDetails,
+                                             viewFileEnabled: this.viewFileEnabled,
+                                             viewInNewTabEnabled: this.viewInNewTabEnabled,
+                                             viewerServiceEnabled: this.viewerServiceEnabled,
+                                             viewerServiceURL: this.viewerServiceURL,
+                                             openWithEnabled: this.openWithEnabled,
+                                             mockOpenwith: this.mockOpenwith,
+                                             directoryUploadEnabled: this.directoryUploadEnabled,
+                                             moveEnabled: this.moveEnabled,
+                                             copyEnabled: this.copyEnabled,
+                                             sharingEnabled: this.sharingEnabled,
+                                             personalInvitationsEnabled: this.personalInvitationsEnabled,
+                                             editPermissionsEnabled: this.editPermissionsEnabled,
+                                             shouldShowUnshareOption: this.shouldShowUnshareOption,
+                                             maxFileUploadSize: this.getMaxFileUploadSize,
+                                             inlineFileView: this.inlineFileView
+                                           });
+    var actions = new ActionRegistry(this.actionHandler,
+                                     this.id,
+                                     options.actions,
+                                     {
+                                       isSharingEnabled: this.sharingEnabled,
+                                       isPersonalInvitationsEnabled: this.personalInvitationsEnabled,
+                                       folderUploadEnabled: this.directoryUploadEnabled,
+                                       moveEnabled: this.moveEnabled,
+                                       folderDownloadEnabled: this.folderDownloadEnabled,
+                                       getInvitationDetailsMethod: options.getInvitationDetailsMethod
+                                     });
+
+    /*
+     *  Create table colunns based on specified desired columns
+     */
+    var columnRegistry = new ColumnRegistry(options.columns, options.indentWidth, options.id);
+
+    this.fb = new FileBrowser({
+        pathService: this.fileServiceController,
+        fileService: this.fileServiceController,
+        columnRegistry: columnRegistry,
+        actionRegistry: actions,
+        allowDnD: options.allowDnD,
+        contextMenuEnabled: !isMobile,
+        invitationId: options.invitationId,
+        onDoubleClick: function(rowData) {
+          if (!rowData || typeof rowData !== "object") {
+            throw new TypeError("Invalid rowData argument");
+          }
+          if (rowData && rowData.isDirectory) {
+            if (tc.enableNavigation && !tc.isEmbeddedWidget() && !tc.prohibitChangeTreeRoot) {
+              var contentCount = tc.getGridRowCount();
+              var selectedFileCount = tc.getActionHandler().getSelectedRowCount();
+              this.fileService.currentDirectory(rowData.path);
+              $(document).on("query-complete:mldo", tc.disableAllActionsAfterQueryComplete);
+              $(document).on("query-complete:mldo", tc.updateSharedFolderIconBreadcrumb);
+              this.changeCurrentFolder(rowData);
+              if (tc.id === "Preview") {
+                $.event.trigger('previewnavupdate:mldo', {path: tc.getCurrentFolder(), invitationId: this.invitationId});
+              } else {
+                $.event.trigger('navupdate:mldo', {path: tc.getCurrentFolder()});
+              }
+              tc.getActionHandler().getActionButtonManager().disableAllActions({
+                gridRowCount: contentCount,
+                disableFolderActions: !rowData.filePermissions.canWrite,
+                isShareable: false,
+                isSharedFolder: rowData.isSharedFolder,
+                canEdit: tc.fileServiceController.getCurrentFolderInfo().filePermissions.canWrite,
+                accessType: tc.fileServiceController.getCurrentFolderInfo().accessType,
+                allContentIsShared: (tc.id.toLowerCase() === "sharing" ? true : tc.everythingIsSharedContent(tc.getAllGridFileInfos()))
+              });
+              tc.getActionHandler().getActionButtonManager().updatePaste(rowData.filePermissions.canWrite && tc.getActionHandler().clipboardContainsData() && selectedFileCount < 2);
+            } else {
+              $.event.trigger("folderdblclick:mldo", rowData);
+            }
+          } else if (rowData && !rowData.isDirectory) {
+              if (tc.getActionHandler().isFileViewEnabled()) {
+                  var filePath = "";
+                  var currentFolder = tc.getCurrentFolder();
+                  if (currentFolder === "/") {
+                      filePath = rowData.path;
+                  } else {
+                      filePath = currentFolder + rowData.path;
+                  }
+                  rowData.path = filePath;
+                  this.openFileView(rowData);
+              }
+          }
+        },
+        openFileView: function (rowData) {
+            tc.fileServiceController.dispatchCanonicalizedTreeEvent("filedblclick:treecontroller", {rowData: rowData, invitationId: this.invitationId});
+        },
+        onSelectionChange: function (fileInfos, filePaths) {
+          if (fileInfos && !Array.isArray(fileInfos)) {
+            throw new TypeError("Invalid fileInfos argument");
+          }
+          var contentCount = tc.getGridRowCount();
+          var type;
+          var enabled = tc.fileServiceController.getCurrentFolderInfo().filePermissions.canWrite;
+          var isCurrentDirectoryNotRoot = (tc.getCurrentFolder() !== "/");
+          var parentWritable = tc.fileServiceController.getCurrentFolderInfo().filePermissions.parentCanWrite;
+          var currentDirectoryIsShared = tc.fileServiceController.getCurrentFolderInfo().isSharedFolder;
+          var currentDirectoryAccessType = tc.fileServiceController.getCurrentFolderInfo().accessType;
+          var currentDirectoryHasActiveLink = tc.fileServiceController.getCurrentFolderInfo().hasActiveLink;
+          var accessType = "";
+          var referencedItemInTrash = false;
+          var entireListContentIsShared = (tc.id.toLowerCase() === "sharing" ? true : tc.everythingIsSharedContent(tc.getAllGridFileInfos()));
+          if (fileInfos && fileInfos.length === 1 && fileInfos[0]) {
+            var item = fileInfos[0];
+            var isPastable = ( (item.isDirectory && item.filePermissions && item.filePermissions.canWrite) ||
+              (!item.isDirectory && item.filePermissions && item.filePermissions.parentCanWrite) );
+            if (tc.id.toLowerCase() === "sharing") {
+              referencedItemInTrash = !(!("linkPath" in item) || item.linkPath);
+            }
+            type = 'TYPE_FILE';
+            if (item.isDirectory) {
+              accessType = item.accessType;
+              if (item.isSharedFolder) {
+                type = 'TYPE_SHAREDFOLDER';
+                if (item.shareAttributes.invitationType === 'CREATED_FROM_OPEN' && item.accessType === 'READ_ONLY') {
+                  accessType = 'READ_ONLY_FROM_OPEN';
+                }
+              } else {
+                type = 'TYPE_FOLDER';
+              }
+            }
+            if (!item.filePermissions.canWrite) {
+              enabled = false;
+            }
+            tc.getActionHandler().getActionButtonManager().updateActionsForSelection({
+              selectedCount: fileInfos.length,
+              type: type,
+              canEdit: enabled,
+              canPaste: tc.getActionHandler().clipboardContainsData(),
+              parentWritable: item.filePermissions.parentCanWrite,
+              accessType: accessType,
+              hasActiveLink: item.hasActiveLink,
+              selectedContentIsShared: item.isSharedContent || false,
+              allContentIsShared: entireListContentIsShared,
+              inTrash: referencedItemInTrash,
+              path: item.path,
+              sharedParentPath: item.sharedParentPath,
+              initiator: item.initiator,
+              canOpenInMATLABOnline: fileInfos.length === 1 && (item.isDirectory || tc.getActionHandler().canOpenInMatlabOnline(FileNameUtil.getFileNameExtension(fileInfos[0].name)))
+            });
+            tc.getActionHandler().getActionButtonManager().updatePaste(enabled && tc.getActionHandler().clipboardContainsData() && (fileInfos.length === 1 && isPastable));
+          } else if (!fileInfos || fileInfos.length === 0 || (fileInfos.length === 1 && !fileInfos[0])) {
+            tc.getActionHandler().getActionButtonManager().disableAllActions({
+              pageName: tc.getPageName(),
+              gridRowCount: contentCount,
+              disableFolderActions: !enabled,
+              isShareable: isCurrentDirectoryNotRoot,
+              isSharedFolder: currentDirectoryIsShared,
+              hasActiveLink: currentDirectoryHasActiveLink,
+              canEdit: enabled,
+              accessType: currentDirectoryAccessType,
+              allContentIsShared: entireListContentIsShared
+            });
+            tc.getActionHandler().getActionButtonManager().updatePaste(enabled && tc.getActionHandler().clipboardContainsData() && (fileInfos.length === 1));
+          } else { // fileInfos.length > 1
+            var isSelectedContentIsShared = false;
+            var sharedContentCount = 0;
+            if (fileInfos && fileInfos.length > 1 && fileInfos[0]) {
+              type = fileInfos[0].isDirectory ? 'TYPE_FOLDER' : 'TYPE_FILE';
+              var tmpType;
+              for (var i = 0; i < fileInfos.length; i++) {
+                fileInfo = fileInfos[i];
+                if (fileInfo.isSharedContent) {
+                  sharedContentCount++;
+                }
+                if (type !== 'TYPE_MIXED') {
+                  if (fileInfo.isDirectory) {
+                    tmpType = 'TYPE_FOLDER';
+                  } else {
+                    tmpType = 'TYPE_FILE';
+                  }
+                  if (tmpType !== type) {
+                    type = 'TYPE_MIXED';
+                  }
+                }
+                if (!fileInfo.filePermissions.canWrite) {
+                  enabled = false;
+                }
+                if (!fileInfo.filePermissions.parentCanWrite) {
+                  parentWritable = false;
+                }
+              }
+            }
+            if (sharedContentCount === fileInfos.length) {
+              isSelectedContentIsShared = true;
+            }
+            tc.getActionHandler().getActionButtonManager().updateActionsForSelection({
+              selectedCount: fileInfos.length,
+              type: type,
+              canEdit: enabled,
+              canPaste: tc.getActionHandler().clipboardContainsData(),
+              parentWritable: parentWritable,
+              accessType: "",
+              selectedContentIsShared: isSelectedContentIsShared,
+              allContentIsShared: entireListContentIsShared,
+              inTrash: referencedItemInTrash
+            });
+            tc.getActionHandler().getActionButtonManager().updatePaste(false);
+          }
+          if (tc.id === "Preview") {
+            this.makeDownloadActionSpecificToSelection(fileInfos);
+          }
+        },
+
+        makeDownloadActionSpecificToSelection: function(fileInfos) {
+          let downloadSharedFolder = document.getElementsByClassName("downloadSharedFolder")[0];
+          let downloadSelection = document.getElementsByClassName("downloadSelection")[0];
+          if (!fileInfos || fileInfos.length === 0 || (fileInfos.length === 1 && !fileInfos[0])) {
+            downloadSelection.style.display = "none";
+            downloadSharedFolder.style.display = "table-cell";
+          } else {
+            downloadSelection.style.display = "table-cell";
+            downloadSharedFolder.style.display = "none";
+          }
+        },
+        onFilesDrop: function (sourceFileInfos, targetFileInfo, copy) {
+          if (sourceFileInfos && sourceFileInfos.length >= 1) {
+            if (copy && tc.copyEnabled) {
+              this.fileService.copyFile(sourceFileInfos, targetFileInfo);
+            } else {
+              this.fileService.moveFile(sourceFileInfos, targetFileInfo);
+            }
+          }
+        },
+        _updateContextMenu: function (event) {
+            if (this.contextMenuEnabled) {
+                MldoActionsContextMenuBuilder.buildContextMenu(this.grid.contextMenu, this.actionServices, this.grid.getSelectedFilePaths(), this.keybindings);
+            }
+        },
+        onFileNameChanged: function (originalFileInfo, newName) {
+          newName = _.escape(newName);
+          if (!originalFileInfo || typeof originalFileInfo !== "object" || !newName || !newName.length || typeof newName !== "string") {
+            return;
+          }
+          var currentFolder = tc.getCurrentFolder();
+          var oldName = originalFileInfo.name;
+          var oldPath = FileNameUtil.pathFromFileInfo(originalFileInfo);
+          var parent = FileNameUtil.getParentPath(oldPath);
+          var newPath = (parent === '/' ? '' : parent) + "/" + newName;
+          var nameToSelect = newPath;
+          var isFolder = originalFileInfo.isDirectory;
+          if (currentFolder !== "/") {
+            oldPath = currentFolder + oldPath;
+            newPath = currentFolder + newPath;
+          }
+          if (!oldPath || !newPath) {
+            return;
+          }
+          promise = tc.fileServiceController.rename(oldPath, newPath);
+          promise.done(function(data) {
+            /*
+             * dgrid issues a 'dgrid-refresh-complete' event when the refresh
+             * is complete -- however, it's not really complete. Refresh calls
+             * the initial renderQuery and thinks it's done (the root folder) but
+             * it does not wait for expanded folder queeries to complete.
+             * Therefore, 'dgrid-refresh-complete' is called before expanded folders
+             * are redrawn.  This is a workaround for that..
+             */
+            tc.focusRowAfterGridRefresh({path: nameToSelect});
+            tc.refresh();
+          })
+          .fail(function(err) {
+            var msg = Util.getErrorMessageTranslator().getTranslatedMessage(err,
+                                                                            "fbTreeController.rename",
+                                                                            [(isFolder? MLDOStrings.fbTreeFolder : MLDOStrings.fbTreeFile)],
+                                                                            tc.getFileService().isThrowErrorOnMessageTranslationEnabled());
+            tc.notify(msg, "ERROR");
+          });
+        },
+        /*
+         * onPreDndStart is called before onDndStart to allow us
+         * to determine if we should proceed.  Returning either
+         * undefined or [source, args] (the same original values) will
+         * cause onDndStart to proceed as normal. Passing soething else (args)
+         * causes it to not proceed.
+         * This handles the case of having items selected elsewhere in the grid
+         * but, starting a drag when trying to click on a folder expando and you moved
+         * just a little.
+         * The sourceInfo is the row you started the drag on (i.e. clicked the expando on).
+         * We compare its path with the paths of the actual selected nodes.  The it is one
+         * of the selected nodes, or if there are no selected nodes, we tell onDndStart to
+         * continue; othereise, we stop it.
+         */
+        onPreDndStart: function(source, args) {
+          var retVal = args;
+          var sourceContainedInSelection = false;
+          var selectionNodeList = tc.fb.grid.dndSource.getSelectedNodes();
+          var sourceInfo;
+          var selectionInfo;
+          if (!source || !source.current || !selectionNodeList || !selectionNodeList.length) {
+            sourceContainedInSelection = true;
+          }
+          if (!sourceContainedInSelection) {
+            sourceInfo = source.getObject(source.current);
+            if (sourceInfo && selectionNodeList && selectionNodeList.length) {
+              for (var i = 0; i < selectionNodeList.length && !sourceContainedInSelection; i++) {
+                selectionInfo = source.getObject(selectionNodeList[i]);
+                if (selectionInfo && selectionInfo.path == sourceInfo.path) {
+                  sourceContainedInSelection = true;
+                }
+              }
+            } else {
+                sourceContainedInSelection = true;
+            }
+          }
+          if (sourceContainedInSelection) {
+            retVal = [source, args];
+          }
+          return retVal;
+        }
+    });
+    // intercept calls to onDndStart
+    aspect.before(this.fb.grid.dndSource, "onDndStart", this.fb.onPreDndStart, true);
+
+    // allow grid selection mode to be set
+    if (this.selectionMode.length) {
+      this.fb.grid.set('selectionMode',this.selectionMode);
+    }
+
+    /*
+     * Override FileBrowserGridDnDSource.js line 79 canTargetAcceptSource method.
+     * They did not allow moving a read-only source but we want to allow it if the source is a shared folder.
+     * We can already cut/paste a shared folder readly only source.
+     * The new code is almost identical but I added a check for isSharedFolder.
+     * Also added check for is parentCanWrite so we prevent moving contents out of read-only folder (isSourceParentNonWritable).
+     */
+    if (this.fb.grid.dndConstructor) {
+      this.fb.grid.dndConstructor.prototype.canTargetAcceptSource = function (targetFolderInfo, sourceNodes) {
+                  var canTargetAcceptSource = true;
+                  var isTargetNotWritable = !FileNameUtil.isWritable(targetFolderInfo);
+                  if (isTargetNotWritable) {
+                      canTargetAcceptSource = false;
+                  }
+                  var targetSource = this;
+                  var targetPath = FileNameUtil.normalizePath(FileNameUtil.pathFromFileInfo(targetFolderInfo));
+                  sourceNodes.some(function (node) {
+                      var sourceFileInfo = targetSource.getObject(node);
+                      var sourcePath = FileNameUtil.normalizePath(FileNameUtil.pathFromFileInfo(sourceFileInfo));
+                      var sourceParentPath = FileNameUtil.normalizePath(sourceFileInfo.location);
+                      var isSourceANonWritableDirectory = (sourceFileInfo.isDirectory && !sourceFileInfo.isSharedFolder && !FileNameUtil.isWritable(sourceFileInfo));
+                      var isSourceAlreadyInTargetDirectory = (targetPath === sourceParentPath);
+                      var isSourceTheParentOfTargetDirectory = (sourceFileInfo.isDirectory && (targetPath.indexOf(sourcePath) === 0));
+                      var isSourceParentNonWritable = !sourceFileInfo.filePermissions.parentCanWrite;
+
+                      if (isSourceParentNonWritable || isSourceANonWritableDirectory || isSourceAlreadyInTargetDirectory || isSourceTheParentOfTargetDirectory) {
+                          canTargetAcceptSource = false;
+                          return;
+                      }
+                  });
+
+                  return canTargetAcceptSource;
+              };
+    }
+      this.openFileView = function (e, filePath) {
+          this.fb.openFileView(filePath);
+      };
+      $(document).on('tryOpenFile', this.openFileView.bind(this));
+    this.getCurrentFolder = function() {
+      return this.fileServiceController.getStoredCurrentFolder();
+    };
+    this.setCurrentFolder = function(path, onlyStore) {
+      if (!path || typeof path !== "string") {
+        throw new TypeError("Invalid path argument");
+      }
+      this.fileServiceController.setStoredCurrentFolder(path, onlyStore);
+      if (!onlyStore) {
+        $(document).on("query-complete:mldo", tc.disableAllActionsAfterQueryComplete);
+        $(document).on("query-complete:mldo", tc.updateSharedFolderIconBreadcrumb);
+        this.getActionHandler().closeFileViewerAndShowTree();
+        this.fb.changeCurrentFolder(this.fileServiceController.getCurrentFolderInfo());
+      }
+    };
+    this.actionHandler.setGrid(this.fb.grid);
+    /*
+     * FileBrowserGridDnDSource overrides
+     */
+     // Start of overrides
+   // support white space menu on grid wrapper div.
+   if (this.fb.contextMenuEnabled) {
+     this.fb.grid.contextMenu.targetNodes.push(".wrapper");
+   }
+
+   this.contextMenuOpenMethod = function(event) {
+     var pageName = tc.getPageName();
+     var isEmbeddedWidget = tc.isEmbeddedWidget();
+     if (pageName === tc.id.toLowerCase()) {
+       var rowCount = tc.getGridRowCount();
+       var selectedIndices = Object.keys(tc.fb.grid.selection);
+       if (pageName === "files" || pageName === "sharing" || pageName === "preview" || (pageName === "trash" && rowCount > 0 && selectedIndices.length > 0) || (isEmbeddedWidget && rowCount > 0 && selectedIndices.length > 0)) {
+         if (event.target.className !== "columnHeaderLabel") {
+           tc.originalOpen.call(tc.fb.grid.contextMenu, event);
+         }
+       }
+     } else {
+       // No contextMenu popup
+     }
+   };
+
+   this.getPageName = function() {
+     var treeViewList = $('.treeView');
+     var pageUri = '';
+     var pageName = '';
+     if (treeViewList && treeViewList.length) {
+       pageUri = $('.treeView')[0].id;
+       pageName = pageUri.substring(0, pageUri.length - 4).toLowerCase();
+     }
+     return pageName;
+   };
+
+   this.isEmbeddedWidget = function() {
+     var pageName = this.getPageName();
+     var isEmbeddedWidget = pageName.toLowerCase().indexOf("embedded") === 0;
+     return isEmbeddedWidget;
+   };
+
+   this.headerContextMenuOpenMethod = function(event) {
+     var treeViewList = $('.treeView');
+     var pageUri = '';
+     var pageName = '';
+     if (treeViewList && treeViewList.length) {
+       pageUri = $('.treeView')[0].id;
+       pageName = pageUri.substring(0, pageUri.length - 4).toLowerCase();
+     }
+     if (pageName === tc.id.toLowerCase()) {
+       if (pageName === "files" || (pageName === "trash") || (pageName === "preview")) {
+         if (event.target.className === "columnHeaderLabel") {
+           tc.originalHeaderOpen.call(tc.fb.grid.headerContextMenu, event);
+         }
+       }
+     } else {
+       // No headerContextMenu popup
+     }
+   };
+
+   this.applyContextMenuWorkAround = function() {
+     // regular context menus
+     if (tc.fb.grid.contextMenu) {
+       tc.originalOpen = tc.fb.grid.contextMenu.openMenu;
+       tc.fb.grid.contextMenu.openMenu = tc.contextMenuOpenMethod;
+     }
+     // column header context menus
+     if (tc.fb.grid.headerContextMenu) {
+       tc.originalHeaderOpen = tc.fb.grid.headerContextMenu.openMenu;
+       tc.fb.grid.headerContextMenu.openMenu = tc.headerContextMenuOpenMethod;
+     }
+   };
+
+   // Temporary workaround for ContextMenu issue
+   // to prevent show the wrong contextMenus on the current page
+   ready(tc.applyContextMenuWorkAround);
+   this.fb.grid.keepScrollPosition = true;
+   this.fb.grid.getCurrentFolderInfo = function() {
+    return  tc.fb.fileService.getCurrentFolderInfo();
+   };
+   this.getTargetFolderInfoPostProcess = function () {
+      var grid = this.grid;
+
+      var targetRow = this.getTargetRow();
+      var targetFolderInfo;
+      if (targetRow && targetRow.data && typeof targetRow.data === "object") {
+          targetFolderInfo = targetRow.data;
+      }
+      if (!targetFolderInfo || (targetFolderInfo && !targetFolderInfo.isDirectory && (targetFolderInfo.parent === grid.getCurrentFolderPath()))) {
+          targetFolderInfo = grid.getCurrentFolderInfo();
+      } else if (targetFolderInfo && !targetFolderInfo.isDirectory) {
+        var path = targetFolderInfo.parent;
+        targetFolderInfo = FileNameUtil.folderInfoFromPath(path);
+      }
+      return targetFolderInfo;
+    };
+   aspect.after( this.fb.grid.dndSource, 'getTargetFolderInfo', this.getTargetFolderInfoPostProcess);
+   this.getObjectPostProcess = function( ignore, args ) {
+     var targetSource = this;
+     var node = args[0];
+     return targetSource.getItem(node.id).data;
+   };
+   aspect.after( this.fb.grid.dndSource, 'getObject', this.getObjectPostProcess);
+
+    /*
+     * tree.js sets a TouchUtil.dbltap listener which does an expand.  This makes our data get lost
+     * on iphone.  So, we override expand on trash view, since we don't allow expands. We also don't allow on touch enabled devices
+     */
+    if (!this.fb.allowDnD && !this.enableNavigation) { // trash view
+      this.fb.grid.expand = function() {};
+    }  else {
+      /*
+       * Don't expand if the folder is empty
+       */
+      var self = this;
+      // closure to make vars private
+      (function() {
+        var originalExpandMethod = self.fb.grid.expand;
+        self.fb.grid.expand = function(target, shouldExpand, flag, attempt) {
+          var row;
+          var element;
+          var fileInfo;
+          var tryCount = (attempt && typeof attempt === "number" && attempt > 0) ? attempt : 1;
+          var limit = 6;
+          var count = ++tryCount;
+          var transition = false;
+          if (target) {
+            row = self.fb.grid.row(target);
+            element = row.element;
+            fileInfo = row.data;
+          }
+          if (!target.data && !target.element) {
+            transition = true;
+          }
+          if (row && fileInfo) {
+            // Only expand if there are children or in case of a move/paste or in case of Preview (which does not have child count for child folders currently)
+            if (fileInfo.childCount || shouldExpand === true || self.id === "Preview") {
+              // select the row being expanded (to be consistent with MO)
+              if (element) {
+                self.fb.grid.focus(element);
+                originalExpandMethod.call(self.fb.grid, row, flag, transition);
+              } else {
+                if (count < limit) {
+                  setTimeout(function() {
+                    self.fb.grid.expand.call(self.fb.grid, target, shouldExpand, flag, count);
+                  }, 100);
+                }
+              }
+            }
+          }
+        };
+      })();
+    }
+    if (!this.fb.allowDnD) {
+      /*
+       * If allowDnD is true, the event handlers are already set in FileBrowser.js
+       * We just need to override anything we don't want.
+       */
+      this.fb.fileBrowserContainer.ondragstart = null;
+      this.fb.fileBrowserContainer.ondragenter = null;
+      this.fb.fileBrowserContainer.ondragleave = null;
+      this.fb.fileBrowserContainer.ondragover = function (event) {
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "none";
+      };
+      this.fb.fileBrowserContainer.ondragend = null;
+      this.fb.fileBrowserContainer.ondrop = null;
+
+      this.touchDoubleTapHandler = function (event) {
+        var row = tc.fb.grid.row(event);
+        var rowData;
+        if (row && typeof row === "object" && row.data && typeof row.data === "object") {
+          rowData = row.data;
+          if (rowData) {
+            tc.fb.onDoubleClick(rowData);
+            delete tc.fb.grid._expanded[row.id];
+          }
+        }
+      };
+      // We turn off DnD for touch enabled devices
+      this.fb.grid.on(TouchUtil.selector('.dgrid-content .dgrid-row', TouchUtil.dbltap), this.touchDoubleTapHandler);
+    }
+
+    /*
+     * Show new or updated items with a special CSS class.
+     *
+     */
+    this.renderRowPostProcess = function( row, args ) {
+      var NEWNESS_LIMIT = 5;
+      var fileInfo = args && args.length ? args[0] : null;
+      var now = Date.now();
+      var secondsNew = (fileInfo && fileInfo.modifiedUtc) ? (now - fileInfo.modifiedUtc) / 1000  : null;
+      var duration = 1;
+      if (secondsNew && secondsNew.toFixed() <  NEWNESS_LIMIT) {
+        duration = NEWNESS_LIMIT - secondsNew.toFixed();
+        domClass.add( row, 'recentItem' );
+        setTimeout(function() {
+          domClass.remove(row, 'recentItem');
+        }, duration > 0 ? duration * 1000 : 1);
+      }
+      if (args[0].childCount === 0) {
+        this.hideExpandoOnRowElement(row);
+      }
+      return row;
+    };
+    aspect.after( this.fb.grid, 'renderRow', this.renderRowPostProcess.bind(this) );
+
+    //event listener that listens to fb2 file drop events, the callback then triggers another event to matlabdriveapp
+
+    this.setDnDBehavior = function() {
+      var useFolderUploadBehavior = (  this.directoryUploadEnabled &&
+                                        (DragAndDropBehavior &&
+                                        typeof DragAndDropBehavior === "object" &&
+                                        typeof DragAndDropBehavior.setFileBrowserDropEventHandler === "function") );
+
+      if (this.fb.allowDnD) {
+        if (!useFolderUploadBehavior) {
+          this.fileBrowserDropEventHandler = function(event) {
+              if(event && event.dataTransfer && event.dataTransfer.files) {
+                  if (event.dataTransfer.files.length === 0) {
+                      tc.notify(MLDOStrings.fbTreeShouldNotContainFolders, "ERROR");
+                  } else {
+                    var fileData = event.dataTransfer.files;
+                    var itemData = event.dataTransfer.items;
+                    $.event.trigger("draganddropuploadfile:mldo", {files: fileData, items: itemData});
+                  }
+              }
+          };
+        } else {
+          DragAndDropBehavior.setFileBrowserDropEventHandler(this);
+        }
+
+        on(this.fb, "fileBrowserDropEvent", this.fileBrowserDropEventHandler.bind(this));
+      }
+    };
+    ready(tc.setDnDBehavior.bind(tc));
+    // endif of overrides
+
+  };
+
+  FbTreeController.prototype = {
+
+    getFileService: function() {
+      return this.fileServiceController;
+    },
+
+    getActionHandler: function() {
+      return this.actionHandler;
+    },
+
+    getSelectedFolderFullPaths: function() {
+      return this.getActionHandler().getSelectedFolderFullPaths();
+    },
+
+    getSelectedItemFullPath: function() {
+      return this.getActionHandler().getSelectedItemFullPath();
+    },
+
+    getGridRowCount: function() {
+      var contentCount = document.getElementsByClassName("dgrid-row").length;
+      return contentCount;
+    },
+
+    getAllGridFileInfos: function() {
+      var gridContent = document.getElementsByClassName("dgrid-row");
+      var contentCount = gridContent.length;
+      var fileInfos = [];
+      var row;
+      for (var i = 0; i < contentCount; i++) {
+        row = this.fb.grid.row(gridContent[i]);
+        if (row && row.data) {
+          fileInfos.push(row.data);
+        }
+      }
+      return fileInfos;
+    },
+
+    onDgridEditorHide: function(e) {
+      var context = this;
+      var selections;
+      var selection;
+      var row;
+      var fileInfo;
+      selections = Object.keys(this.fb.grid.selection);
+      if (selections && selections.length === 1) {
+        selection = selections[0];
+      }
+      if (selection) {
+        row = this.fb.grid.row(selection);
+      }
+      if (row) {
+        fileInfo = row.data;
+      }
+      if (row && fileInfo) {
+        if (fileInfo.childCount === 0) {
+          setTimeout(function() {
+            context.hideExpandoOnRow(row);
+          }, 0);
+        }
+      }
+    },
+
+    hideExpandoOnRowElement: function(rowElement) {
+      if (rowElement) {
+        var expando = rowElement.querySelector('.dgrid-expando-icon.ui-icon');
+        if (expando) {
+          expando.classList.add('dgrid-align-folders');
+          expando.classList.remove('ui-icon');
+        }
+      }
+    },
+
+    hideExpandoOnRow: function(row) {
+      if (row && typeof row === 'object' && row.hasOwnProperty('element')) {
+        this.hideExpandoOnRowElement(row.element);
+      }
+    },
+
+    everythingIsSharedContent: function(fileInfos) {
+      var allIsShared = false;
+      var contentCount = fileInfos.length;
+      var sharedContentCount = 0;
+      if (this.id.toLowerCase() === "sharing") {
+        allIsShared = true;
+      } else {
+        if (fileInfos && fileInfos.length) {
+          for (var i = 0; i < contentCount; i++) {
+            if (fileInfos[i].isSharedContent) {
+              sharedContentCount++;
+            }
+          }
+          if (sharedContentCount === contentCount) {
+            allIsShared = true;
+          }
+        }
+      }
+      return allIsShared;
+    },
+
+    resetActionButtons: function() {
+      var contentCount = this.getGridRowCount();
+      var fileInfos;
+      var allContentIsShared = false;
+      if (contentCount) {
+        allContentIsShared = (this.id.toLowerCase() === "sharing" ? true : this.everythingIsSharedContent(this.getAllGridFileInfos()));
+      }
+      var selectedFileCount = this.getActionHandler().getSelectedRowCount();
+      var enabled = this.fileServiceController.getCurrentFolderInfo().filePermissions.canWrite;
+      var disableFolderActions = !enabled;
+      var isCurrentDirectoryNotRoot = (this.getCurrentFolder() !== "/");
+      var currentDirectoryIsShared = this.fileServiceController.getCurrentFolderInfo().isSharedFolder;
+      if (!selectedFileCount) {
+        this.getActionHandler().getActionButtonManager().disableAllActions({
+          gridRowCount: contentCount,
+          disableFolderActions: disableFolderActions,
+          isShareable: isCurrentDirectoryNotRoot,
+          isSharedFolder: currentDirectoryIsShared,
+          canEdit: enabled,
+          accessType: this.fileServiceController.getCurrentFolderInfo().accessType,
+          allContentIsShared: allContentIsShared
+        });
+      }
+      this.getActionHandler().getActionButtonManager().updatePaste(enabled && this.getActionHandler().clipboardContainsData() && selectedFileCount < 2);
+    },
+
+    /**
+     * trigger event to pass message text and severity indication
+     * @param message: text
+     * @param severity: one of: ERROR, NORMAL, SEVERE
+     * @param linkData: object with text
+     */
+    notify: function(message, severity, linkData) {
+      this.fileServiceController.dispatchCanonicalizedTreeEvent("message:treecontroller", {message: message, severity: severity, linkData: linkData});
+    },
+
+
+    setRowFocus: function(path, tombstoneId, attempt) {
+      if (!path || typeof path !== "string" || !path.length) {
+        throw new TypeError("Invalid path argument");
+      }
+      var context = this;
+      var tryCount = (attempt && typeof attempt === "number" && attempt > 0) ? attempt : 1;
+      var row;
+      if (tombstoneId == null) {
+        row = context.fb.grid.row(path);
+      } else {
+        row = context.fb.grid.row(tombstoneId);
+      }
+      var limit = 3;
+      var element = row.element;
+      var count = ++tryCount;
+      if (element) {
+        context.fb.grid.focus(element);
+      } else {
+        if (count < limit) {
+          setTimeout(function() {
+            context.setRowFocus(path, tombstoneId, count);
+          }, 700);
+        }
+      }
+    },
+
+    start: function(fnMsgHandler) {
+      var context = this;
+      this.fb.contextMenuEnabled = true;
+      if (!fnMsgHandler || typeof fnMsgHandler !== "function") {
+        throw new TypeError("fnMsgHandler unexpected type.");
+      }
+      $(document).on("message:treecontroller" + this.id, function(e, msgData) {
+        e.preventDefault();
+        fnMsgHandler(msgData);
+      });
+      $(document).on("refreshgrid:treecontroller" + this.id, function(e) {
+        e.preventDefault();
+        context.refresh();
+      });
+      $(document).on("clearrefreshgrid:treecontroller" + this.id, function(e) {
+        e.preventDefault();
+        context.clearSelectionRefreshGrid();
+      });
+      $(document).on("renamefile:treecontroller" + this.id, function(e, data) {
+        e.preventDefault();
+        context.renameFile(data.fileInfos);
+      });
+      $(document).on("dgrid-editor-hide", this.onDgridEditorHide.bind(this));
+      $(document).on("focusrow:treecontroller" + this.id, function(e, msgData) {
+        e.preventDefault();
+        if (msgData && msgData.path) {
+          if (context.fb.allowDnD || context.prohibitChangeTreeRoot || context.enableNavigation) {
+            if (msgData.parentFolder) {
+              try {
+                context.fb.grid.expand(msgData.parentFolder, msgData.shouldExpand, true);
+              } catch(ignoreEvent) {
+                // do nothing
+                // folder may not be in tree yet, for example.
+                // Don't stop javascript processing just because of this.
+              }
+            }
+          }
+          context.setRowFocus(msgData.path, msgData.tombstoneId);
+        }
+      });
+      if (this.gdsDAO.config.isInfoPanelEnabled && this.gdsDAO.config.isInfoPanelEnabled()) {
+        if (this.isInfoPanelEnabled) {
+          $(document).on("query-complete:mldo", this.updateInfoPanel.bind(this));
+        }
+      }
+      $(document).on("query-complete:mldo", this.updateSharedFolderIconBreadcrumb.bind(this));
+      _.bindAll(this, "focusRowAfterGridRefresh", "resetActionButtons", "renameFile", "folderIsVisibleAndOpened", "notify",
+                      "setRowFocus", "stop", "getSelectedFolderFullPaths", "disableAllActionsAfterQueryComplete", "updateSharedFolderIconBreadcrumb",
+                      "updateInfoPanel");
+      document.addEventListener('mldo.treeAction', this.getActionHandler().handleAction, false);
+      if (context.enableNavigation || context.id.toLowerCase().indexOf("embedded") === 0) {
+        $(document).on("filedblclick:treecontroller" + this.id, this.getActionHandler().handleFileDoubleClick);
+      }
+    },
+
+    stop: function() {
+      this.fb.contextMenuEnabled = false;
+      this.clearSelection();
+      $(document).off("message:treecontroller" + this.id);
+      $(document).off("refreshgrid:treecontroller" + this.id);
+      $(document).off("clearrefreshgrid:treecontroller" + this.id);
+      $(document).off("focusrow:treecontroller" + this.id);
+      $(document).off("query-complete:mldo", this.disableAllActionsAfterQueryComplete );
+      $(document).off("query-complete:mldo", this.updateSharedFolderIconBreadcrumb );
+      $(document).off('tryOpenFile', this.openFileView );
+      if (this.gdsDAO.config.isInfoPanelEnabled && this.gdsDAO.config.isInfoPanelEnabled()) {
+        if (this.isInfoPanelEnabled) {
+          $(document).off("query-complete:mldo", this.updateInfoPanel.bind(this));
+        }
+      }
+      $(document).off("renamefile:treecontroller" + this.id);
+      document.removeEventListener('mldo.treeAction', this.getActionHandler().handleAction, false);
+      $(document).off("filedblclick:treecontroller" + this.id);
+      $(document).off("dgrid-editor-hide", this.onDgridEditorHide.bind(this));
+    },
+
+    focusRowAfterGridRefresh: function(args) {
+      this.fileServiceController.focusRowAfterGridRefresh(args);
+    },
+
+    // Unfortunately, the promise is called when the root folder is rendered, not any subfolders.
+    // We use OnDemandGrid and it lazy loads so, if you want to refresh an expanded subfolder, the
+    // promise is resolved before the subfolder is queried.  Still, this is useful for root folder.
+    refresh: function() {
+      var promise = this.fb.grid.refresh({ keepScrollPosition: true });
+      return promise;
+    },
+
+    renameFile: function(fileInfos) {
+      if (fileInfos && fileInfos.length === 1) {
+        this.fb.renameFile(fileInfos);
+      }
+    },
+
+    invalidate: function() {
+      var gg = this.fb.grid;
+      gg._started = false;
+    },
+
+    clearSelection: function() {
+      this.fb.grid.clearSelection();
+      this.fb.grid.clearRemovedFocus();
+    },
+
+    clearSelectionRefreshGrid: function() {
+      this.clearSelection();
+      this.refresh();
+    },
+
+    setRoot: function(path, onlyStore) {
+      if (!path || typeof path !== "string") {
+        throw new TypeError("Invalid path argument");
+      }
+      this.setCurrentFolder(path, onlyStore);
+    },
+
+    getRoot: function() {
+      return this.getCurrentFolder();
+    },
+
+    deSelectAll: function() {
+      var actionHandler = (this.getActionHandler &&  typeof this.getActionHandler === "function") ? this.getActionHandler() : null;
+      if (actionHandler && actionHandler.isInlineFileViewOpen) {
+          return;
+      }
+      this.fb.grid.clearSelection();
+      this.fb.grid.clearRemovedFocus();
+    },
+
+    disableAllActionsAfterQueryComplete: function() {
+      var actionHandler = (this.getActionHandler &&  typeof this.getActionHandler === "function") ? this.getActionHandler() : null;
+      if (actionHandler) {
+        var selectedFileCount = actionHandler.getSelectedRowCount();
+        var enabled = this.fileServiceController.getCurrentFolderInfo().filePermissions.canWrite;
+        var disableFolderActions = !enabled;
+        var isCurrentDirectoryNotRoot = (this.getCurrentFolder() !== "/");
+        var currentDirectoryIsShared = this.fileServiceController.getCurrentFolderInfo().isSharedFolder;
+        var accessType = "";
+        var allContentIsShared = (this.id.toLowerCase() === "sharing" ? true : this.everythingIsSharedContent(this.getAllGridFileInfos()));
+        if (currentDirectoryIsShared) {
+          if (this.fileServiceController.getCurrentFolderInfo().shareAttributes.invitationType === 'CREATED_FROM_OPEN' && this.fileServiceController.getCurrentFolderInfo().accessType === 'READ_ONLY') {
+            accessType = 'READ_ONLY_FROM_OPEN';
+          } else {
+            accessType = this.fileServiceController.getCurrentFolderInfo().accessType;
+          }
+        }
+        actionHandler.getActionButtonManager().disableAllActions({
+          pageName: this.getPageName(),
+          gridRowCount: 0,
+          disableFolderActions: disableFolderActions,
+          isShareable: isCurrentDirectoryNotRoot,
+          isSharedFolder: currentDirectoryIsShared,
+          canEdit: enabled,
+          accessType: accessType,
+          allContentIsShared: allContentIsShared,
+          sharedParentPath: this.fileServiceController.getCurrentFolderInfo().sharedParentPath
+        });
+        actionHandler.getActionButtonManager().updatePaste(enabled && actionHandler.clipboardContainsData() && selectedFileCount < 2 );
+      }
+      $(document).off("query-complete:mldo", this.disableAllActionsAfterQueryComplete);
+    },
+
+    updateInfoPanel: function() {
+      if (this.gdsDAO.config.isInfoPanelEnabled && this.gdsDAO.config.isInfoPanelEnabled()) {
+        if (this.isInfoPanelEnabled) {
+          var folderData = this.fileServiceController.getCurrentFolderInfo();
+          $.event.trigger('infopanelupdate' + this.id + ':mldo', {data: folderData});
+        }
+      }
+    },
+
+    updateSharedFolderIconBreadcrumb: function() {
+      var sharedParentRoot = this.fileServiceController.getCurrentFolderInfo().sharedParentPath;
+      if (sharedParentRoot) {
+        this.fileServiceController.updateSharedFolderIconBreadcrumb(this.getRoot());
+      }
+      $(document).off("query-complete:mldo", this.updateSharedFolderIconBreadcrumb);
+    },
+
+    render: function(options) {
+      var treeHolder = document.getElementById(options.id);
+      $(document).on("query-complete:mldo", this.disableAllActionsAfterQueryComplete );
+      $(document).on("query-complete:mldo", this.updateSharedFolderIconBreadcrumb );
+      if (this.getActionHandler() && this.getActionHandler().getActionButtonManager() && this.getActionHandler().getActionButtonManager().initializeActionCallbacks) {
+        this.getActionHandler().getActionButtonManager().initializeActionCallbacks(options);
+      }
+      $('.treeView').addClass('fb-impl');
+      var updateGrid = this.fb.grid._started;
+      this.fb.startupFB();
+      this.fb.placeAt(treeHolder);
+      if (updateGrid) {
+        this.refresh();
+      }
+      if (!options.ignoreBreadcrumbsUpdate) {
+        this.fileServiceController.updateBreadcrumbs(this.getRoot());
+      }
+    },
+
+    getVisibleFolderRowId: function(relativePath) {
+      var rowId = null;
+      if (relativePath && typeof relativePath === "string" && relativePath.length) {
+        var row = this.fb.grid.row(relativePath);
+        if (row && row.element && row.data) {
+          rowId = this.fb.grid.row(row).id;
+        }
+      }
+      return rowId;
+    },
+
+    folderIsVisibleAndOpened: function(relativePath) {
+      var isVisibleAndOpened = false;
+      if (relativePath && typeof relativePath === "string" && relativePath.length) {
+        var rowId = this.getVisibleFolderRowId(relativePath);
+        if (rowId) {
+          // is Visible
+          var isOpened = !!this.fb.grid._expanded[rowId];
+          if (isOpened) {
+            isVisibleAndOpened = true;
+          }
+        }
+      }
+      return isVisibleAndOpened;
+    },
+
+    getRootFolderName: function() {
+      return this.fileServiceController.getRootFolderName();
+    }
+
+  };
+
+  return FbTreeController;
+});

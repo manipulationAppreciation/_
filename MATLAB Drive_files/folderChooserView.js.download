@@ -1,0 +1,615 @@
+define([
+ "underscore",
+ "jquery",
+ "backbone",
+ "util",
+ "config",
+ "dao/gdsdao",
+ "filebrowser/FbTreeController",
+ "templates/folderChooserDialog",
+ "mldofileservice",
+ "CreateFolderView",
+ "filebrowser/BreadcrumbManager",
+ "dojo/i18n!nls/mldoStringResource",
+ "dojo/string"
+], function( _, $, Backbone, Util, GCONFIG, GDSDAO, FbTreeController, FolderChooserTemplate, FileService, CreateFolderView, BreadcrumbManager, MLDOStrings, DojoString ) {
+
+  var originalOnFileNameChangedMethod;
+
+  return Backbone.View.extend({
+
+    template: FolderChooserTemplate,
+
+    events: {
+      "keydown #folderChooserFileNameInput": "onKeydown",
+      "click button#chooseFolderButton": "onChooseClicked",
+      "click div#folderChooserDialog div#folderChooserView": "deSelectGrid",
+      "click div#folderChooserDialog div.newFolder": "showNewFolderContents",
+      "click button#closeFolderChooserButton": "showMainContents",
+      "click div#inlineNewFolderFooter button.cancelNewFolder": "onCancelNewFolder",
+      "click div#inlineNewFolderFooter button.createNewFolder": "onCancelNewFolder",
+      "click button.btn.msgClose": "clearError",
+      "click #folderChooserFolderTreeContainer > div.toolbar_container div.generalToolbar div.actionIconContainer": "deSelectGrid"
+    },
+
+    createGDSFileService: function(gdsDAO) {
+      var fs;
+      var dao = (gdsDAO) ? gdsDAO : new GDSDAO(GCONFIG);
+      var listContentMethod = "getFolderData" in dao ? dao.getFolderData : undefined;
+
+      fs = new FileService();
+      fs.initialize({
+        gdsDAO: dao,
+        enableNavigation: false,
+        listContentsMethod: listContentMethod,
+        treeEventId: "FolderChooser",
+        breadcrumbsBaseSelector: (this.getBreadcrumbManager() ? this.getBreadcrumbManager().getBreadcrumbsBaseSelector() : '')
+      });
+      return fs;
+    },
+
+    initialize: function(args) {
+      if (!args || typeof args !== "object" || Object.keys(args).length === 0) {
+        throw new TypeError("Invalid arguments");
+      }
+      this.promise = $.Deferred();
+      this.selection = { folderPath: "", fileName: "" };
+      this.folderBrowser = null;
+      this.isEmbedded = false;
+      this.embeddedContainerId = "";
+      this.embeddedClientHost = "*";
+      if (args.isEmbedded && args.isEmbedded === true) {
+        this.isEmbedded = true;
+      }
+      this.embeddedName = (this.isEmbedded && args.embeddedName) ? args.embeddedName : "folderchooser";
+      this.hostedWidgetName = "";
+      if ( !this.isEmbedded) {
+        if (! args.dao || typeof args.dao !== "object") {
+          throw new TypeError("Invalid dao argument");
+        }
+        this.fileService = this.createGDSFileService(args.dao);
+      } else {  // embedded widget uses its own fileService
+        this.fileService = this.createGDSFileService();
+      }
+      this.dialogTitle = MLDOStrings.folderChooserModalTitle;
+      if (args.fileOperation === "move") {
+        this.dialogTitle = DojoString.substitute(MLDOStrings.moveFolderChooserModalTitle, [args.name]);
+      } else if (args.fileOperation === "copy") {
+        this.dialogTitle = DojoString.substitute(MLDOStrings.copyToFolderChooserModalTitle, [args.name]);
+      } else {
+        this.dialogTitle = MLDOStrings.folderChooserModalTitle;
+      }
+      if (args.dialogTitle && typeof args.dialogTitle === "string") {
+        this.dialogTitle = args.dialogTitle;
+      }
+      this.showFileNameSelector = false;
+      if (args.showFileNameSelector) {
+        this.showFileNameSelector = true;
+      }
+      this.desiredHeight = 0;
+      if (args.desiredHeightPx && !isNaN(parseInt(args.desiredHeightPx))) {
+        this.desiredHeight = parseInt(args.desiredHeightPx);
+      }
+      this.desiredWidth = 0;
+      if (args.desiredWidthPx && !isNaN(parseInt(args.desiredWidthPx))) {
+        this.desiredWidth = parseInt(args.desiredWidthPx);
+      }
+      this.startingFullPath = "/";
+      if (args.startingFullPath && typeof args.startingFullPath === "string" && args.startingFullPath.indexOf("/") === 0) {
+        this.startingFullPath = args.startingFullPath;
+      }
+      this.suggestedFileName = "";
+      if (args.suggestedFileName) {
+        this.suggestedFileName = args.suggestedFileName;
+      }
+      if (args.fileOperation === "move") {
+        this.chooseButtonLabel = MLDOStrings.folderChooserChooseMoveButton;
+      } else if (args.fileOperation === "copy") {
+        this.chooseButtonLabel = MLDOStrings.folderChooserChooseCopyButton;
+      } else {
+        this.chooseButtonLabel = MLDOStrings.folderChooserChooseButton;
+      }
+      if (args.chooseButtonLabel && typeof args.chooseButtonLabel === "string") {
+        this.chooseButtonLabel = args.chooseButtonLabel;
+      }
+      this.moveCopyFolderChooser = (args.fileOperation && typeof args.fileOperation === "string");
+      this.closeButtonLabel = MLDOStrings.folderChooserCloseButton;
+      if (args.closeButtonLabel && typeof args.closeButtonLabel === "string") {
+        this.closeButtonLabel = args.closeButtonLabel;
+      }
+      this.newFolderActionVisible = false;
+      this.newFolderMgr = null;
+      if (args.showNewFolderAction === true) {
+        this.newFolderActionVisible = true;
+      }
+      this.renameActionVisible = false;
+      if (args.showRenameAction === true) {
+        this.renameActionVisible = true;
+      }
+      this.fullSourcePaths = [];
+      if (args.originalSourcePaths && args.originalSourcePaths.length) {
+        this.fullSourcePaths = args.originalSourcePaths;
+      }
+      this.rootFolderName = (args.rootFolderName && typeof args.rootFolderName === 'string' && args.rootFolderName.length) ? args.rootFolderName : "/";
+      if (args.fileOperation === "move") {
+        this.noSelectionWarning = MLDOStrings.folderChooserNoSelectionMoveWarning;
+      } else if (args.fileOperation === "copy") {
+        this.noSelectionWarning = MLDOStrings.folderChooserNoSelectionCopyWarning;
+      } else {
+        this.noSelectionWarning = DojoString.substitute(MLDOStrings.folderChooserNoSelectionWarning, [this.chooseButtonLabel, MLDOStrings.folderChooserCurrentRootFolder]);
+      }
+      this.baseActionSelector = '#folderChooserDialog #folderChooserFolderTreeContainer > div.toolbar_container';
+      this.breadcrumbManager = new BreadcrumbManager({
+        baseSelector: '#folderChooserFolderTreeContainer > div.toolbar_container div.generalToolbar ',
+        parentDisplayCount: 1,
+        alwaysUseShortTruncation: false,
+        visibleLongLength: 8,
+        visibleShortLength: 4,
+        el: document,
+        goToMethod: this.goToBreadcrumb.bind(this),
+        deSelectMethod: this.deSelectGrid.bind(this),
+        getRootFolderNameMethod: this.fileService.getRootFolderName.bind(this.fileService),
+        updateSharedFolderBreadcrumb: true
+      });
+      this.needsRefresh = false;
+      _.bindAll(this, "createGDSFileService", "setSelection", "getSelection", "getBaseActionSelector",
+                "onDialogClose", "onChooseClicked", "showNewFolderContents", "getBreadcrumbManager",
+                "showMainContents", "onCancelNewFolder", "clearError",
+                "getSelectedFolderFullPath", "deSelectGrid");
+    },
+
+    getBreadcrumbManager: function() {
+      return this.breadcrumbManager;
+    },
+
+    getBaseActionSelector: function() {
+      return this.baseActionSelector;
+    },
+
+    getEmbeddedContainerId: function() {
+      return this.embeddedContainerId;
+    },
+
+    setEmbeddedContainerId: function(id) {
+      if (this.isEmbedded) {
+        this.embeddedContainerId = id;
+      }
+    },
+
+    getModalTitle: function() { return this.dialogTitle; },
+    setSessionId: function(sessionId) { this.getFileService().gdsDAO.setSessionId(sessionId); },
+    getSessionId: function() { return this.getFileService().gdsDAO.getSessionId(); },
+    getEmbeddedClientHost: function() { return this.embeddedClientHost; },
+    setEmbeddedClientHost: function(host) { if (host && typeof host === "string" && host.length) { this.embeddedClientHost = host; } },
+    getEmbeddedName: function() { return this.embeddedName; },
+    setEmbeddedName: function(name) { this.embeddedName = name; },
+    getFileService: function() { return this.fileService; },
+    getDesiredHeight: function() { return this.desiredHeight; },
+    setDesiredHeight: function(height) { this.desiredHeight = height; },
+    getDesiredWidth: function() { return this.desiredWidth; },
+    setDesiredWidth: function(width) { this.desiredWidth = width; },
+    setHostedWidgetName: function(name) {this.hostedWidgetName = name; },
+
+    getHostedWidgetName: function() {
+      var name = this.getEmbeddedName();
+      if (this.hostedWidgetName) {
+        name = this.hostedWidgetName;
+      }
+      return name;
+    },
+
+    getStartingFullPath: function() { return this.startingFullPath; },
+    getSuggestedFileName: function() { return this.suggestedFileName; },
+    getFolderBrowser: function() { return this.folderBrowser; },
+    setFolderBrowser: function(cfb) { this.folderBrowser = cfb; },
+    promptForFileName: function() { return this.showFileNameSelector; },
+    getFileNameInput: function() { return document.getElementById("folderChooserFileNameInput");},
+    getPromise: function() { return this.promise; },
+    start: function() { return this.getPromise(); },
+
+    setChooseButtonLabel: function(label) {
+      if (label && typeof label === "string") {
+        this.chooseButtonLabel = label;
+      }
+    },
+
+    getChooseButtonLabel: function() { return this.chooseButtonLabel; },
+
+    setCloseButtonLabel: function(label) {
+      if (label && typeof label === "string") {
+        this.closeButtonLabel = label;
+      }
+    },
+
+    getCloseButtonLabel: function() { return this.closeButtonLabel; },
+    showNewFolderAction: function() { return this.newFolderActionVisible; },
+    showRenameAction: function() { return this.renameActionVisible; },
+    getNewFolderManager: function() { return this.newFolderMgr; },
+    setNewFolderManager: function(mgr) { this.newFolderMgr = mgr; },
+    getNeedsRefresh: function() { return this.needsRefresh; },
+
+    goToBreadcrumb: function(folderPath) {
+      if (folderPath && typeof folderPath === 'string') {
+        this.getFolderBrowser().setRoot(folderPath);
+      }
+    },
+
+    refresh: function() {
+      if (this.getFolderBrowser()) {
+        this.getFolderBrowser().refresh();
+      }
+    },
+
+    notifyEmbeddedContainerOfResize: function() {
+      if (this.isEmbedded && this.getEmbeddedContainerId()) {
+        var height = this.getDesiredHeight() > 0 ? this.getDesiredHeight() : $('div#folderChooserDialog .modal-dialog').height();
+        var width = this.getDesiredWidth() > 0 ? this.getDesiredWidth() : $('div#folderChooserDialog .modal-dialog').width();
+        var msgName = "widgetresized:" + this.getHostedWidgetName() + ":" + this.getEmbeddedContainerId();
+        var msg = JSON.stringify({name: msgName, height: height, width: width});
+        window.parent.postMessage(msg, this.getEmbeddedClientHost());
+        if (this.getHostedWidgetName()) {
+          document.querySelector("div#folderChooserDialog").classList.add("hostedFolderChooser");
+        }
+      }
+    },
+
+    dragNotAllowed: function(e) {
+      if (e && e.preventDefault && e.originalEvent && e.originalEvent.dataTransfer) {
+        e.preventDefault();
+        e.originalEvent.dataTransfer.dropEffect = 'none';
+      }
+    },
+
+    getParents: function(node, cssClassName) {
+      var parents = $(node).parents('.modal');
+      return parents;
+    },
+
+    enableTabbingOnModal: function() {
+      var tabbableElements = document.querySelectorAll('div#folderChooserDialog, input#folderChooserFileNameInput, button#chooseFolderButton, button#closeFolderChooserButton, a[href], button.close');
+      var len = (tabbableElements && tabbableElements.length) ? tabbableElements.length : 0;
+      var element;
+      for (var i = 0; i < len; i++) {
+        element = tabbableElements.item(i);
+        if (this.getParents(element, ".modal").length) {
+          element.setAttribute("tabindex", "0");
+        }
+      }
+      const firstFocusableElement = document.querySelector('button.cancelSharing'); // get first element to be focused inside modal
+      const lastFocusableElement = document.querySelector('button#closeFolderChooserButton'); // get last element to be focused inside modal
+      document.addEventListener('keydown', Util.returnFocusToFirstElementInModal.bind(null, firstFocusableElement, lastFocusableElement), false);
+    },
+
+
+    notify: function(data) {
+      if (data.severity !== "NORMAL") {
+        var $errorContent = $('<span class="notificationImageError" aria-hidden="true"></span><span class="notificationContentTextError">' + data.message + '</span><button type="button" class="btn msgClose" aria-label="Close Message"><span aria-hidden="true">&times;</span></button>');
+        $('#folderChooserMainContents').addClass('withError');
+        $('#mldo-error-container').html($errorContent).show();
+        $('#mldo-error-container').delay(10000).fadeOut(5000, this.clearError.bind(this));
+      }
+    },
+
+    clearError: function() {
+      $('#mldo-error-container').html("");
+      $('#mldo-error-container').hide();
+      $('#folderChooserMainContents').removeClass('withError');
+    },
+
+    deSelectGrid: function(e) {
+      if (e && typeof e === "object" && e.target && e.preventDefault) {
+        var className = e.target.className;
+        if (className === "actionIconContainer" ||
+             className.indexOf("col-") >= 0 ||
+             className === "row" ||
+             className.indexOf("dgrid-scroller") >= 0 ||
+             className === "noContents" || className.indexOf("folderChooser") >= 0 ) {
+          e.preventDefault();
+          this.getFolderBrowser().deSelectAll();
+        }
+      }
+    },
+
+    createFolderBrowser: function() {
+      var tree;
+      try {
+        tree = new FbTreeController({
+          id: "FolderChooser",
+          gdsDAO: this.getFileService().gdsDAO,
+          indentWidth: 25,
+          enableNavigation: true,
+          showUploadDetails: false,
+          viewFileEnabled: false,
+          prohibitChangeTreeRoot: false,
+          noHtmlStorage: true,
+          viewInNewTabEnabled: false,
+          viewerServiceEnabled: false,
+          viewerServiceURL: "",
+          openWithEnabled: false,
+          selectionMode: 'single',
+          directoryUploadEnabled: false,
+          allowDnD: false,
+          sharingEnabled: false,
+          personalInvitationsEnabled: false,
+          editPermissionsEnabled: false,
+          listContentsMethod: this.getFileService().gdsDAO.getFolderOnlyData,
+          actions: {
+            newfolder: true,
+            rename: true
+          },
+          columns: {name: true},
+          breadcrumbsBaseSelector: (this.getBreadcrumbManager() ? this.getBreadcrumbManager().getBreadcrumbsBaseSelector() : '')
+        });
+        this.setFolderBrowser(tree);
+      } catch (e) {
+        this.setFolderBrowser(null);
+      }
+    },
+
+    getSelectedFolderFullPath: function() {
+      var currentPath = this.startingFullPath;
+      var fileInfos;
+      if (this.getFolderBrowser()) {
+        currentPath = this.getFolderBrowser().getRoot();
+        fileInfos = this.getFolderBrowser().fb.grid.getSelectedFileInfos();
+        if (fileInfos && fileInfos.length === 1 && fileInfos[0] && fileInfos[0].path) {
+          if (currentPath !== "/") {
+            currentPath += fileInfos[0].path;
+          } else {
+            currentPath = fileInfos[0].path;
+          }
+        }
+      }
+      return currentPath;
+    },
+
+    setSelection: function() {
+      var path = this.getSelectedFolderFullPath();
+      var name = "";
+      if (this.getFileNameInput() && this.getFileNameInput().value.length && this.getFileNameInput().value.trim()) {
+        name = this.getFileNameInput().value;
+      }
+      this.selection.folderPath = path;
+      this.selection.fileName = name;
+    },
+
+    getSelection: function() {
+      return this.selection;
+    },
+
+    getSelectionCount: function() {
+      var count = 0;
+      if (this.getFolderBrowser()) {
+        var fileInfos = this.getFolderBrowser().fb.grid.getSelectedFileInfos();
+        if (fileInfos && fileInfos.length) {
+          count = fileInfos.length;
+        }
+      }
+      return count;
+    },
+
+    destroyFolderBrowser: function() {
+      var tree = this.getFolderBrowser();
+      if (tree) {
+        if (this.getBreadcrumbManager()) {
+          this.getBreadcrumbManager().stop();
+        }
+        tree.stop(); // important for embedded widget
+        tree.fb.actionServices[0].destroy();
+        tree.fb.destroyRecursive();
+        this.setFolderBrowser(null);
+      }
+    },
+
+    createNewFolderManager: function() {
+      var temporaryContainer;
+      var permanentContainer;
+      var newFolderManager = new CreateFolderView({
+        fileService: this.getFileService(),
+        path: this.getSelectedFolderFullPath(),
+        root: this.getFolderBrowser().getRoot(),
+        inline: true
+      });
+      temporaryContainer = document.createElement('div');
+      permanentContainer = document.getElementById('folderChooserNewFolderContainer');
+      if (permanentContainer && temporaryContainer) {
+        permanentContainer.appendChild(temporaryContainer);
+        newFolderManager.setElement(temporaryContainer);
+        this.setNewFolderManager(newFolderManager);
+      }
+      return this.getNewFolderManager();
+    },
+
+    destroyNewFolderManager: function() {
+      if (this.getNewFolderManager()) {
+        this.getNewFolderManager().remove();
+        this.setNewFolderManager(null);
+      }
+    },
+
+    onDialogClose: function() {
+      var selection = this.getSelection();
+      var promise = this.getPromise();
+      if (this.showRenameAction() && this.getFolderBrowser() && this.getFolderBrowser().fb) {
+        this.getFolderBrowser().fb.onFileNameChanged = originalOnFileNameChangedMethod;
+        originalOnFileNameChangedMethod = undefined;
+      }
+      this.destroyFolderBrowser();
+      this.destroyNewFolderManager();
+      Util.reEnableTabbingOnPage(Util.getTabbableElements());
+      document.removeEventListener('keydown', Util.returnFocusToFirstElementInModal);
+      this.remove();
+      // Important to resolve promise AFTER destroying dialog.
+      // It affects the order of removing and adding event listeners.
+      promise.resolve({selection: selection, needsRefresh: this.getNeedsRefresh()});
+    },
+
+    onChooseClicked: function() {
+      this.setSelection();
+      if (document.getElementById('closeFolderChooserButton')) {
+        document.getElementById('closeFolderChooserButton').click();
+      }
+    },
+
+    showNewFolderContents: function() {
+      this.destroyNewFolderManager();
+      $("div#folderChooserMainHeader").hide();
+      $("div#folderChooserMainBody").hide();
+      $("div#folderChooserMainFooter").hide();
+      $("div#folderChooserNewFolderContainer").show();
+      this.createNewFolderManager().render().setInputFocus();
+    },
+
+    showMainContents: function() {
+      this.destroyNewFolderManager();
+      $("div#folderChooserNewFolderContainer").hide();
+      $("div#folderChooserMainHeader").show();
+      $("div#folderChooserMainBody").show();
+      $("div#folderChooserMainFooter").show();
+    },
+
+    onCancelNewFolder: function(e) {
+      if (e && e.target && e.target.classList && e.target.classList.contains("createNewFolder")) {
+        this.needsRefresh = true;
+      }
+      this.showMainContents();
+    },
+
+    onKeydown: function(e) {
+        var code = null;
+        if (e && typeof e === "object") {
+          code = e.keyCode || e.which;
+        }
+        if (code === 13) { // Enter key
+            e.preventDefault();
+            var fileName = this.getFileNameInput().value;
+
+            // Bail out if no input
+            if (fileName && fileName.trim()) {
+                $("button#chooseFolderButton").click();
+            }
+        }
+    },
+
+    render: function() {
+      var context = this;
+      var treeOptions = {
+        id: "folderChooserView",
+        ignoreBreadcrumbsUpdate: false
+      };
+      if (this.showRenameAction()) {
+        treeOptions.renameSelector = context.getBaseActionSelector() + ' .rename';
+      }
+
+      var tree;
+      this.$el.html(this.template({
+        modalTitle: this.getModalTitle(),
+        fileNameLabel: MLDOStrings.folderChooserFileNameLabel,
+        fileName: this.getSuggestedFileName(),
+        choseFolderButton: this.getChooseButtonLabel(),
+        closeButton: this.getCloseButtonLabel(),
+        isEmbedded: this.isEmbedded,
+        showFileNameSelector: this.promptForFileName(),
+        newFolderToolTipText: MLDOStrings.newFolderToolTipText,
+        filesPageNewFolderLabel: MLDOStrings.filesPageNewFolderLabel,
+        renameToolTipText: MLDOStrings.renameToolTipText,
+        filesPageRenameLabel: MLDOStrings.filesPageRenameLabel,
+        newFolderAction: this.showNewFolderAction(),
+        renameAction: this.showRenameAction(),
+        newFolderModalTitle: MLDOStrings.createFolderDialogCreateFolderTitle,
+        inputLabel: MLDOStrings.createFolderDialogFolderNameInputLabel,
+        statusError: MLDOStrings.createFolderDialogInputError2Status,
+        createButton: MLDOStrings.createFolderDialogButtonCreate,
+        cancelButton: MLDOStrings.createFolderDialogButtonCancel,
+        folderChooser: this.moveCopyFolderChooser,
+        noSelectionWarning: this.noSelectionWarning
+      }));
+
+      this.createFolderBrowser();
+      tree = this.getFolderBrowser();
+      if (tree) {
+
+        // start breadcrumbs before starting treeController
+        if (this.getBreadcrumbManager()) {
+          this.getBreadcrumbManager().render();
+        }
+
+        tree.start(this.notify.bind(this));
+        tree.render(treeOptions);
+        if (this.getStartingFullPath() !== "/") {
+          tree.setCurrentFolder(this.getStartingFullPath(), false);
+        }
+        if (this.showRenameAction() && tree.fb && typeof tree.fb.onFileNameChanged === "function") {
+          originalOnFileNameChangedMethod = tree.fb.onFileNameChanged;
+          tree.fb.onFileNameChanged = this.onFileNameChanged.bind(this);
+        }
+      }
+
+      this.$el.on("shown.bs.modal", function(e) {
+        Util.disableTabbingOnPage(Util.getTabbableElements());
+        context.enableTabbingOnModal();
+        setTimeout(function() {
+          context.notifyEmbeddedContainerOfResize();
+          if (context.promptForFileName()) {
+            if (document.getElementById('folderChooserFileNameInput')) {
+              document.getElementById('folderChooserFileNameInput').focus();
+            }
+          } else {
+            if (document.getElementById('closeFolderChooserButton')) {
+              document.getElementById('closeFolderChooserButton').focus();
+            }
+          }
+        }, 0);
+      });
+      this.$el.on("hidden.bs.modal", this.onDialogClose);
+      this.$el.off('dragover'); // clear previous listeners
+      this.$el.on('dragover', this.dragNotAllowed);
+      if (this.isEmbedded) {
+        $('#folderChooserDialog').modal({backdrop: false});
+      } else {
+        $('#folderChooserDialog').modal({backdrop: 'static'});
+      }
+      if (this.promptForFileName()) {
+        $('div#folderChooserFolderTreeContainer').addClass('withNameField');
+      }
+      if (!this.showNewFolderAction() && !this.showRenameAction()) {
+        $('div#folderChooserView.treeView').addClass('noActions');
+      }
+      this.clearError();
+      return this;
+    },
+
+    onFileNameChanged: function (originalFileInfo, newName) {
+      if (!originalFileInfo || typeof originalFileInfo !== "object" || !newName || !newName.length || typeof newName !== "string") {
+        return;
+      }
+      var callOrig = true;
+      var currentFolder = this.getFolderBrowser().getRoot();
+      var oldName = originalFileInfo.name;
+      var oldPath = originalFileInfo.path;
+      var parent = Util.getParentPath(oldPath);
+      var newPath = (parent === '/' ? '' : parent) + "/" + newName;
+      if (currentFolder !== "/") {
+        oldPath = currentFolder + oldPath;
+        newPath = currentFolder + newPath;
+      }
+      for (var i = 0; i < this.fullSourcePaths.length; i++) {
+        if (this.fullSourcePaths[i].indexOf(oldPath) === 0) {
+          callOrig = false;
+          this.notify({
+            severity: 'ERROR',
+            message: MLDOStrings.folderChooserRenameSourceNotAllowed
+          });
+          break;
+        } else {
+          this.needsRefresh = true;
+        }
+      }
+      if (callOrig) {
+        originalOnFileNameChangedMethod.call(this.getFolderBrowser().fb, originalFileInfo, newName);
+      }
+    }
+
+  });
+
+});

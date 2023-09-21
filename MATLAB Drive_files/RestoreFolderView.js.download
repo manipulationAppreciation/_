@@ -1,0 +1,92 @@
+define([
+  "jquery",
+  'bootstrap',
+  "backbone",
+  "util",
+  "templates/restoreFolderDialog",
+  "dojo/i18n!nls/mldoStringResource",
+  "dojo/string"
+], function( $, Bootstrap, Backbone, Utils, RestoreFolderDialog, MLDOStrings, DojoString ) {
+
+   return Backbone.View.extend({
+
+       template: RestoreFolderDialog,
+
+       events: {
+           "click .restoreFolderSubmit": "restoreFolder"
+       },
+
+       initialize: function(args) {
+         if (!args || Object.keys(args).length === 0) {
+           throw new TypeError("Invalid arguments");
+         }
+         if (!args.dialogTitle || typeof args.dialogTitle !== "string") {
+           throw new TypeError("Invalid title argument");
+         }
+         this.dialogTitle = args.dialogTitle;
+         if (!args.dialogWarning || typeof args.dialogWarning !== "string") {
+           throw new TypeError("Invalid warning argument");
+         }
+         this.dialogWarning = args.dialogWarning;
+         if (!args.dialogText || typeof args.dialogText !== "string") {
+           throw new TypeError("Invalid text argument");
+         }
+         this.dialogText = args.dialogText;
+         if (!args.tombstoneId || typeof args.tombstoneId !== "string" || !args.tombstoneId.length) {
+           throw new TypeError("Invalid tombstone argument");
+         }
+         this.tombstoneId = args.tombstoneId;
+         if (!args.callback || typeof args.callback !== "function") {
+           throw new TypeError("Invalid callback argument");
+         }
+         this.callback = args.callback;
+         _.bindAll(this, "render");
+       },
+
+       render: function() {
+           var self = this;
+           this.$el.html(this.template({dialogTitle: this.dialogTitle,
+                                        dialogWarning: this.dialogWarning,
+                                        dialogText: this.dialogText,
+                                        restoreButtonLabel: MLDOStrings.restoreButtonLabel,
+                                        restoreCancelButtonLabel: MLDOStrings.restoreCancelButtonLabel
+                                      }));
+           this.$el.on("shown.bs.modal", this.setInputFocus);
+           this.$el.on("hidden.bs.modal", function() {
+               self.remove();
+           });
+           this.$el.off('dragover'); // clear previous listeners
+           this.$el.on('dragover', this.dragNotAllowed);
+           $('#restoreFolderDialog').modal({backdrop: 'static'});
+           return this;
+       },
+
+       setInputFocus: function() {
+         $("#restoreFolderSubmit").focus();
+       },
+
+       dragNotAllowed: function(e) {
+         e.preventDefault();
+         e.originalEvent.dataTransfer.dropEffect = 'none';
+       },
+
+       disableSubmit: function() {
+           $('.restoreFolderSubmit').prop('disabled', true);
+       },
+
+       enableSubmit: function() {
+           $('.restoreFolderSubmit').prop('disabled', false);
+       },
+
+       restoreFolder: function(e) {
+         if (e && e.preventDefault) {
+           e.preventDefault();
+         }
+         if (this.tombstoneId.length && typeof this.tombstoneId === "string") {
+           this.callback(this.tombstoneId);
+         }
+         $('#cancelRestoreFolder').click();
+       }
+
+   });
+});

@@ -1,0 +1,281 @@
+define([
+  "underscore",
+  "jquery",
+  "bootstrap",
+  "backbone",
+  "util",
+  "templates/viewFileDialog",
+  "templates/viewFileInline",
+  "mw-browser-utils/MobileBrowserCheck",
+  "dojo/i18n!nls/mldoStringResource",
+  "dojo/string"
+], function( _, $, Bootstrap, Backbone, Utils, viewFileDialog, viewFileInline, MobileBrowserCheck, MLDOStrings, DojoString ) {
+
+   return Backbone.View.extend({
+
+       templateDialog: viewFileDialog,
+       templateInline: viewFileInline,
+
+       events: {
+       },
+
+       initialize: function(args) {
+         if (!args || Object.keys(args).length === 0) {
+           throw new TypeError("Invalid arguments");
+         }
+         if (!args.fileName || typeof args.fileName !== "string") {
+           throw new TypeError("Invalid file name argument");
+         }
+         this.fileName = _.escape(args.fileName);
+         if ((args.iframeSrc && args.imageSrc)) {
+           throw new TypeError("Must provide either iframeSrc or imageSrc argument, but not both");
+         }
+         if (args.iframeSrc && typeof args.iframeSrc !== "string") {
+           throw new TypeError("Invalid iframe src argument");
+         }
+         this.iframeSrc = args.iframeSrc || "\"\"";
+         if (args.imageSrc && typeof args.imageSrc !== "string") {
+           throw new TypeError("Invalid image src argument");
+         }
+         this.imageSrc = args.imageSrc || "\"\"";
+         if (!args.waitText || typeof args.waitText !== "string") {
+           throw new TypeError("Invalid wait text argument");
+         }
+         this.waitText = args.waitText;
+         if (args.errorText && typeof args.errorText !== "string") {
+           throw new TypeError("Invalid error text argument");
+         }
+         this.errorText = args.errorText;
+         if (!args.path || typeof args.path !== "string") {
+           throw new TypeError("Invalid path argument");
+         }
+         this.path = args.path;
+         if (!args.fileInfo || typeof args.fileInfo !== "object") {
+           throw new TypeError("Invalid fileInfo argument");
+         }
+         if (this.iframeSrc && this.iframeSrc.length && this.iframeSrc !== "\"\"") {
+           this.itemSrc = this.iframeSrc;
+           this.isImage = false;
+         } else if (this.imageSrc && this.imageSrc.length && this.imageSrc !== "\"\"") {
+           this.itemSrc = this.imageSrc;
+           this.isImage = true;
+         } else {
+           this.itemSrc = "";
+           this.isImage = false;
+         }
+         this.fileInfo = args.fileInfo;
+         this.viewInNewTabEnabled = args.viewInNewTabEnabled || false;
+         this.viewerServiceEnabled = args.viewerServiceEnabled || false;
+         this.liveEditorSupported = (args.liveEditorSupported && Utils.isBrowserValid()) || false;
+         this.mockOpenwith = args.mockOpenwith || false;
+         this.inline = (args.inline && args.inline === true) ? args.inline : false;
+
+         if (!args.deleteCallback || typeof args.deleteCallback !== "function") {
+           throw new TypeError("Invalid deleteCallback argument");
+         }
+         this.deleteCallback = args.deleteCallback;
+         if (!args.downloadCallback || typeof args.downloadCallback !== "function") {
+           throw new TypeError("Invalid downloadCallback argument");
+         }
+         this.downloadCallback = args.downloadCallback;
+         if (!args.openWindowCallback || typeof args.openWindowCallback !== "function") {
+           throw new TypeError("Invalid openWindowCallback argument");
+         }
+         this.openWindowCallback = args.openWindowCallback;
+         if (this.viewerServiceEnabled && this.liveEditorSupported) {
+           if (!args.liveEditCallback || typeof args.liveEditCallback !== "function") {
+             throw new TypeError("Invalid liveEditCallback argument");
+           }
+           this.openLiveEditorCallback = args.liveEditCallback;
+         }
+         _.bindAll(this, "render", "onLoadIframeHandler", "clickOpenTabHandler", "clickDeleteHandler", "clickDownloadHandler", "clickOpenLiveEditorHandler", "clickMockOpenLiveEditor", "handleRenderType");
+       },
+
+       render: function(renderType) {
+           var self = this;
+           var adownload = ("download" in document.createElement("a"));
+           if(this.inline) {
+             this.$el.html(this.templateInline({
+               fileName: this.fileName,
+               waitText: this.waitText,
+               iframeSrc: this.iframeSrc,
+               imageSrc: this.imageSrc,
+               errorText: this.errorText,
+               itemSrc: this.itemSrc,
+               downloadSupported: ((adownload) || (navigator && (navigator.msSaveBlob || _isMacSafari))) ? true : false,
+               enableNewTabWindow: this.viewInNewTabEnabled,
+               deleteItem: MLDOStrings.viewDeleteAction,
+               download: MLDOStrings.viewDownloadAction,
+               openNewTab: MLDOStrings.viewOpenInNewTab,
+               closeButtonLabel: MLDOStrings.viewCloseButton,
+               viewerServiceEnabled: this.viewerServiceEnabled,
+               liveEditorSupported: this.liveEditorSupported,
+               openLiveEditor: MLDOStrings.viewOpenLiveEditor,
+               mockOpenwith: this.mockOpenwith
+             }));
+           } else {
+             this.$el.html(this.templateDialog({
+               fileName: this.fileName,
+               waitText: this.waitText,
+               iframeSrc: this.iframeSrc,
+               imageSrc: this.imageSrc,
+               errorText: this.errorText,
+               itemSrc: this.itemSrc,
+               downloadSupported: ((adownload) || (navigator && (navigator.msSaveBlob || _isMacSafari))) ? true : false,
+               enableNewTabWindow: this.viewInNewTabEnabled,
+               deleteItem: MLDOStrings.viewDeleteAction,
+               download: MLDOStrings.viewDownloadAction,
+               openNewTab: MLDOStrings.viewOpenInNewTab,
+               closeButtonLabel: MLDOStrings.viewCloseButton,
+               viewerServiceEnabled: this.viewerServiceEnabled,
+               liveEditorSupported: this.liveEditorSupported,
+               openLiveEditor: MLDOStrings.viewOpenLiveEditor,
+               mockOpenwith: this.mockOpenwith
+             }));
+           }
+           this.$el.on("shown.bs.modal", function() {
+               this.handleRenderType(renderType);
+           }.bind(this));
+           this.$el.on("hidden.bs.modal", function() {
+             self.remove();
+           });
+           this.$el.off('dragover'); // clear previous listeners
+           this.$el.on('dragover', this.dragNotAllowed);
+           $('#viewFileDialog').modal({backdrop: 'static'});
+           $('#viewFileIframe').on('load', this.onLoadIframeHandler);
+           $('#viewFileMenuDelete').on('click', this.clickDeleteHandler);
+           $('#viewFileMenuDownload').on('click', this.clickDownloadHandler);
+           $('#viewFileMenuOpen').on('click', this.clickOpenTabHandler);
+           if (this.mockOpenwith) {
+             $('#openLiveEditor').on('click', this.clickMockOpenLiveEditor);
+           } else {
+             $('#openLiveEditor').on('click', this.clickOpenLiveEditorHandler);
+           }
+           if(this.inline) {
+               this.handleRenderType(renderType);
+           }
+           return this;
+       },
+
+       handleRenderType: function(renderType) {
+           switch(renderType) {
+               case 'iframe':
+                   $('#pleaseWaitDiv').hide();
+                   $('#viewFileErrorMessage').hide();
+                   $('#viewFileMenu').show();
+                   $('#viewFileImage').hide();
+                   $('#viewFileIframeContainer').show();
+                   $('#viewFileIframe').show();
+                   $('#viewFileMenuOpen').show();
+                   $('.viewFileDialogModalBody').removeClass('previewing_image');
+                   $('.viewFileDialogModalBody').addClass('previewing_file');
+                   break;
+
+               case 'image':
+                   $('#pleaseWaitDiv').hide();
+                   $('#viewFileErrorMessage').hide();
+                   $('#viewFileMenu').show();
+                   $('#viewFileIframe').hide();
+                   $('#viewFileIframeContainer').hide();
+                   $('#viewFileImage').show();
+                   $('#viewFileMenuOpen').show();
+                   $('.viewFileDialogModalBody').removeClass('previewing_file');
+                   $('.viewFileDialogModalBody').addClass('previewing_image');
+                   break;
+
+               case 'error':
+                   $('#pleaseWaitDiv').hide();
+                   $('#viewFileMenu').show();
+                   $('#viewFileImage').hide();
+                   $('#viewFileIframe').hide();
+                   $('#viewFileIframeContainer').hide();
+                   $('#viewFileErrorMessage').show();
+                   $('#viewFileMenuOpen').hide();
+                   $('.viewFileDialogModalBody').removeClass('previewing_image');
+                   $('.viewFileDialogModalBody').removeClass('previewing_file');
+                   break;
+
+               default:
+                   $('#pleaseWaitDiv').hide();
+                   $('#viewFileErrorMessage').hide();
+                   $('#viewFileMenu').show();
+                   $('#viewFileImage').hide();
+                   $('#viewFileMenuOpen').show();
+                   $('#viewFileIframeContainer').show();
+                   $('#viewFileIframe').show();
+                   $('.viewFileDialogModalBody').removeClass('previewing_image');
+                   $('.viewFileDialogModalBody').addClass('previewing_file');
+           }
+           if (!this.fileInfo.filePermissions.canWrite || !this.fileInfo.filePermissions.parentCanWrite) {
+             $('#viewFileMenuDelete').off();
+             $('#viewFileDialog div.action_icon.deleteFile').hide();
+           }
+           if(this.inline) {
+             $('.closeViewFileInlineButton').show();
+           }
+            this.setInputFocus();
+       },
+
+       clickOpenTabHandler: function(e) {
+         if(this.inline) {
+           return;
+         }
+         if (e) {
+           e.preventDefault();
+         }
+         this.openWindowCallback(this.fileName, this.itemSrc, this.isImage);
+         $('#viewFileDialog').modal('hide');
+       },
+
+       clickDownloadHandler: function(e) {
+         var self = this;
+         if (e) {
+           e.preventDefault();
+         }
+         this.downloadCallback(this.path);
+       },
+
+       clickDeleteHandler: function(e) {
+         var self = this;
+         if (e && e.preventDefault) {
+           e.preventDefault();
+         }
+         this.deleteCallback(this.path, this.fileInfo);
+         $('#viewFileDialog').modal('hide');
+       },
+
+       clickMockOpenLiveEditor: function(e) {
+         var msg1 = DojoString.substitute(MLDOStrings.viewOpenLiveEditorMock, [_.escape(this.fileInfo.name)]);
+         var msg2 = MLDOStrings.viewOpenLiveEditorNotSupported;
+         $('#viewFileDialog').modal('hide');
+         alert(msg1 + "\n" + msg2);
+       },
+
+       clickOpenLiveEditorHandler: function(e) {
+         var self = this;
+         if (e) {
+           e.preventDefault();
+         }
+         this.openLiveEditorCallback(this.path, this.fileInfo);
+         $('#viewFileDialog').modal('hide');
+       },
+
+       onLoadIframeHandler: function(e) {
+         $('#pleaseWaitDiv').hide();
+         $('#viewFileErrorMessage').hide();
+         $('#viewFileMenu').show();
+         $('#viewFileImage').hide();
+         $('#viewFileIframe').show();
+       },
+
+       setInputFocus: function() {
+         $(".closeViewFileDialogButton").focus();
+       },
+
+       dragNotAllowed: function(e) {
+         e.preventDefault();
+         e.originalEvent.dataTransfer.dropEffect = 'none';
+       }
+
+   });
+});

@@ -1,0 +1,59 @@
+define([
+    "dojo/_base/declare",
+    "mw-filebrowser/actions/Action",
+    "mw-keybindings/DefaultKeys",
+    "mw-filename-utils/FileNameUtil",
+    "dojo/i18n!nls/mldoStringResource",
+    "dojo/string"
+], function (declare, Action, DefaultKeys, FileNameUtil, MLDOStrings, DojoString) {
+  return declare(Action, {
+    constructor: function (args) {
+        args = args || {};
+        var context = args.context;
+        var makeActionAvailable = args.showAction || false;
+        this.name =  "newFolderAction";
+        this.label = MLDOStrings.contextMenuNewFolderLabel;
+        this.enabled = makeActionAvailable;
+        this.section = {
+            id: "MISC",
+            name: "MISC",
+            allowSubMenu: false,
+            forceSubMenu: false
+        };
+        this.isApplicableTo = function (path) {
+          var fileInfos;
+          var fileInfo;
+          var selectedFileCount = context.getSelectedRowCount();
+          if (selectedFileCount > 1) {
+            this.enabled = false;
+          } else {
+            if (selectedFileCount === 1) {
+              fileInfos = context.getSelectedItemFileInfos();
+              fileInfo = fileInfos[0];
+              if (fileInfo.isDirectory && fileInfo.filePermissions.canWrite) {
+                this.enabled = true;
+              } else {
+                this.enabled = false;
+              }
+            } else if (selectedFileCount === 0) {
+              var currentFolder = context.getCurrentFolderInfo();
+              if (currentFolder.filePermissions.canWrite) {
+                this.enabled = true;
+              } else {
+                this.enabled = false;
+              }
+            }
+          }
+          return this.enabled;
+        };
+        this.callback = function (action) {
+          var fileInfos = context.getSelectedItemFileInfos();
+          var fileInfo = fileInfos[0];
+          if (this.isApplicableTo(fileInfo)) {
+            context.handleNewFolderAction();
+          }
+        };
+    }
+  });
+
+});

@@ -1,0 +1,758 @@
+<!DOCTYPE html>
+<!-- saved from url=(0047)https://drive.matlab.com/files/Published/main.m -->
+<html class="dj_webkit dj_chrome dj_contentbox has-webkit has-no-quirks js mldo-sharing" lang="en" xml:lang="en"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  
+  <title>MATLAB Drive</title>
+  <meta name="description" content="Access MATLAB Drive. Work with your files from anywhere, share with others.">
+  <script type="text/javascript" async="" src="./MATLAB Drive_files/ahy.js.download"></script><script type="text/javascript" async="" src="./MATLAB Drive_files/hpO.js.download"></script><script> "use strict"; </script>
+  <link href="./MATLAB Drive_files/ocg5esc.css" rel="stylesheet">
+  <link rel="icon" href="https://drive.matlab.com/assets_3.8.0/icons/tab_favicon.ico" type="image/x-icon">
+  <link rel="shortcut icon" href="https://drive.matlab.com/assets_3.8.0/icons/tab_favicon.ico" type="image/x-icon">
+  <link rel="stylesheet" href="./MATLAB Drive_files/mldo.app.css">
+<link type="text/css" rel="stylesheet" href="./MATLAB Drive_files/TouchScroll.css"><link type="text/css" rel="stylesheet" href="./MATLAB Drive_files/dgrid.css"><link type="text/css" rel="stylesheet" href="./MATLAB Drive_files/dnd.css"><link type="text/css" rel="stylesheet" href="./MATLAB Drive_files/ColumnHider.css"><link type="text/css" rel="stylesheet" href="./MATLAB Drive_files/ColumnReorder.css"><link type="text/css" rel="stylesheet" href="./MATLAB Drive_files/ColumnResizer.css"><style></style><script type="text/javascript" src="./MATLAB Drive_files/satelliteLib-e8d23c2e444abadc572df06537e2def59c01db09.js.download"></script><style>
+.headernav_matrix button { 
+  width:24px; 
+  height:24px; 
+  padding:0;
+  border: none;
+  background:none transparent; 
+  display:inline-block;
+  transition:color .3s ease;
+  position: relative;
+}
+
+.headernav_matrix button > .icon-matrix { color:#777; font-size:24px; line-height:1.00 !important;}
+.headernav_matrix button:hover > .icon-matrix,
+.headernav_matrix button:focus > .icon-matrix { color:#333; }
+
+/* MATRIX MENU TABLET AND MOBILE*/
+#header_mobile .matrix_container { 
+  margin:1px auto 0; 
+  border:none; 
+  box-shadow:none; 
+  background:#fff; 
+  float:none; 
+  overflow:hidden; 
+  position:relative;
+  z-index:3;
+  display:block !important; 
+  height:auto !important;
+}
+#header_mobile .headernav_matrix > button { 
+  width:auto; 
+  min-width:37px; 
+  height:auto; 
+  min-height:37px; 
+  margin:3.5px -1.5px 0 0; 
+  float:right; 
+}
+#header_mobile .headernav_matrix > button > .icon-matrix { color:#0076a8; }
+
+@media (min-width:768px) and (max-width:991px) {
+  .matrix_menu_container_mobile { border-top:1px solid #e7e7e7; }
+}
+
+/* DESKTOP MATRIX MENU */
+.matrix_container { 
+  width:319px; 
+  padding:0 10px 10px; 
+  margin-top:2px; 
+  border:1px solid #999; 
+  background:#fff; 
+  box-shadow:0 1px 3px 0 rgba(0,0,0,0.25); 
+  float:right; 
+  overflow:hidden; 
+  position:absolute; 
+  right:0; 
+  z-index:1037; 
+}
+.matrix_container ul.matrix_links_primary { 
+  border-bottom:1px solid #ccc; 
+}
+.matrix_container ul[class*="matrix_links_"] { 
+  width:100%; 
+  padding:10px 0 0; 
+  margin-bottom:0; 
+  float:left; 
+} 
+.matrix_container ul[class*="matrix_links_"] > li { 
+  width:99px; 
+  height:72px;
+  padding:0 5px;
+  margin:0 0 10px; 
+  float:left;
+  font-size:12px; 
+  line-height:1.25; 
+  text-align:center; 
+  white-space:nowrap; 
+} 
+.matrix_container ul[class*="matrix_links_"] > li > a { 
+  width:100%; 
+  padding:7px 0 0 0; 
+  border:none;
+  color: #0076a8 !important;
+  background:transparent; 
+  display:block; 
+  text-decoration:none !important; 
+}
+
+.matrix_container ul[class*="matrix_links_"] > li > a > img { 
+  height:38px; 
+  padding:2px; 
+  width:auto; 
+  margin:0 auto 7px; 
+  border:1px solid transparent; 
+  border-radius:5px; 
+  background-color:#fff; 
+  display:block; 
+  transition:background-color .3s ease, border-color 0.3s ease; 
+}
+.matrix_container ul[class*="matrix_links_"] > li > a > .matrix_link_title { 
+  max-width:89px; 
+  display:block; 
+  line-height:1.15; 
+  white-space:normal; 
+}
+
+.matrix_container ul[class*="matrix_links_"] > li > a:hover > img,
+.matrix_container ul[class*="matrix_links_"] > li.matrix_active > a > img { 
+  border-color:#999;  
+  background-color:#f5f5f5; 
+}
+.matrix_container_zh { 
+  font-family:"Microsoft YaHei","Segoe UI",Arial,Helvetica; 
+}
+.matrix_container_ja { 
+  font-family:Meiryo,Verdana,Arial,Helvetica,"MS P ゴシック"; 
+}
+.matrix_container_kr { 
+  font-family:Malgun Gothic, Apple Gothic, Arial, sans-serif; 
+}
+
+[class*="matrix_container_"].matrix_container ul[class*="matrix_links_"] > li { 
+  height:90px; 
+}
+[class*="matrix_container_"] { padding-bottom:0; }
+[class*="matrix_container_"].matrix_container ul[class*="matrix_links_"] > li > a { 
+  padding-bottom:2px; 
+}
+[class*="matrix_container_"].matrix_container .matrix_link_title { 
+  font-size:13px !important; 
+  line-height:1.20 !important; 
+}</style><script src="./MATLAB Drive_files/AppMeasurement.min.js.download" async=""></script><script src="./MATLAB Drive_files/AppMeasurement_Module_ActivityMap.min.js.download" async=""></script><style type="text/css" id="ki-y8n-yzw"></style><style type="text/css" id="ki-y8n-y4h"></style><script src="./MATLAB Drive_files/RC974b32ae31d543638be38b5169a96bd7-source.min.js.download" async=""></script><script src="./MATLAB Drive_files/RC42af8a6fcc514101b7d5c80e50e465d4-source.min.js.download" async=""></script><style type="text/css" id="ki-mtl-mg3"></style><style type="text/css" id="ki-mtl-mrn"></style></head>
+<body class="ff-delete">
+<div id="loginContainer" class="loginContainer" style="display:none;">
+  <div class="loginHeaderContainer">
+
+      <!-- Mobile TopNav: Start -->
+      <div class="header visible-xs visible-sm" id="header_mobile_login">
+        <nav class="navbar navbar-default" role="navigation">
+          <div class="container-fluid">
+            <div class="row">
+              <div class="col-xs-12">
+                <div class="navbar-header">
+                  <button type="button" class="navbar-toggle topnav_toggle" data-toggle="collapse" data-target="#topnav_collapse">
+                    <span class="sr-only">Toggle Main Navigation</span>
+                    <span class="icon-menu"></span>
+                  </button>
+                  <div class="appTitle">
+                    <div class="logoWrapper">
+                      <div class="mathworks-membrane">
+                        <a class="membrane-div" href="https://www.mathworks.com/" target="_blank" rel="noopener noreferrer"></a>
+                      </div>
+                      <div class="membrane-divider"></div>
+                      <div class="matlabdrive-logo"></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </nav>
+      </div>
+      <!-- Mobile TopNav: End -->
+      <!-- Desktop TopNav: Start -->
+      <div class="header hidden-xs hidden-sm" id="header_desktop_login">
+        <nav class="navbar navbar-default" role="navigation">
+          <div class="container-fluid">
+            <div class="row">
+              <div class="col-xs-12">
+                <div class="navbar-header">
+                  <div class="appTitle">
+                    <div class="logoWrapper">
+                      <div class="mathworks-membrane">
+                        <a class="membrane-div" href="https://www.mathworks.com/" target="_blank" rel="noopener noreferrer"></a>
+                      </div>
+                      <div class="membrane-divider"></div>
+                      <div class="matlabdrive-logo"></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </nav>
+      </div>
+      <!-- Desktop TopNav: End -->
+
+      <div class="blockContainer"></div>
+  </div>
+  <div class="container-fluid mainContainer">
+    <div class="row leftRightContainer">
+      <div class="col-xs-12 rightAreaContainer">
+        <div class="login_container">
+          <div class="loginIntro">
+            <div class="mldo_logo"></div>
+            <hr>
+          </div>
+            <div class="errorTextContainer">
+              <div class="notificationContentError">
+                <div class="notificationImageError" aria-hidden="true"></div>
+                <span class="errorText"></span>
+              </div>
+            </div>
+          <div id="loginHandshakeErrorContainer" class="loginErrorWrapper" style="display:none;">
+            <div class="notificationImageError" aria-hidden="true"></div>
+            <p id="loginHandshakeErrorText"></p>
+          </div>
+          <div class="authContainer">
+            <iframe id="loginIframe" frameborder="0" src="./MATLAB Drive_files/saved_resource.html" tabindex="-1" title="empty" class="authIframe"></iframe>
+          </div>
+          <div class="extraLinks">
+            <p><small><a href="https://www.mathworks.com/products/matlab-drive.html?s_tid=MLD_MLDOSI" target="_blank" rel="noopener noreferrer"><span class="mldoLearnMore">Learn more</span></a> about MATLAB Drive.</small></p>
+            <p><small><a href="https://www.mathworks.com/products/matlab-drive.html?s_tid=MLD_MLDOSI_INSTALL#matlab-drive-connector" target="_blank" rel="noopener noreferrer" data-toggle="tooltip" data-placement="top" title="" data-original-title="Automatically sync files across your computers">Install</a> MATLAB Drive Connector.</small></p>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div id="mldoLoginFooter" class="row mainFooter ff-delete" style="display:none;">
+      <div class="col-xs-12">
+        <p translate="no" class="copyright">© 1994-2022 The MathWorks, Inc.</p>
+        <ul class="footernav">
+          <li class="footernav_patents"><a href="https://www.mathworks.com/company/aboutus/policies_statements/patents.html?s_tid=gf_pat" target="_blank" rel="noopener noreferrer">Patents</a></li>
+          <li class="footernav_trademarks"><a href="https://www.mathworks.com/company/aboutus/policies_statements/trademarks.html?s_tid=gf_trd" target="_blank" rel="noopener noreferrer">Trademarks</a></li>
+          <li class="footernav_privacy"><a href="https://www.mathworks.com/company/aboutus/policies_statements.html?s_tid=gf_priv" target="_blank" rel="noopener noreferrer">Privacy Policy</a></li>
+          <li class="footernav_piracy"><a href="https://www.mathworks.com/company/aboutus/policies_statements/piracy.html?s_tid=gf_pir" target="_blank" rel="noopener noreferrer">Preventing Piracy</a></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+<div id="matlabDriveApp" style="" class="appContainer"><div id="filesViewHeader" class="headerContainer">
+  <!-- Mobile TopNav: Start -->
+<div class="header visible-xs visible-sm" id="header_mobile">
+    <nav class="navbar navbar-default" role="navigation">
+        <div class="container-fluid">
+            <div class="row">
+                <div class="col-xs-12">
+                    <div class="navbar-header">
+                        <button type="button" class="navbar-toggle topnav_toggle" data-toggle="collapse" data-target="#topnav_collapse">
+                            <span class="sr-only">Toggle Main Navigation</span>
+                            <span class="icon-menu"></span>
+                        </button>
+                        <div class="appTitle">
+                            <div class="logoWrapper">
+                                <div class="matlabdrive-logo"></div>
+                            </div>
+                        </div>
+                        <div id="matrix_affordance_container_mobile" class="headernav_matrix"><div id="headernav_matrix_small" class="headernav_matrix"><button title="Matrix Menu" class="navbar-toggle matrix_toggle" data-toggle="collapse" data-target="#matrix_collapse" id="matrix_waffle_small" aria-label="Mathworks Menu" type="button"><span class="icon-matrix"></span></button></div></div>
+                    </div>
+                </div>
+            </div>
+            <div class="row visible-xs visible-sm">
+                <div class="col-xs-12">
+                    <div class="navbar-collapse collapse" id="matrix_collapse">
+                        <div class="matrix_menu_container_mobile" id="matrix_menu_container_mobile"><header class="App-header"><div class="matrix_container collapse" aria-describedby="matrix_title"><nav class="matrix_content"><h3 class="sr-only" id="matrix_title">MathWorks Matrix Menu</h3><ul class="list-unstyled matrix_links_primary"><li class=""><a class="svg_link" href="https://matlab.mathworks.com/" role="button" aria-label="MATLAB" id="matrix_link_matlab_home"><img src="./MATLAB Drive_files/ico-matrix-matlabonline.svg" alt="matlab_home" aria-hidden="true"><span class="matrix_link_title">MATLAB</span></a></li><li class=""><a class="svg_link" href="https://www.mathworks.com/help/" role="button" aria-label="Help Center" id="matrix_link_help_center"><img src="./MATLAB Drive_files/ico-matrix-helpcenter.svg" alt="help_center" aria-hidden="true"><span class="matrix_link_title">Help Center</span></a></li><li class=""><a class="svg_link" href="https://www.mathworks.com/" role="button" aria-label="MathWorks" id="matrix_link_mathworks_dotcom"><img src="./MATLAB Drive_files/ico-matrix-mathworks.svg" alt="mathworks_dotcom" aria-hidden="true"><span class="matrix_link_title">MathWorks</span></a></li></ul><ul class="list-unstyled matrix_links_secondary"><li class=""><a class="svg_link" href="https://www.mathworks.com/matlabcentral/answers/index" role="button" aria-label="MATLAB Answers" id="matrix_link_answers"><img src="./MATLAB Drive_files/ico-matrix-answers.svg" alt="answers" aria-hidden="true"><span class="matrix_link_title">MATLAB Answers</span></a></li><li class=""><a class="svg_link" href="https://www.mathworks.com/matlabcentral/fileexchange" role="button" aria-label="File Exchange" id="matrix_link_file_exchange"><img src="./MATLAB Drive_files/ico-matrix-fileexchange.svg" alt="file_exchange" aria-hidden="true"><span class="matrix_link_title">File Exchange</span></a></li><li class=""><a class="svg_link" href="https://www.mathworks.com/videos.html" role="button" aria-label="Videos" id="matrix_link_videos"><img src="./MATLAB Drive_files/ico-matrix-videos.svg" alt="videos" aria-hidden="true"><span class="matrix_link_title">Videos</span></a></li><li class=""><a class="svg_link" href="https://matlabacademy.mathworks.com/" role="button" aria-label="Online Training" id="matrix_link_online_training"><img src="./MATLAB Drive_files/ico-matrix-onlinetraining.svg" alt="online_training" aria-hidden="true"><span class="matrix_link_title">Online Training</span></a></li><li class=""><a class="svg_link" href="https://blogs.mathworks.com/" role="button" aria-label="Blogs" id="matrix_link_blogs"><img src="./MATLAB Drive_files/ico-matrix-blogs.svg" alt="blogs" aria-hidden="true"><span class="matrix_link_title">Blogs</span></a></li><li class=""><a class="svg_link" href="https://www.mathworks.com/matlabcentral/cody" role="button" aria-label="Cody" id="matrix_link_cody"><img src="./MATLAB Drive_files/ico-matrix-cody.svg" alt="cody" aria-hidden="true"><span class="matrix_link_title">Cody</span></a></li><li class=""><a class="svg_link" href="https://drive.matlab.com/" role="button" aria-label="MATLAB Drive" id="matrix_link_matlab_drive"><img src="./MATLAB Drive_files/ico-matrix-matlabdrive.svg" alt="matlab_drive" aria-hidden="true"><span class="matrix_link_title">MATLAB Drive</span></a></li><li class=""><a class="svg_link" href="https://thingspeak.com/" role="button" aria-label="ThingSpeak" id="matrix_link_thingspeak"><img src="./MATLAB Drive_files/ico-matrix-thingspeak.svg" alt="thingspeak" aria-hidden="true"><span class="matrix_link_title">ThingSpeak</span></a></li><li class=""><a class="svg_link" href="https://www.mathworks.com/support/bugreports/" role="button" aria-label="Bug Reports" id="matrix_link_bug_reports"><img src="./MATLAB Drive_files/ico-matrix-bugreports.svg" alt="bug_reports" aria-hidden="true"><span class="matrix_link_title">Bug Reports</span></a></li><li class=""><a class="svg_link" href="https://www.mathworks.com/matlabcentral/" role="button" aria-label="Community" id="matrix_link_community"><img src="./MATLAB Drive_files/ico-matrix-community.svg" alt="community" aria-hidden="true"><span class="matrix_link_title">Community</span></a></li></ul></nav></div></header></div>
+                    </div>
+                    <div class="navbar-collapse collapse matlabDriveUserName" id="topnav_collapse">
+                        <ul class="nav navbar-nav" id="topnav">
+                            
+                            <li class="headernav_login dropdown">
+                                <a href="https://drive.matlab.com/files/Published/main.m#" class="dropdown-toggle" data-toggle="dropdown">Simon <strong class="caret"></strong></a>
+                                <ul class="dropdown-menu" id="ml_drive_nav_mobile">
+                                    <li class="dropdown-username">Simon Sandström Nordin</li>
+                                    <li class="dropdown-email">simonsn@kth.se</li>
+                                    <li class="quotaListItem"><div class="quotaContainer"><div class="progress"><div class="progress-bar" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" style="background: linear-gradient(to right, rgb(0, 114, 189) 100%, rgb(217, 83, 25) 0%, rgb(217, 83, 25) 100%); width: 0%;"></div></div><div class="quotaText"><span>3.4 MB / 20 GB used</span><div class="quotaInfo notificationImageInfo text-info" data-toggle="tooltip" data-container=".myfilesTitlebar" data-placement="right" style="margin-left: 7px"></div><div class="quotaInfoPerAppText"><span style="background: #0072BD;"></span>MATLAB Drive: 3.4 MB</div></div></div></li>
+                                    <li role="separator" class="divider"></li>
+                                    <li><a role="menuitem" href="https://www.mathworks.com/products/matlab-drive.html?s_tid=MLD_MLDO#matlab-drive-connector" target="_blank" rel="noopener noreferrer">Install MATLAB Drive Connector</a></li>
+                                    
+                                    <li role="separator" class="divider"></li>
+                                    
+                                    
+                                    <li class="dropdown-showhiddenfiles">
+                                        <label>
+                                            <input class="checkbox-showhiddenfiles" type="checkbox" name="showhiddenfiles_mobile">&nbsp;Show Hidden Files
+                                        </label>
+                                    </li>
+                                    
+                                    
+                                    <li role="separator" class="divider"></li>
+                                    <li class="logoutContainer"><a id="menu-logout" role="menuitem" href="https://drive.matlab.com/files/Published/main.m#">Sign Out</a></li>
+                                </ul>
+                            </li>
+                            
+                            <li class="headernav_help"><a href="https://www.mathworks.com/help/matlab/cloud-file-storage.html" target="_blank" rel="noopener noreferrer" id="helpLink">Help</a></li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </nav>
+</div>
+<!-- Mobile TopNav: End -->
+<!-- Desktop TopNav: Start -->
+<div class="header hidden-xs hidden-sm" id="header_desktop">
+    <nav class="navbar navbar-default" role="navigation">
+        <div class="container-fluid">
+            <div class="row">
+                <div class="col-xs-6">
+                    <div class="navbar-header">
+                        <div class="appTitle">
+                            <div class="logoWrapper">
+                                <div class="matlabdrive-logo"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-xs-6">
+                    <div class="collapse navbar-collapse matlabDriveUserName" id="headernav_collapse">
+                        <ul class="nav navbar-nav navbar-right" id="headernav">
+                            <li class="headernav_help"><a href="https://www.mathworks.com/help/matlab/cloud-file-storage.html" target="_blank" rel="noopener noreferrer" id="helpLink">Help</a></li>
+                            
+                            <li class="headernav_login dropdown">
+                                <a href="https://drive.matlab.com/files/Published/main.m#" class="dropdown-toggle" data-toggle="dropdown" id="menu1">Simon <strong class="caret"></strong></a>
+                                <ul class="dropdown-menu" id="ml_drive_nav">
+                                    <li class="dropdown-username">Simon Sandström Nordin</li>
+                                    <li class="dropdown-email">simonsn@kth.se</li>
+                                    <li role="separator" class="divider"></li>
+                                    <li><a role="menuitem" href="https://www.mathworks.com/products/matlab-drive.html?s_tid=MLD_MLDO#matlab-drive-connector" target="_blank" rel="noopener noreferrer">Install MATLAB Drive Connector</a></li>
+                                    
+                                    <li role="separator" class="divider"></li>
+                                    
+                                    
+                                    <li class="dropdown-showhiddenfiles">
+                                        <label>
+                                            <input class="checkbox-showhiddenfiles" type="checkbox" name="showhiddenfiles_desktop">&nbsp;Show Hidden Files
+                                        </label>
+                                    </li>
+                                    
+                                    
+                                    <li role="separator" class="divider"></li>
+                                    <li class="logoutContainer"><a id="menu-logout" role="menuitem" href="https://drive.matlab.com/files/Published/main.m#">Sign Out</a></li>
+                                </ul>
+                            </li>
+                            
+                            <li id="headernav_matrix" class="headernav_matrix"><div id="wrapper"><button title="Matrix Menu" class="waffle" id="matrix_waffle_large" aria-label="Mathworks Menu" type="button"><span class="icon-matrix"></span></button><header class="App-header"><div class="matrix_container collapse" aria-describedby="matrix_title"><nav class="matrix_content"><h3 class="sr-only" id="matrix_title">MathWorks Matrix Menu</h3><ul class="list-unstyled matrix_links_primary"><li class=""><a class="svg_link" href="https://matlab.mathworks.com/" role="button" aria-label="MATLAB" id="matrix_link_matlab_home"><img src="./MATLAB Drive_files/ico-matrix-matlabonline.svg" alt="matlab_home" aria-hidden="true"><span class="matrix_link_title">MATLAB</span></a></li><li class=""><a class="svg_link" href="https://www.mathworks.com/help/" role="button" aria-label="Help Center" id="matrix_link_help_center"><img src="./MATLAB Drive_files/ico-matrix-helpcenter.svg" alt="help_center" aria-hidden="true"><span class="matrix_link_title">Help Center</span></a></li><li class=""><a class="svg_link" href="https://www.mathworks.com/" role="button" aria-label="MathWorks" id="matrix_link_mathworks_dotcom"><img src="./MATLAB Drive_files/ico-matrix-mathworks.svg" alt="mathworks_dotcom" aria-hidden="true"><span class="matrix_link_title">MathWorks</span></a></li></ul><ul class="list-unstyled matrix_links_secondary"><li class=""><a class="svg_link" href="https://www.mathworks.com/matlabcentral/answers/index" role="button" aria-label="MATLAB Answers" id="matrix_link_answers"><img src="./MATLAB Drive_files/ico-matrix-answers.svg" alt="answers" aria-hidden="true"><span class="matrix_link_title">MATLAB Answers</span></a></li><li class=""><a class="svg_link" href="https://www.mathworks.com/matlabcentral/fileexchange" role="button" aria-label="File Exchange" id="matrix_link_file_exchange"><img src="./MATLAB Drive_files/ico-matrix-fileexchange.svg" alt="file_exchange" aria-hidden="true"><span class="matrix_link_title">File Exchange</span></a></li><li class=""><a class="svg_link" href="https://www.mathworks.com/videos.html" role="button" aria-label="Videos" id="matrix_link_videos"><img src="./MATLAB Drive_files/ico-matrix-videos.svg" alt="videos" aria-hidden="true"><span class="matrix_link_title">Videos</span></a></li><li class=""><a class="svg_link" href="https://matlabacademy.mathworks.com/" role="button" aria-label="Online Training" id="matrix_link_online_training"><img src="./MATLAB Drive_files/ico-matrix-onlinetraining.svg" alt="online_training" aria-hidden="true"><span class="matrix_link_title">Online Training</span></a></li><li class=""><a class="svg_link" href="https://blogs.mathworks.com/" role="button" aria-label="Blogs" id="matrix_link_blogs"><img src="./MATLAB Drive_files/ico-matrix-blogs.svg" alt="blogs" aria-hidden="true"><span class="matrix_link_title">Blogs</span></a></li><li class=""><a class="svg_link" href="https://www.mathworks.com/matlabcentral/cody" role="button" aria-label="Cody" id="matrix_link_cody"><img src="./MATLAB Drive_files/ico-matrix-cody.svg" alt="cody" aria-hidden="true"><span class="matrix_link_title">Cody</span></a></li><li class=""><a class="svg_link" href="https://drive.matlab.com/" role="button" aria-label="MATLAB Drive" id="matrix_link_matlab_drive"><img src="./MATLAB Drive_files/ico-matrix-matlabdrive.svg" alt="matlab_drive" aria-hidden="true"><span class="matrix_link_title">MATLAB Drive</span></a></li><li class=""><a class="svg_link" href="https://thingspeak.com/" role="button" aria-label="ThingSpeak" id="matrix_link_thingspeak"><img src="./MATLAB Drive_files/ico-matrix-thingspeak.svg" alt="thingspeak" aria-hidden="true"><span class="matrix_link_title">ThingSpeak</span></a></li><li class=""><a class="svg_link" href="https://www.mathworks.com/support/bugreports/" role="button" aria-label="Bug Reports" id="matrix_link_bug_reports"><img src="./MATLAB Drive_files/ico-matrix-bugreports.svg" alt="bug_reports" aria-hidden="true"><span class="matrix_link_title">Bug Reports</span></a></li><li class=""><a class="svg_link" href="https://www.mathworks.com/matlabcentral/" role="button" aria-label="Community" id="matrix_link_community"><img src="./MATLAB Drive_files/ico-matrix-community.svg" alt="community" aria-hidden="true"><span class="matrix_link_title">Community</span></a></li></ul></nav></div></header></div></li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </nav>
+</div>
+<!-- Desktop TopNav: End -->
+
+<div id="notificationArea" class="importantMessage"></div>
+
+  <div class="myfilesTitlebar section_header level_3">
+    <div class="container-fluid">
+      <div class="row">
+        <div class="col-xs-12">
+          <div class="section_header_content">
+            <div class="section_header_title">
+              <h1 class="myfilesTitle">Files</h1>
+            </div>
+            <button type="button" class="navbar-toggle collapsed subnav visible-xs visible-sm" data-toggle="collapse" data-target=".mobile_subnav_content"> <span class="icon-arrow-down"></span> </button>
+          </div>
+        </div>
+      </div>
+      <!-- Section Header: End -->
+      <!-- Mobile Local Nav: Start -->
+      <div class="row visible-xs visible-sm" id="mobile_subnav">
+        <div class="col-xs-12">
+          <div class="navbar-collapse collapse mobile_subnav_content">
+            <ul class="nav navbar-nav subnav">
+              <li class="facets-files active"><span class="iconText">Files</span></li>
+              
+              <li class="facets-sharing"><span class="iconText">Shared Content</span></li>
+              
+              <li class="facets-trash"><span class="iconText">Deleted Files</span></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+      <!-- Mobile Local Nav: End -->
+    </div>
+    
+  </div>
+
+</div>
+
+<div id="filesView" class="treeView ff-delete fb-impl">
+
+  <div class="facets hidden-sm hidden-xs ff-delete">
+    <div class="facets-files is-disabled">
+      <span class="iconText">Files</span>
+    </div>
+    
+    <div class="facets-sharing">
+      <span class="iconText">Shared Content</span>
+    </div>
+    
+    <div class="facets-trash">
+      <span class="iconText">Deleted Files</span>
+    </div>
+    <div id="facetsQuotaContainer">
+      <ul class="list-unstyled">
+        <li class="quotaListItem"><div class="quotaContainer"><div class="progress"><div class="progress-bar" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" style="background: linear-gradient(to right, rgb(0, 114, 189) 100%, rgb(217, 83, 25) 0%, rgb(217, 83, 25) 100%); width: 0%;"></div></div><div class="quotaText"><span>3.4 MB / 20 GB used</span><div class="quotaInfo notificationImageInfo text-info" data-toggle="tooltip" data-container=".myfilesTitlebar" data-placement="right" style="margin-left: 7px"></div><div class="quotaInfoPerAppText"><span style="background: #0072BD;"></span>MATLAB Drive: 3.4 MB</div></div></div></li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="right-column ff-delete">
+
+    <div class="toolbar_container">
+      <div class="container-fluid">
+        <div class="row">
+          <div class="col-xs-12">
+            <div class="generalToolbar">
+              <div class="actionToolbar">
+                <div class="actionIconContainer">
+                  <div class="action_icon open">
+                    <span class="horizontalIconContainer">
+                    <div class="openInMatlabOnlineIcon" data-toggle="tooltip" data-container=".myfilesTitlebar" data-delay="{ &quot;show&quot;: 1000, &quot;hide&quot;: 100 }" data-placement="top" title="" data-original-title="Open this file in MATLAB Online.">
+                    </div></span>
+                    <span class="iconText">Open in MATLAB Online</span>
+                  </div>
+                  <div class="action_icon view fileViewDisabledIcon">
+                    <span class="horizontalIconContainer">
+                    <div class="viewIcon" data-toggle="tooltip" data-container=".myfilesTitlebar" data-delay="{ &quot;show&quot;: 1000, &quot;hide&quot;: 100 }" data-placement="top" title="" data-original-title="View this file.">
+                    </div></span>
+                    <span class="iconText">View</span>
+                  </div>
+                  <div class="action_icon newTabWindow"> <a id="viewFileMenuOpen" role="menuitem" href="https://drive.matlab.com/files/Published/main.m#" target="_blank" rel="noopener noreferrer">
+                    <span class="horizontalIconContainer">
+                      <div class="newtabIcon" title="View file in new tab."></div>
+                    </span> <span class="iconText">View in New Tab</span></a>
+                  </div>
+                  
+                    <div class="action_icon upload dropdown disabledIcon">
+                      <a href="https://drive.matlab.com/files/Published/main.m#" class="dropdown-toggle" data-toggle="dropdown" data-delay="{ &quot;show&quot;: 1000, &quot;hide&quot;: 100 }">
+                        <div class="uploadFilesActionContainer">
+                          <span class="horizontalIconContainer"><div class="uploadFilesIcon" data-toggle="tooltip" data-container=".myfilesTitlebar" data-delay="{ &quot;show&quot;: 1000, &quot;hide&quot;: 100 }" data-placement="top" title="" data-original-title="Upload files from desktop to MATLAB Drive."></div></span>
+                          <span class="iconText">Upload</span>
+                          <div class="caretContainer"><strong class="caret"></strong></div>
+                        </div>
+                      </a>
+                      <ul class="dropdown-menu">
+                        <li role="menuitem">
+                          <div class="action_icon uploadFiles disabledIcon">
+                            <span class="horizontalIconContainer"><div class="uploadMultipleFilesIcon" data-container=".myfilesTitlebar" data-toggle="tooltip" data-delay="{ &quot;show&quot;: 1000, &quot;hide&quot;: 100 }" data-placement="top" title="" data-original-title="Upload files from desktop to MATLAB Drive."></div></span> <span class="actionMenuText">Files</span>
+                          </div>
+                        </li>
+                        <li role="menuitem">
+                          <div class="action_icon uploadFolder disabledIcon">
+                            <span class="horizontalIconContainer"><div class="uploadFolderIcon" data-container=".myfilesTitlebar" data-toggle="tooltip" data-delay="{ &quot;show&quot;: 1000, &quot;hide&quot;: 100 }" data-placement="top" title="" data-original-title="Upload a folder from desktop to MATLAB Drive."></div></span> <span class="actionMenuText">Folder</span>
+                          </div>
+                        </li>
+                      </ul>
+                    </div>
+                  
+                  <div class="action_icon newFolder disabledIcon">
+                    <span class="horizontalIconContainer"><div class="newFolderIcon" data-toggle="tooltip" data-container=".myfilesTitlebar" data-delay="{ &quot;show&quot;: 1000, &quot;hide&quot;: 100 }" data-placement="top" title="" data-original-title="Create folder."></div></span> <span class="iconText">New Folder</span>
+                  </div>
+                  
+                  <div class="action_icon share dropdown disabledIcon">
+                    <a href="https://drive.matlab.com/files/Published/main.m#" class="dropdown-toggle" data-toggle="dropdown" data-delay="{ &quot;show&quot;: 1000, &quot;hide&quot;: 100 }" data-placement="right" data-original-title="" title="">
+                      <div class="shareActionContainer">
+                        <span class="horizontalIconContainer"><div class="shareIcon" data-toggle="tooltip" data-container=".myfilesTitlebar" data-delay="{ &quot;show&quot;: 1000, &quot;hide&quot;: 100 }" data-placement="top" title="" data-original-title="Share via invitation or view-only link."></div></span>
+                        <span class="iconText">Share</span>
+                        <div class="caretContainer"><strong class="caret"></strong></div>
+                      </div>
+                    </a>
+                    <ul class="dropdown-menu">
+                      
+                      <li role="menuitem">
+                        <div class="action_icon manage disabledIcon">
+                          <span class="horizontalIconContainer"><div class="manageIcon" data-container=".myfilesTitlebar" data-toggle="tooltip" data-delay="{ &quot;show&quot;: 1000, &quot;hide&quot;: 100 }" data-placement="top" title="" data-original-title="Manage users of this shared folder."></div></span> <span class="actionMenuText">Invite Members</span>
+                        </div>
+                      </li>
+                      
+                      <li role="menuitem">
+                        <div class="action_icon link disabledIcon">
+                          <span class="horizontalIconContainer"><div class="linkIcon" data-container=".myfilesTitlebar" data-toggle="tooltip" data-delay="{ &quot;show&quot;: 1000, &quot;hide&quot;: 100 }" data-placement="top" title="" data-original-title="Share folder via view-only link."></div></span> <span class="actionMenuText">View Link</span>
+                        </div>
+                      </li>
+                    </ul>
+                  </div>
+                  
+                  <div class="action_icon downloadFiles">
+                    <span class="horizontalIconContainer"><div class="downloadFilesIcon" data-toggle="tooltip" data-container=".myfilesTitlebar" data-delay="{ &quot;show&quot;: 1000, &quot;hide&quot;: 100 }" data-placement="top" title="" data-original-title="Download files from MATLAB Drive to your desktop."></div></span> <span class="iconText">Download</span>
+                  </div>
+                  <div class="action_icon rename fileViewDisabledIcon">
+                    <span class="horizontalIconContainer"><div class="renameIcon" data-toggle="tooltip" data-container=".myfilesTitlebar" data-delay="{ &quot;show&quot;: 1000, &quot;hide&quot;: 100 }" data-placement="top" title="" data-original-title="Rename selection."></div></span> <span class="iconText">Rename</span>
+                  </div>
+                  
+                  <div class="action_icon move fileViewDisabledIcon">
+                    <span class="horizontalIconContainer"><div class="moveIcon" data-toggle="tooltip" data-container=".myfilesTitlebar" data-delay="{ &quot;show&quot;: 1000, &quot;hide&quot;: 100 }" data-placement="top" title="" data-original-title="Move selection."></div></span> <span class="iconText">Move to</span>
+                  </div>
+                  <div class="action_icon copy">
+                    <span class="horizontalIconContainer"><div class="copyIcon" data-toggle="tooltip" data-container=".myfilesTitlebar" data-delay="{ &quot;show&quot;: 1000, &quot;hide&quot;: 100 }" data-placement="top" title="" data-original-title="Copy selection."></div></span> <span class="iconText">Copy to</span>
+                  </div>
+                  
+                  <div class="action_icon deleteFile fileViewDisabledIcon">
+                    <span class="horizontalIconContainer"><div class="deleteIcon" data-toggle="tooltip" data-container=".myfilesTitlebar" data-delay="{ &quot;show&quot;: 1000, &quot;hide&quot;: 100 }" data-placement="top" title="" data-original-title="Move selection to Deleted Files."></div></span> <span class="iconText">Delete</span>
+                  </div>
+                  <div class="action_icon viewFileInlineClose">
+                    <button id="closeViewFileInlineButton" type="button" class="close closeViewFileInlineButton" data-dismiss="modal" aria-label="Close" style="display: inline-block;"><span aria-hidden="true">×</span></button>
+                  </div>
+                </div>
+              </div>
+              <div class="breadcrumbContainer"><ol class="breadcrumb"><li><a href="https://drive.matlab.com/files/Published/main.m#" title="MATLAB Drive" data-folderpath="/">MATLAB Drive<span data-folderpath="/"></span></a></li><li class="no-icon"><div class="btn-group dropdown"><button title="More folders" type="button" data-toggle="dropdown" class="btn btn-default dropdown-toggle"><div class="breadcrumbDropdownButtonText">…&nbsp; </div><div class="caretContainer"><b class="caret"></b></div></button><ul class="dropdown-menu"><li class="menu-item"><a href="https://drive.matlab.com/files/Published/main.m#" title="Published" data-folderpath="/Published">Published<span data-folderpath="/Published"></span></a></li></ul></div></li><li class="active isFile" title="main.m">main.m<span></span></li></ol></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="container-fluid">
+      <div class="row">
+        <div class="col-xs-12">
+          <div id="inlineFileViewContainer" class="inlineFileViewContainer info-panel-enabled" style="display: block;"><div><div id="viewFileInlineContainer" tabindex="-1">
+  <div class="viewFileInlineBody">
+    <div id="pleaseWaitDiv" style="display: none;">
+      <h1>Loading...</h1>
+      <div class="imageContainer"> <img src="./MATLAB Drive_files/throbber.gif" alt="throbber"> </div>
+    </div>
+    <div id="viewFileErrorMessage" class="viewFileErrorMessage" style="display:none;">
+      <div class="notificationErrorWrapper"><span class="notificationImageError" aria-hidden="true"></span><span class="notificationContentTextError"></span></div>
+    </div>
+
+    
+
+    
+      <div id="viewFileIframeContainer" class="ios_iframe_scroller">
+        <iframe id="viewFileIframe" class="viewFileIframe" src="./MATLAB Drive_files/saved_resource(1).html" title="View File"></iframe>
+      </div>
+    
+  </div>
+</div>
+</div></div>
+          <div class="wrapper">
+            <div id="jstree" class="fileDataContainer" style="display: none;"><div id="uniqName_0_0" class="fileBrowser2" data-dojo-attach-point="fileBrowserContainer" widgetid="uniqName_0_0">
+<div data-dojo-attach-point="dgridContainer" class="dgrid dgrid-grid ui-widget dgridContainer highlightRowOnPath" id="dgrid_0" role="grid"><div class="dgrid-header dgrid-header-row ui-widget-header" role="row" tabindex="0"><table class="dgrid-row-table" role="presentation" id="dgrid_0-header"><tr class="dojoDndContainer dojoDndSource dojoDndTarget dojoDndHorizontal"><th class="dgrid-cell dgrid-cell-padding dgrid-column-nameColumnFiles field-name dgrid-sortable" role="columnheader"><div class="dgrid-resize-header-container dgrid-sort-up"><div class="dgrid-sort-arrow ui-icon" role="presentation">&nbsp;</div><div class="columnHeaderLabel">Name</div><div class="dgrid-resize-handle resizeNode-nameColumnFiles"></div></div></th><th class="dgrid-cell dgrid-cell-padding dgrid-column-sizeColumnFiles field-size dgrid-sortable dojoDndItem" role="columnheader" dndtype="dgrid-dgrid_0-0" id="dojoUnique1"><div class="dgrid-resize-header-container"><div class="columnHeaderLabel">Size</div><div class="dgrid-resize-handle resizeNode-sizeColumnFiles"></div></div></th><th class="dgrid-cell dgrid-cell-padding dgrid-column-clientDateModifiedColumnFiles field-clientLastModifiedUtc dgrid-sortable dojoDndItem" role="columnheader" dndtype="dgrid-dgrid_0-0" id="dojoUnique2"><div class="dgrid-resize-header-container"><div class="columnHeaderLabel">Date Modified</div><div class="dgrid-resize-handle resizeNode-clientDateModifiedColumnFiles"></div></div></th><th class="dgrid-cell dgrid-cell-padding dgrid-column-OwnedByColumnFiles field-ownedBy dgrid-sortable dojoDndItem" role="columnheader" dndtype="dgrid-dgrid_0-0" id="dojoUnique3"><div class="dgrid-resize-header-container"><div class="columnHeaderLabel">Owned By </div><div class="dgrid-resize-handle resizeNode-OwnedByColumnFiles"></div></div></th></tr></table></div><div class="dgrid-scroller dojoDndSource dojoDndTarget dojoDndContainer" style="user-select: none; margin-top: 0px; margin-bottom: 0px;"><div class="dgrid-content ui-widget-content"><div class="dgrid-preload" style="height: 0px;"></div><div role="row" class="dgrid-row ui-state-default dojoDndItem dgrid-row-even" id="dgrid_0-row-/Published"><table class="dgrid-row-table" role="presentation"><tr><td class="dgrid-cell dgrid-cell-padding dgrid-column-nameColumnFiles field-name" role="gridcell"><div class="dgrid-expando-icon ui-icon ui-icon-triangle-1-se" style="margin-left: 0px; float: left;">&nbsp;</div><span class="dgrid-cell-data"><span id="id-icon-place-holder" class="folderOpened"></span>Published</span></td><td class="dgrid-cell dgrid-cell-padding dgrid-column-sizeColumnFiles field-size" role="gridcell"><span class="dgrid-cell-data"></span></td><td class="dgrid-cell dgrid-cell-padding dgrid-column-clientDateModifiedColumnFiles field-clientLastModifiedUtc" role="gridcell">11/21/2022 10:10 PM</td><td class="dgrid-cell dgrid-cell-padding dgrid-column-OwnedByColumnFiles field-ownedBy" role="gridcell">Me</td></tr></table></div><div class="dgrid-tree-container" style="display: block;"><div class="dgrid-preload" style="height: 0px;"></div><div role="row" class="dgrid-row ui-state-default dojoDndItem dgrid-row-even dgrid-focus dgrid-selected ui-state-active dojoDndItemAnchor" id="dgrid_0-row-/Published/main.m" tabindex="0"><table class="dgrid-row-table" role="presentation"><tr><td class="dgrid-cell dgrid-cell-padding dgrid-column-nameColumnFiles field-name" role="gridcell"><div class="dgrid-expando-icon" style="margin-left: 25px; float: left;">&nbsp;</div><span class="dgrid-cell-data"><span id="id-icon-place-holder" class="motwFileTypem"></span>main.m</span></td><td class="dgrid-cell dgrid-cell-padding dgrid-column-sizeColumnFiles field-size" role="gridcell"><span class="dgrid-cell-data">1 KB</span></td><td class="dgrid-cell dgrid-cell-padding dgrid-column-clientDateModifiedColumnFiles field-clientLastModifiedUtc" role="gridcell">11/21/2022 10:10 PM</td><td class="dgrid-cell dgrid-cell-padding dgrid-column-OwnedByColumnFiles field-ownedBy" role="gridcell">Me</td></tr></table></div><div class="dgrid-preload" style="display: none;"></div></div><div class="dgrid-preload" style="display: none;"></div></div></div><div class="dgrid-header dgrid-header-scroll dgrid-scrollbar-width ui-widget-header" style="height: 0px;"></div><div class="dgrid-footer dgrid-footer-hidden"></div><button class="ui-icon dgrid-hider-toggle" type="button" aria-label="Show or hide columns"></button><div class="dgrid-hider-menu" role="dialog" aria-label="Show or hide columns" id="dgrid_0-hider-menu" style="display: none;"><div class="dgrid-hider-menu-row"><input class="dgrid-hider-menu-check hider-menu-check-sizeColumnFiles" type="checkbox" id="dgrid_0-hider-menu-check-sizeColumnFiles"><label class="dgrid-hider-menu-label hider-menu-label-sizeColumnFiles" for="dgrid_0-hider-menu-check-sizeColumnFiles">Size</label></div><div class="dgrid-hider-menu-row"><input class="dgrid-hider-menu-check hider-menu-check-clientDateModifiedColumnFiles" type="checkbox" id="dgrid_0-hider-menu-check-clientDateModifiedColumnFiles"><label class="dgrid-hider-menu-label hider-menu-label-clientDateModifiedColumnFiles" for="dgrid_0-hider-menu-check-clientDateModifiedColumnFiles">Date Modified</label></div><div class="dgrid-hider-menu-row"><input class="dgrid-hider-menu-check hider-menu-check-OwnedByColumnFiles" type="checkbox" id="dgrid_0-hider-menu-check-OwnedByColumnFiles"><label class="dgrid-hider-menu-label hider-menu-label-OwnedByColumnFiles" for="dgrid_0-hider-menu-check-OwnedByColumnFiles">Owned By </label></div></div></div>
+<form id="uploadForm" data-dojo-attach-point="uploadForm" enctype="multipart/form-data">
+    <input id="fileupload" class="hiddenFileInputForUpload" data-dojo-attach-point="hiddenFileInputForUpload" data-test-id="hiddenFileInputForUpload" name="uploadFileName" type="file" multiple="">
+</form>
+</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    
+    <div class="info-panel">
+      <div class="collapsable-panel">
+        <div class="openCloseButton" style="position: fixed; "></div>
+        <span class="notificationImageInfo text-info" data-toggle="tooltip" data-container=".myfilesTitlebar" data-placement="left" title="" data-original-title="Expand to view information about the current folder."></span>
+        <div class="container-fluid">
+          <div style="padding-top: 0px; "><span class="infoPanelFolderIcon"></span><span id="folderNamePanel">MATLAB Drive</span></div>
+          <div>Owned By: <span id="ownedByPanel">Me</span></div>
+          <div>Access Type: <span id="accessTypePanel">Owner</span></div>
+          <div style="display: none;">Shared Parent: <span id="sharedParentPathPanel"></span></div>
+          <div>Created On: <span id="createdOnPanel">Tue Jan 26 2021</span></div>
+          <div>Modified On: <span id="modifiedByPanel">Sun Jun 26 2022</span></div>
+        </div>
+      </div>
+    </div>
+    
+
+  </div>
+
+</div>
+
+<div id="filesFooter" class="mainFooter ff-delete">
+  <div class="container-fluid">
+    <div class="row">
+      <div class="col-xs-12">
+        <p translate="no" class="copyright">© 1994-2022 The MathWorks, Inc.</p>
+        <ul class="footernav">
+          <li class="footernav_patents"><a href="https://www.mathworks.com/company/aboutus/policies_statements/patents.html?s_tid=gf_pat" target="_blank" rel="noopener noreferrer">Patents</a></li>
+          <li class="footernav_trademarks"><a href="https://www.mathworks.com/company/aboutus/policies_statements/trademarks.html?s_tid=gf_trd" target="_blank" rel="noopener noreferrer">Trademarks</a></li>
+          <li class="footernav_privacy"><a href="https://www.mathworks.com/company/aboutus/policies_statements.html?s_tid=gf_priv" target="_blank" rel="noopener noreferrer">Privacy Policy</a></li>
+          <li class="footernav_piracy"><a href="https://www.mathworks.com/company/aboutus/policies_statements/piracy.html?s_tid=gf_pir" target="_blank" rel="noopener noreferrer">Preventing Piracy</a></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<iframe id="file_upload_target" name="file_upload_target" src="./MATLAB Drive_files/saved_resource(2).html" title="File Upload Target"></iframe>
+<div id="modalContainer" class="modalContainer"></div>
+</div>
+
+
+
+<script src="./MATLAB Drive_files/dojoConfig_3.8.0.js.download"></script>
+<script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/dojo_en-us.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/jquery-2.2.0.min.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/advancedBrowserSupportCheck.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/underscore.min.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/backbone-min.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/bootstrap.min.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/abstractdao.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/gdsdao.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/mockdao.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/util.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/actionbtnmanager.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/loginuimanager.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/authmanager.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/CreateFolder.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/CreateFolderInline.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/deleteDialog.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/deleteAllDialog.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/renamePromptDialog.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/restoreFolderDialog.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/simpleUpload.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/filesPage.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/trashPage.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/folderChooserDialog.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/OpenInMO.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/CreateFolderView.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/FileConflictView.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/RenamePrompt.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/ErrorCodeMessageMap.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/ErrorMessageTranslator.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/ErrorMsgOverrideData.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/RestoreFolderView.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/ViewFileView.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/saveToDriveView.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/folderChooserView.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/OpenInMOView.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/BreadcrumbManager.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/FbFileNode.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/FbFolderNode.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/FbNodeData.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/ShareNodeData.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/ShareNode.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/mldofileservice.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/sharingFileService.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/FbTreeController.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/matlabdriverouter.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/notificationmanager.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/simplefileuploadmgr.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/userquotamanager.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/AbstractPage.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/trashPage.js(1).download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/filesPage.js(1).download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/SharingPage.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/emailAddressValidator.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/InitiateSharingView.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/abstractWidget.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/quota.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/folderContents.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/searchFiles.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/trashContents.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/folderChooser.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/initiateSharing.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/saveToDrive.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/ColumnRegistry.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/ClientDateModifiedColumn.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/DeletedDateColumn.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/OriginalLocationColumn.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/TombstoneColumn.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/SharedByColumn.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/SharedOnColumn.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/AccessTypeColumn.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/ActionHandler.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/ActionRegistry.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/DownloadAction.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/DeleteAction.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/RenameAction.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/CutAction.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/CopyAction.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/PasteAction.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/UploadAction.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/UploadFilesAction.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/UploadFolderAction.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/NewFolderAction.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/RestoreAction.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/PermanentlyDeleteAction.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/EmptyTrashAction.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/ViewInBrowserAction.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/ViewNewTabAction.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/ShareAction.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/ManageAction.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/LinkAction.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/LeaveAction.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/AddToDriveAction.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/ShareLinkAction.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/OpenInMatlabOnlineAction.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/MoveAction.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/MldoActionsContextMenuBuilder.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/matlabdriveapp.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/mldoStringResource.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/fileConflictDialog.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/viewFileDialog.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/viewFileInline.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/config.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/pageNavHeader.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/SharingPage.js(1).download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/InitiateSharingDialog.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/OwnedByColumn.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/AddShortcutAction.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/CopyToDriveAction.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/GoToDriveAction.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/ClipboardManager.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/PreviewPage.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/apsClient.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/PreviewPage.js(1).download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/FolderDragAndDropBehavior.js.download"></script><script type="text/javascript" charset="utf-8" src="./MATLAB Drive_files/mldofb.js.download"></script><script src="./MATLAB Drive_files/dojo.js.download"></script>
+<script>
+    var _isMacSafari = (navigator && (navigator.userAgent.indexOf('Safari') != -1 && navigator.userAgent.indexOf('Chrome') == -1 && !navigator.userAgent.match(/iP(ad|hone)/i))) ? true : false;
+    var adownload = ("download" in document.createElement("a"));
+    var touchevents = (('ontouchstart' in window )|| ("DocumentTouch" in window && window.DocumentTouch && document instanceof window.DocumentTouch));
+    require(['jquery'], function($) {
+      require(["mw-browser-utils/BrowserCheck!" + "/assets_3.8.0/errors/incompatibleBrowser.html"], function() {
+        require (['advancedBrowserSupportCheck'], function(isSupported) {
+          if (isSupported && typeof isSupported === 'function' && isSupported()) {
+            require([
+                'underscore',
+                'backbone',
+                'bootstrap',
+                'dao/abstractdao',
+                'dao/gdsdao',
+                'dao/mockdao',
+                'util',
+                'actionbtnmanager',
+                'loginuimanager',
+                'authmanager',
+                'templates/CreateFolder',
+                'templates/CreateFolderInline',
+                'templates/deleteDialog',
+                'templates/deleteAllDialog',
+                'templates/renamePromptDialog',
+                'templates/restoreFolderDialog',
+                'templates/simpleUpload',
+                'templates/filesPage',
+                'templates/trashPage',
+                'templates/folderChooserDialog',
+                'templates/OpenInMO',
+                'CreateFolderView',
+                'FileConflictView',
+                'RenamePrompt',
+                'ErrorCodeMessageMap',
+                'ErrorMessageTranslator',
+                'ErrorMsgOverrideData',
+                'RestoreFolderView',
+                'ViewFileView',
+                'saveToDriveView',
+                'folderChooserView',
+                'OpenInMOView',
+                'filebrowser/BreadcrumbManager',
+                'filebrowser/gdsdata/FbFileNode',
+                'filebrowser/gdsdata/FbFolderNode',
+                'filebrowser/gdsdata/FbNodeData',
+                'filebrowser/gdsdata/ShareNodeData',
+                'filebrowser/gdsdata/ShareNode',
+                'mldofileservice',
+                'sharingFileService',
+                'filebrowser/FbTreeController',
+                'matlabdriverouter',
+                'notificationmanager',
+                'simplefileuploadmgr',
+                'userquotamanager',
+                "pages/AbstractPage",
+                "pages/TrashPage",
+                'pages/FilesPage',
+                'pages/SharingPage',
+                'emailAddressValidator',
+                'InitiateSharingView',
+                'widgets/abstractWidget',
+                'widgets/quota',
+                'widgets/folderContents',
+                'widgets/searchFiles',
+                'widgets/trashContents',
+                'widgets/folderChooser',
+                'widgets/initiateSharing',
+                'widgets/saveToDrive',
+                'filebrowser/columns/ColumnRegistry',
+                'filebrowser/columns/ClientDateModifiedColumn',
+                'filebrowser/columns/DeletedDateColumn',
+                'filebrowser/columns/OriginalLocationColumn',
+                'filebrowser/columns/TombstoneColumn',
+                'filebrowser/columns/SharedByColumn',
+                'filebrowser/columns/SharedOnColumn',
+                'filebrowser/columns/AccessTypeColumn',
+                'filebrowser/actions/ActionHandler',
+                'filebrowser/actions/contextmenu/ActionRegistry',
+                'filebrowser/actions/contextmenu/DownloadAction',
+                'filebrowser/actions/contextmenu/DeleteAction',
+                'filebrowser/actions/contextmenu/RenameAction',
+                'filebrowser/actions/contextmenu/CutAction',
+                'filebrowser/actions/contextmenu/CopyAction',
+                'filebrowser/actions/contextmenu/PasteAction',
+                'filebrowser/actions/contextmenu/UploadAction',
+                'filebrowser/actions/contextmenu/UploadFilesAction',
+                'filebrowser/actions/contextmenu/UploadFolderAction',
+                'filebrowser/actions/contextmenu/NewFolderAction',
+                'filebrowser/actions/contextmenu/RestoreAction',
+                'filebrowser/actions/contextmenu/PermanentlyDeleteAction',
+                'filebrowser/actions/contextmenu/EmptyTrashAction',
+                'filebrowser/actions/contextmenu/ViewInBrowserAction',
+                'filebrowser/actions/contextmenu/ViewNewTabAction',
+                'filebrowser/actions/contextmenu/ShareAction',
+                'filebrowser/actions/contextmenu/ManageAction',
+                'filebrowser/actions/contextmenu/LinkAction',
+                'filebrowser/actions/contextmenu/LeaveAction',
+                'filebrowser/actions/contextmenu/AddToDriveAction',
+                'filebrowser/actions/contextmenu/ShareLinkAction',
+                'filebrowser/actions/contextmenu/OpenInMatlabOnlineAction',
+                'filebrowser/actions/contextmenu/MoveAction',
+                'filebrowser/actions/contextmenu/MldoActionsContextMenuBuilder',
+                'matlabdriveapp'], function(_) {
+                  $(document).ready(function() {
+                    $('html').removeClass('no-js');
+                    $('html').addClass('js');
+                    if (touchevents) {
+                        $('html').addClass("touchevents");
+                      }
+                      require([
+                          "dojo/i18n!nls/mldoStringResource",
+                          "dojo/string",
+                          "mldofb",
+                          "config"
+                      ], function(MLDOStrings, DojoString, MldoFbApp, GCONFIG) {
+                          // set i18n strings
+                          document.title = MLDOStrings.indexPageTitle;
+                          var matlabDriveApp = new MldoFbApp({
+                              applicationOptions: {
+                                  appContainerId: 'matlabDriveApp',
+                                  authContainerId: 'loginContainer',
+                                  loginIframeId: 'loginIframe',
+                                  notificationAreaId: 'notificationArea',
+                                  loginTextContainerId: 'loginTextContainer',
+                                  loginFooterId: 'mldoLoginFooter',
+                                  loginLinkAreaId: 'loginLinkArea',
+                                  allowDnD: (!touchevents) ? true : false,
+                                  allowDownloads: ((adownload) || (navigator && (navigator.msSaveBlob || _isMacSafari))) ? true: false
+                              }, config: GCONFIG });
+                          matlabDriveApp.startApplication();
+                          $('#header_mobile_login .navbar-header span.sr-only').text(MLDOStrings.indexPageToggleNavigation);
+                          $('div#mldoLoginFooter ul.footernav li.footernav_patents > a').text(MLDOStrings.footerPatents);
+                          $('div#mldoLoginFooter ul.footernav li.footernav_trademarks > a').text(MLDOStrings.footerTrademarks);
+                          $('div#mldoLoginFooter ul.footernav li.footernav_privacy > a').text(MLDOStrings.footerPrivacy);
+                          $('div#mldoLoginFooter ul.footernav li.footernav_piracy > a').text(MLDOStrings.footerPiracy);
+                          if (!touchevents) {
+                            $('[data-toggle="tooltip"]').tooltip();
+                          }
+                    });
+              });
+              let matrixScript = document.createElement('script');
+              matrixScript.type = 'text/javascript';
+              matrixScript.src = '/assets_3.8.0/lib/matrix/main.js';
+              document.body.appendChild(matrixScript);
+          });
+        } else {
+          window.location.href = "/assets_3.8.0/errors/incompatibleBrowser.html";
+        }
+      });
+    });
+  });
+</script>
+
+<script type="text/javascript" src="./MATLAB Drive_files/main.js.download"></script><script type="text/javascript" src="./MATLAB Drive_files/qualaroo.js.download"></script><script type="application/javascript" src="./MATLAB Drive_files/openwith.js.download"></script><script type="text/javascript" src="./MATLAB Drive_files/adobe.js.download"></script><iframe id="qualaroo_dnt_frame" src="./MATLAB Drive_files/frame.html" style="width: 1px; height: 1px; display: none; opacity: 0;"></iframe><script>_satellite["_runScript1"](function(event, target, Promise) {
+_satellite.cookie.set("_sdsat_eid",_satellite.getVar('eid'),1);
+});</script><script>_satellite["_runScript2"](function(event, target, Promise) {
+var _kiq=_kiq||[];_kiq.push(["enableAccessibilityMode"]),setTimeout((function(){var e=document,t=e.getElementsByTagName("script")[0],s=e.createElement("script");s.type="text/javascript",s.async=!0,s.src="https://cl.qualaroo.com/ki.js/49559/ahy.js",t.parentNode.insertBefore(s,t)}),1);
+});</script><script>_satellite["_runScript3"](function(event, target, Promise) {
+"undefined"!=typeof _qevents&&_qevents.push({qacct:"p-zfNtLVVEHXE-1",labels:"_fp.event.Second Page View",event:"refresh"}),"undefined"!=typeof fbq&&fbq("track","Lead",{content_name:"Second Page View"}),"undefined"!=typeof gtag&&_satellite.track("secondPageViewInboundGoogle"),"undefined"!=typeof ytag&&(ytag({type:"yss_conversion",config:{yahoo_conversion_id:"1000315120",yahoo_conversion_label:"K_COCKmB694BEMupjrgD",yahoo_conversion_value:"1"}}),ytag({type:"yjad_conversion",config:{yahoo_ydn_conv_io:"g4ZvwO4OLDVmfCZwx5Sw",yahoo_ydn_conv_label:"SGV0KVGHOPV8FFNALZ8736264",yahoo_ydn_conv_value:"1"}}));
+});</script><iframe id="qualaroo_dnt_frame" src="./MATLAB Drive_files/frame(1).html" style="width: 1px; height: 1px; display: none; opacity: 0;"></iframe></body><!-- Load Dojo --></html>

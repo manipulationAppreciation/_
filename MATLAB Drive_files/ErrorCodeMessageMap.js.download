@@ -1,0 +1,174 @@
+/*jshint esversion: 6 */
+define([
+  "ErrorMsgOverrideData"
+], function(ERROR_MSG_OVERRIDE_DATA) {
+
+  const INVERSE_OPERATOR = "__NOT__";
+
+  // Does this browser support ES6 Map?
+  var checkMap = function() {
+    if (window.Map) {
+      return true;
+    }
+    return false;
+  };
+
+  var ErrorCodeMessageMap;
+  /* istanbul ignore next */
+  if (checkMap()) {
+    ErrorCodeMessageMap = function() {
+      this.errorCodeToOperationMap = new Map();
+    };
+    ErrorCodeMessageMap.prototype = {
+      add: function(errorCode, operationName, applyErrorCodeInversely, messageData, replaceExisting) {
+        var effectiveErrorCode = errorCode.toUpperCase();
+        var operationMap;
+        if (applyErrorCodeInversely) {
+          effectiveErrorCode = INVERSE_OPERATOR + errorCode;
+        }
+        // Is there already an errorCode entry? use it.
+        if (this.errorCodeToOperationMap.has(effectiveErrorCode)) {
+          operationMap = this.errorCodeToOperationMap.get(effectiveErrorCode);
+          // Does the errorCode entry already have an entry for the operationName? Do nothing unless replaceExisting is true.
+          // If it does not, add new entry for the operationName
+          if (!operationMap.has(operationName)) {
+            operationMap.set(operationName, messageData);
+          } else {
+            if (replaceExisting) {
+              operationMap.set(operationName, messageData);
+            }
+          }
+        } else { // create a new entry for this errorCode.
+          operationMap = new Map();
+          // Add the operationName and data entry to the map
+          operationMap.set(operationName, messageData);
+          // add the errorCode and its operationMap to the errorCode map
+          this.errorCodeToOperationMap.set(effectiveErrorCode, operationMap);
+        }
+        return this; // enable chaining
+      },
+
+      get: function(errorCode, operationName, applyErrorCodeInversely) {
+        var effectiveErrorCode = errorCode.toUpperCase();
+        var messageData = null;
+        if (applyErrorCodeInversely) {
+          messageData = this.getInverseMapForOperation(effectiveErrorCode, operationName);
+        } else {
+          if (this.errorCodeToOperationMap.has(effectiveErrorCode)) {
+            var operationMap = this.errorCodeToOperationMap.get(effectiveErrorCode);
+            if (operationMap.has(operationName)) {
+              messageData = operationMap.get(operationName);
+            }
+          }
+        }
+        return messageData;
+      },
+
+      getInverseMapForOperation: function(errorCode, operationName) {
+        var operationMap;
+        var messageData = null;
+        var inverseErrorCode;
+        var found = false;
+        this.errorCodeToOperationMap.forEach(function(value, key, map) {
+          if (!found) {
+            if (key.indexOf(INVERSE_OPERATOR) === 0) {
+              operationMap = value;
+              if (operationMap.has(operationName)) {
+                inverseErrorCode = key.substr(INVERSE_OPERATOR.length);
+                if (errorCode !== inverseErrorCode) {
+                  messageData = operationMap.get(operationName);
+                }
+                found = true;
+              }
+            }
+          }
+        });
+        return messageData;
+      },
+
+      initialize: function() {
+        var context = this;
+        ERROR_MSG_OVERRIDE_DATA.forEach(function(entry) {
+          context.add(entry.errorCode, entry.operationName, entry.inverse, entry.msgData, false);
+        });
+      }
+    };
+  } else {  // ES6 Map not supported by the browser thr
+    ErrorCodeMessageMap = function() {
+      this.errorCodeToOperationMap = {};
+    };
+    ErrorCodeMessageMap.prototype = {
+      add: function(errorCode, operationName, applyErrorCodeInversely, messageData, replaceExisting) {
+        var effectiveErrorCode = errorCode.toUpperCase();
+        var operationMap;
+        if (applyErrorCodeInversely) {
+          effectiveErrorCode = INVERSE_OPERATOR + errorCode;
+        }
+        // Is there already an errorCode entry? use it.
+        if (this.errorCodeToOperationMap[effectiveErrorCode]) {
+          operationMap = this.errorCodeToOperationMap[effectiveErrorCode];
+          // Does the errorCode entry already have an entry for the operationName? Do nothing unless replaceExisting is true.
+          // If it does not, add new entry for the operationName
+          if (!operationMap[operationName]) {
+            operationMap[operationName] = messageData;
+          } else {
+            if (replaceExisting) {
+              operationMap[operationName] = messageData;
+            }
+          }
+        } else { // create a new entry for this errorCode.
+          operationMap = {};
+          // Add the operationName and data entry to the map
+          operationMap[operationName] = messageData;
+          // add the errorCode and its operationMap to the errorCode map
+          this.errorCodeToOperationMap[effectiveErrorCode] = operationMap;
+        }
+        return this; // enable chaining
+      },
+
+      get: function(errorCode, operationName, applyErrorCodeInversely) {
+        var effectiveErrorCode = errorCode.toUpperCase();
+        var messageData = null;
+        if (applyErrorCodeInversely) {
+          messageData = this.getInverseMapForOperation(effectiveErrorCode, operationName);
+        } else {
+          if (this.errorCodeToOperationMap[effectiveErrorCode]) {
+            var operationMap = this.errorCodeToOperationMap[effectiveErrorCode];
+            if (operationMap[operationName]) {
+              messageData = operationMap[operationName];
+            }
+          }
+        }
+        return messageData;
+      },
+
+      getInverseMapForOperation: function(errorCode, operationName) {
+        var operationMap;
+        var messageData = null;
+        var inverseErrorCode;
+        for(var key in this.errorCodeToOperationMap) {
+          if (INVERSE_OPERATOR == key.substr(0, INVERSE_OPERATOR.length)) {
+            operationMap = this.errorCodeToOperationMap[key];
+            if (operationMap[operationName]) {
+              inverseErrorCode = key.substr(INVERSE_OPERATOR.length);
+              if (errorCode !== inverseErrorCode) {
+                messageData = operationMap[operationName];
+              }
+              break;
+            }
+          }
+        }
+        return messageData;
+      },
+
+      initialize: function() {
+        var context = this;
+        ERROR_MSG_OVERRIDE_DATA.forEach(function(entry) {
+          context.add(entry.errorCode, entry.operationName, entry.inverse, entry.msgData, false);
+        });
+      }
+    };
+  }
+
+  return ErrorCodeMessageMap;
+});

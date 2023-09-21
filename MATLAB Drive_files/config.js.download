@@ -1,0 +1,154 @@
+define(function() {
+  /**
+   * Global Configuration Parameters - Singleton
+   */
+  var GCONFIG = (function() {
+    // private data
+    var _loginUrl = "https://login.mathworks.com/embedded-login/v2/login.html?locale=en_US";
+    var _logoutUrl = "https://login.mathworks.com/embedded-login/logout.html?uri=";
+    var _gdsUrl = "https://gds.mathworks.com/gds/service/v1";
+    var _html5PushState = true;
+    var _daoClassName = 'GDSDAO';  // classname of DAO implementation to use
+    var _routerHistoryBase = '/';
+    var _deleteEnabled = true;
+    var _useAPS = true;
+    var _apsBrokerUrl =  "apsbroker.mss-mathworks.com\/websocket\/agent";
+    var _apsAuthUrl = "https://authnz.mathworks.com/messages/json";
+    var _apsLoginUrl = "https://login.mathworks.com/authenticationws/service/v4/login";
+    var _apsAuthProxyUrl = ""; // "https://gds.mathworks.com/gds/service/v1/apslogin";
+    var _apsStorageTopic = "/gds/user/storageChange";
+    var _apsResourceTopic = "/gds/content/resourceChange";
+    var _apsResourceAttributesTopic = "/gds/content/resourceAttributesChange";
+    var _apsInvitationTopic = "/gds/content/invitation";
+    var _apsAdditionalApps = []; // ignored if _enableAdditionalApplications is false
+    var _enableAdditionalApplications = false; // update _apsAdditionalApps appropriately
+    var _enableFileView = true;
+    var _enableViewInNewTab = true;
+    var _enableShowHiddenFiles = true;
+    var _enableOpenWith = true;
+    var _mockOpenwith = false;
+    var _openWithURL = "https://openwith.mathworks.com/openwith.js";
+    var _enableViewerService = true;
+    var _viewerServiceURL = "https://viewer.mathworks.com";
+    var _showPreviewBanner = false;
+    var _enableCopy = true;
+    var _sharingEnabled = true;
+    var _personalInvitationsEnabled = true;
+    var _editPermissionsEnabled = true;
+    var _emailUrlPrefix = "https://drive.matlab.com/sharing";
+    var _throwTranslationErrorEnabled = false;
+    var _enableInvitationPreview = true;
+    var _enableDirectoryUpload = true;
+    var _shouldShowUnshareOption = true;
+    var _embeddedWidgetTesterEnabled = false;
+    var _enableMove = true;
+    var _enableQualaroo = true;
+    var _enableAdobeAnalytics = true;
+    var _enableCopyToDrive = true;
+    var _maxUploadFileSize = 2147483648; // size in bytes
+    var _enableInfoPanel = true;
+    var _enableFolderDownload = true;
+    var _inlineFileView = true;
+    var _matrixEnvironment = "production";
+    var _matrixHost = "https://www.mathworks.com";
+    // getters to be exposed
+    var getLoginUrl = function() { return _loginUrl; };
+    var getLogoutUrl = function() { return _logoutUrl; };
+    var getGdsUrl = function() { return _gdsUrl; };
+    var getHtml5PushState = function() { return _html5PushState; };
+    var getDaoClassName = function() { return _daoClassName; };
+    var getRouterHistoryBase = function() { return _routerHistoryBase; };
+    var isDeleteEnabled = function() { return _deleteEnabled; };
+    var useAps = function() { return _useAPS; };
+    var getApsBrokerUrl = function() { return _apsBrokerUrl; };
+    var getApsAuthUrl = function() { return _apsAuthUrl; };
+    var getApsLoginUrl = function() { return _apsLoginUrl; };
+    var getApsAuthProxyUrl = function() { return _apsAuthProxyUrl; };
+    var getApsStorageTopic = function() { return _apsStorageTopic; };
+    var getApsResourceTopic = function() { return _apsResourceTopic; };
+    var getApsResourceAttributesTopic = function() { return _apsResourceAttributesTopic; };
+    var getApsInvitationTopic = function() { return _apsInvitationTopic; };
+    var getApsSupportedApps = function() { return _apsAdditionalApps; };
+    var isFileViewEnabled = function() { return _enableFileView; };
+    var getInlineFileView = function() {return _inlineFileView;};
+    var isViewInNewTabEnabled = function() { return _enableViewInNewTab; };
+    var isShowHiddenFilesEnabled = function() { return _enableShowHiddenFiles; };
+    var isAdditionalApplicationsEnabled = function() { return _enableAdditionalApplications; };
+    var isOpenWithEnabled = function() { return _enableOpenWith; };
+    var getOpenWithUrl = function() { return _openWithURL; };
+    var mockOpenwith = function() { return _mockOpenwith; };
+    var isViewerServiceEnabled = function() { return _enableViewerService; };
+    var getViewerServiceUrl = function() { return _viewerServiceURL; };
+    var isPreviewBannerEnabled = function() { return _showPreviewBanner; };
+    var isCopyEnabled = function() { return _enableCopy; };
+    var isSharingEnabled = function() { return _sharingEnabled; };
+    var isEditPermissionsEnabled = function() { return _editPermissionsEnabled; };
+    var getEmailUrlPrefix = function() { return _emailUrlPrefix; };
+    var isThrowTranslationErrorEnabled = function() { return _throwTranslationErrorEnabled; };
+    var isPersonalInvitationsEnabled = function() { return _personalInvitationsEnabled; };
+    var isInvitationPreviewEnabled = function() { return _enableInvitationPreview; };
+    var isDirectoryUploadEnabled = function() { return _enableDirectoryUpload; };
+    var shouldShowUnshareOption = function() { return _shouldShowUnshareOption; };
+    var isEmbeddedWidgetTesterEnabled = function() { return _embeddedWidgetTesterEnabled; };
+    var isMoveEnabled = function() { return _enableMove; };
+    var isQualarooEnabled = function() { return _enableQualaroo; };
+    var isAdobeAnalyticsEnabled = function() { return _enableAdobeAnalytics; };
+    var isCopyToDriveEnabled = function() { return _enableCopyToDrive; };
+    var getMaxFileUploadSize = function() { return _maxUploadFileSize; };
+    var isInfoPanelEnabled = function() { return _enableInfoPanel; };
+    var isFolderDownloadEnabled = function() { return _enableFolderDownload; };
+    var getMatrixEnv = function() { return _matrixEnvironment; };
+    var getMatrixHost = function() { return _matrixHost; };
+    // public API: These methods are referenced outside
+    return {
+      getLoginURL: getLoginUrl,
+      getLogoutURL: getLogoutUrl,
+      getGdsURL: getGdsUrl,
+      useHtml5PushState: getHtml5PushState,
+      getDAOClassName: getDaoClassName,
+      getRouterBase: getRouterHistoryBase,
+      isDeleteEnabled: isDeleteEnabled,
+      isAPSEnabled: useAps,
+      getApsBrokerURL: getApsBrokerUrl,
+      getApsAuthURL: getApsAuthUrl,
+      getApsLoginURL: getApsLoginUrl,
+      getApsAuthProxyURL: getApsAuthProxyUrl,
+      getApsStorageTopic: getApsStorageTopic,
+      getApsResourceTopic: getApsResourceTopic,
+      getApsResourceAttributesTopic: getApsResourceAttributesTopic,
+      getApsInvitationTopic: getApsInvitationTopic,
+      getApsSupportedApps: getApsSupportedApps,
+      isAdditionalApplicationsEnabled: isAdditionalApplicationsEnabled,
+      isFileViewEnabled: isFileViewEnabled,
+      getInlineFileView: getInlineFileView,
+      isViewInNewTabEnabled: isViewInNewTabEnabled,
+      isShowHiddenFilesEnabled: isShowHiddenFilesEnabled,
+      isOpenWithEnabled: isOpenWithEnabled,
+      getOpenWithURL: getOpenWithUrl,
+      mockOpenwith: mockOpenwith,
+      isViewerServiceEnabled: isViewerServiceEnabled,
+      getViewerServiceURL: getViewerServiceUrl,
+      isPreviewBannerEnabled: isPreviewBannerEnabled,
+      isCopyEnabled: isCopyEnabled,
+      isSharingEnabled: isSharingEnabled,
+      isEditPermissionsEnabled: isEditPermissionsEnabled,
+      getEmailUrlPrefix: getEmailUrlPrefix,
+      isThrowTranslationErrorEnabled: isThrowTranslationErrorEnabled,
+      isPersonalInvitationsEnabled: isPersonalInvitationsEnabled,
+      isInvitationPreviewEnabled: isInvitationPreviewEnabled,
+      isDirectoryUploadEnabled: isDirectoryUploadEnabled,
+      shouldShowUnshareOption: shouldShowUnshareOption,
+      isEmbeddedWidgetTesterEnabled: isEmbeddedWidgetTesterEnabled,
+      isMoveEnabled: isMoveEnabled,
+      isQualarooEnabled: isQualarooEnabled,
+      isAdobeAnalyticsEnabled: isAdobeAnalyticsEnabled,
+      isCopyToDriveEnabled: isCopyToDriveEnabled,
+      getMaxFileUploadSize: getMaxFileUploadSize,
+      isInfoPanelEnabled: isInfoPanelEnabled,
+      isFolderDownloadEnabled: isFolderDownloadEnabled,
+      getMatrixEnv: getMatrixEnv,
+      getMatrixHost: getMatrixHost
+    };
+  })();
+  return GCONFIG;
+}); // require

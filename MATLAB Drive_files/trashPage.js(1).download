@@ -1,0 +1,193 @@
+define([
+  "pages/AbstractPage",
+  "templates/trashPage",
+  "RestoreFolderView",
+  "dojo/i18n!nls/mldoStringResource",
+  "dojo/string"
+], function( AbstractPage, PageTemplate, RestoreFolderView, MLDOStrings, DojoString ) {
+
+  /**
+   * This subclass of MatlabDriveApplication uses
+   * Mathworks FileBrowser2 widget for the tree controller.
+   */
+  var TrashPage = AbstractPage.extend({
+    initialize: function (params) {
+
+      this.pageTemplate = PageTemplate;
+
+      this.events = {
+        "click #trashView div.facets-files" : "goToFiles",
+        "click #trashViewHeader li.facets-files" : "goToFiles",
+        "click #trashView div.facets-sharing" : "goToSharing",
+        "click #trashViewHeader li.facets-sharing" : "goToSharing",
+        "click div.appTitle": "deSelectGrid",
+        "click div.generalToolbar div.actionIconContainer": "deSelectGrid",
+        "click .treeView div.wrapper": "deSelectGrid",
+        "click div.myfilesTitlebar":  "deSelectGrid",
+        "click div#trashCanFooter": "deSelectGrid",
+        "click div.facets": "deSelectGrid",
+        "click .matlabDriveUserName": "deSelectGrid",
+        "click .headerContainer .navbar": "deSelectGrid",
+        "click li.dropdown-showhiddenfiles input" : "toggleShowHiddenFiles"
+      };
+
+      this.goToTrashCan = function(e) { /* do nothing */ };
+
+      this.onFolderDoubleClick = function(e, folderData) {
+        if (e && e.preventDefault) {
+          e.preventDefault();
+        }
+        var context = this;
+        if (folderData && typeof folderData === 'object' && folderData.isDirectory && folderData.tombstoneId) {
+          var name = folderData.name;
+          var location = folderData.originalLocation;
+          var restoreFolderView = new RestoreFolderView({
+            dialogTitle: MLDOStrings.trashPageRestoreFolderDialogTitle,
+            dialogWarning: MLDOStrings.trashPageRestoreFolderWarningText,
+            dialogText: MLDOStrings.trashPageRestoreFolderDialogText,
+            tombstoneId: folderData.tombstoneId,
+            callback: function(tombstoneId) {
+              /* istanbul ignore next */
+              context.getTreeController().getActionHandler().performRestore.call(context.getTreeController().getActionHandler(), tombstoneId, name, location, true);
+            }
+          });
+          var RestoreFolderViewDialogContainer = document.createElement('div');
+          $('#modalContainer').append(RestoreFolderViewDialogContainer);
+          restoreFolderView.setElement(RestoreFolderViewDialogContainer);
+          restoreFolderView.render();
+        }
+      };
+
+      this.startPage = function(msgHandler) {
+        this.stopPage();
+        if (!msgHandler || typeof msgHandler !== "function") {
+          throw new TypeError("Invalid message handler argument");
+        }
+        var context = this;
+        context.getTreeController().start(msgHandler);
+        window.ondragover=function(event) {
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "none";
+        };
+        $(document).on("click", "li.headernav_login.dropdown:not(.open) a", context.updateUserQuota);
+        $(document).on("click", "li.headernav_login.dropdown:not(.open) a", context.updateSettings);
+        $(document).on("query-complete:mldo", function() { setTimeout(function() {context.getTreeController().resetActionButtons();}, 100);});
+        $(document).on("folderdblclick:mldo", context.onFolderDoubleClick);
+        context.$el.on("click", "li.dropdown-additionalApplications input", context.changeApplication);
+      };
+
+      this.stopPage = function() {
+        var context = this;
+        window.ondragover = null;
+        context.getTreeController().stop();
+        $(document).off("click", "li.headernav_login.dropdown:not(.open) a", context.updateUserQuota);
+        $(document).off("click", "li.headernav_login.dropdown:not(.open) a", context.updateSettings);
+        $(document).off("query-complete:mldo");
+        $(document).off("folderdblclick:mldo");
+        context.$el.off("click", "li.dropdown-additionalApplications input", context.changeApplication);
+      };
+
+      this.render = function() {
+        var am = this.getAuthManager();
+        var touchevents = (('ontouchstart' in window )|| ("DocumentTouch" in window && window.DocumentTouch && document instanceof window.DocumentTouch));
+        var templateParameters = {};  // new object
+        templateParameters.headerNavigation = this.renderNavigationHeader();
+        templateParameters.restoreActionLabel = MLDOStrings.trashPageRestoreLabel;
+        templateParameters.deleteActionLabel = MLDOStrings.trashPageDeleteLabel;
+        templateParameters.deleteAllActionLabel = MLDOStrings.trashPageEmptyTrashLabel;
+        templateParameters.facetsFiles = MLDOStrings.trashPageFacetsFiles;
+        templateParameters.facetsSharing = MLDOStrings.trashPageFacetsSharing;
+        templateParameters.facetsDeletedFiles = MLDOStrings.trashPageFacetsDeletedFiles;
+        templateParameters.userFirstNameDeletedFiles = MLDOStrings.trashPageUserFirstNameDeletedFiles;
+        templateParameters.loginData = JSON.stringify(am.getLoginData() || '');
+        templateParameters.sessionId = am.getSessionId() || '';
+        templateParameters.reloginMinutes = (am.getMinutesBeforeRelogin() ? am.getMinutesBeforeRelogin() : 'unknown');
+        templateParameters.sharingEnabled = this.isSharingEnabled;
+        templateParameters.deletionPolicyText = MLDOStrings.trashPageDeletionPolicy;
+        templateParameters.restoreToolTipText = MLDOStrings.restoreToolTipText;
+        templateParameters.permanentlyDeleteToolTipText = MLDOStrings.permanentlyDeleteToolTipText;
+        templateParameters.permanentlyDeleteAllToolTipText = MLDOStrings.permanentlyDeleteAllToolTipText;
+        templateParameters.previewBannerText = MLDOStrings.previewBannerText;
+        templateParameters.previewBannerEnabled = ((this.config.isPreviewBannerEnabled && this.config.isPreviewBannerEnabled()) ? true : false);
+        templateParameters.shouldShowUnshareOption = (this.config.shouldShowUnshareOption && this.config.shouldShowUnshareOption()) ? true : false;
+        templateParameters.footerPatentsLabel = MLDOStrings.footerPatents;
+        templateParameters.footerTrademarksLabel = MLDOStrings.footerTrademarks;
+        templateParameters.footerPrivacyPolicyLabel = MLDOStrings.footerPrivacy;
+        templateParameters.footerPiracyLabel = MLDOStrings.footerPiracy;
+        templateParameters.copyrightYear = new Date().getFullYear();
+        var htmlResult = this.pageTemplate(templateParameters);
+        this.$el.empty().html(htmlResult);
+        // render subviews
+
+        $('.appContainer').addClass('ff-delete');
+        $('.mainFooter').addClass('ff-delete');
+        $('.right-column').addClass('ff-delete');
+        $('.facets').addClass('ff-delete');
+
+        var treeOptions = {
+          id: 'trashTree',
+          // action bar buttons the tree needs to update
+          restoreSelector : '.restore',
+          permanentlyDeleteSelector : '.permanentlyDelete',
+          permanentlyDeleteAllSelector: '.permanentlyDeleteAll'
+        };
+        this.getTreeController().render(treeOptions);
+        this.getUserQuotaController().setElement($('.quotaListItem'));
+        this.getUserQuotaController().render();
+
+        // Activate tooltip
+        $(".retentionInfo").tooltip();
+
+        this.updateSettings();
+
+        /* istanbul ignore next */
+        if (!touchevents) {
+          $('[data-toggle="tooltip"]').tooltip();
+        }
+        this.renderMatrix();
+      };
+
+      this.getTreeControllerOptions = function() {
+        return {
+          id: "Trash",
+          indentWidth: 25,
+          enableNavigation: false,
+          showUploadDetails: false,
+          viewFileEnabled: false,
+          viewerServiceEnabled: false,
+          viewerServiceURL: "",
+          openWithEnabled: false,
+          mockOpenwith: false,
+          directoryUploadEnabled: false,
+          sharingEnabled: false,
+          personalInvitationsEnabled: false,
+          allowDnD: false,
+          listMethodName: "getTrashData",
+          shouldShowUnshareOption: (this.config.shouldShowUnshareOption && this.config.shouldShowUnshareOption()) ? true : false,
+          actions: {restore: true, permanentlydelete: true, permanentlydeleteall: false},
+          columns: { name: true,
+                     tombstone: true,
+                     originalLocation: true,
+                     size: true,
+                     deletedDate: true }
+        };
+      };
+
+      this.constructor.__super__.initializeParams.apply(this, arguments);
+
+      this.createTreeController(this.getTreeControllerOptions());
+
+      // bind 'this' in the listed methods to the current 'this',
+      // even when called by other modules.
+      _.bindAll(this, "deSelectGrid", "goToFiles", "refreshPage", "invalidate",
+                      "updateUserQuota", "changeTreeRoot", "needsRefresh",
+                      "getTreeControllerOptions", "createTreeController",
+                      "changeStoredCurrentFolder", "logoutPage", "goToFiles",
+                      "onFolderDoubleClick", "toggleShowHiddenFiles",
+                      "changeApplication", "updateSettings", "goToSharing");
+
+    }
+
+  });
+  return TrashPage;
+}); // require

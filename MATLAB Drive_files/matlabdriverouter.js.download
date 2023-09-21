@@ -1,0 +1,188 @@
+define([
+  "underscore",
+  "jquery",
+  "backbone"
+], function( _, $, Backbone) {
+
+  /**
+   * Backbone.js router used by MATLAB Drive UI.
+   * html5 push state is configurable
+   */
+  var MATLABDriveRouter = Backbone.Router.extend({
+    routes: {
+      "": "index",
+      "login(/)": "login",
+      "files(/*path)": "files",
+      "trash(/)": "trash",
+      "sharing(/)": "sharing",
+      "sharing/*invitationId(/)(/*path)": "preview",
+      "*path": "notFound"
+    },
+    initialize: function(options) {
+      if (!options || typeof options !== "object") {
+        throw new TypeError("Invalid options argument");
+      }
+      if (!options.parent || !options.parent.authCheck || typeof options.parent.authCheck !== "function") {
+        throw new TypeError("Invalid options.parent argument");
+      }
+      this.matlabdrive = options.parent;
+      this.pushState = options.useHtml5PushState;
+      this.root = (options.routerBase ? options.routerBase : "/");
+      this.isDeleteEnabled = options.isDeleteEnabled;
+      this.isInvitationPreviewEnabled = options.isInvitationPreviewEnabled;
+      if(options.additionalApplicationsEnabled){
+        this.route(/^(addons|thingspeak|matlab_grader)\/files(\/.*)?$/, 'additionalApplicationFiles');//Add additional application as (addons|newapp)
+        this.route(/^(addons|thingspeak|matlab_grader)\/trash(\/)?$/, 'additionalApplicationTrash');
+        this.route(/^(addons|thingspeak|matlab_grader)\/sharing(\/.*)?$/, 'additionalApplicationSharing');
+      }
+      this.isSharingEnabled = options.isSharingEnabled;
+    },
+    start: function() {
+      if (!Backbone.History.started) {
+        Backbone.history.start({pushState: this.pushState, root: this.root});
+      }
+    },
+    stop: function() {
+      if (Backbone.History.started) {
+        Backbone.history.stop();
+      }
+    },
+    index: function() {
+      this.navigate('login', {trigger: true, replace: true});
+    },
+    login: function() {
+     this.matlabdrive.authCheck();
+    },
+    files: function(path,appId) {
+     // default path is root "/"
+     var folderPath = "/";
+     if (path && path.length) {
+       // leading slash should be removed already.
+       // However, a unit test might provide path
+       // with leading "/" so, handle it here.
+       if (path[0] === "/" && path.length > 1) {
+         folderPath = "";
+       }
+       var len = path.length;
+       // strip off trailing "/"
+       if (path[len - 1] === "/") {
+         folderPath += path.substring(0, len - 1);
+       } else {
+         folderPath += path;
+       }
+     }
+     // remove excess '/' characters in folderPath
+     folderPath = folderPath.replace(/([^:]\/)\/+/g, "$1");
+
+     appId = appId ? appId : '';
+     //appSwitch helps in forcing MLDO to refresh content when navigating from root of one application to other.
+     var currentAppId = this.matlabdrive.getApplicationId();
+     var appSwitch = (currentAppId === appId || currentAppId === appId + "/")? false : true;
+
+     this.matlabdrive.setApplicationId(appId);
+     this.matlabdrive.authCheck('files', folderPath, appSwitch);
+    },
+    additionalApplicationFiles:function(appId, path){
+      this.files(path, appId);
+    },
+    additionalApplicationTrash:function(appId){
+      this.trash(appId);
+    },
+    additionalApplicationSharing: function(appId, invitationId) {
+      invitationId = invitationId || '';
+      this.sharing(invitationId, appId);
+    },
+    trash: function(appId) {
+      if (this.isDeleteEnabled) {
+        appId = appId ? appId : '';
+        var currentAppId = this.matlabdrive.getApplicationId();
+        var appSwitch = (currentAppId === appId || currentAppId === appId + "/")? false : true;
+        this.matlabdrive.setApplicationId(appId);
+        this.matlabdrive.authCheck('trash', '/', appSwitch);
+      } else {
+        this.notFound();
+      }
+    },
+    sharing: function(invitationId, appId) {
+      if (this.isSharingEnabled) {
+        invitationId = invitationId || '';
+        if (invitationId === "/") { invitationId = ''; }
+        var len = invitationId.length;
+        if (len > 1 && invitationId[0] === "/") {
+          invitationId = invitationId.substring(0, len - 1);
+        }
+        appId = appId ? appId : '';
+        //appSwitch helps in forcing MLDO to refresh content when navigating from root of one application to other.
+        var currentAppId = this.matlabdrive.getApplicationId();
+        var appSwitch = (currentAppId === appId || currentAppId === appId + "/")? false : true;
+
+        this.matlabdrive.setApplicationId(appId);
+        this.matlabdrive.authCheck('sharing', invitationId, appSwitch);
+      } else {
+        this.notFound();
+      }
+    },
+
+    preview: function(invitationId, path, appId) {
+      appId = appId ? appId : '';
+      //appSwitch helps in forcing MLDO to refresh content when navigating from root of one application to other.
+      var currentAppId = this.matlabdrive.getApplicationId();
+      var appSwitch = (currentAppId === appId || currentAppId === appId + "/")? false : true;
+
+      // default path is root "/"
+      var folderPath = "/";
+      if (path && path.length) {
+        // leading slash should be removed already.
+        // However, a unit test might provide path
+        // with leading "/" so, handle it here.
+        if (path[0] === "/" && path.length > 1) {
+          folderPath = "";
+        }
+        var len = path.length;
+        // strip off trailing "/"
+        if (path[len - 1] === "/") {
+          folderPath += path.substring(0, len - 1);
+        } else {
+          folderPath += path;
+        }
+      }
+      // remove excess '/' characters in folderPath
+      folderPath = folderPath.replace(/([^:]\/)\/+/g, "$1");
+
+      this.matlabdrive.setApplicationId(appId);
+      if (this.isInvitationPreviewEnabled) {
+        this.matlabdrive.authCheck('preview', folderPath, appSwitch, invitationId);
+      } else if (this.isSharingEnabled) {
+        this.matlabdrive.authCheck('sharing', folderPath, appSwitch, invitationId);
+      } else {
+        this.notFound();
+      }
+    },
+
+    notFound: function() {
+      this.login();
+    },
+
+    getCurrentRoutePage: function() {
+      var baseRoutes = {
+        "": "index",
+        "login": "login",
+        "files": "files",
+        "trash": "trash",
+        "sharing": "sharing"
+      };
+      var frag = "";
+      if (Backbone.History.started) {
+        frag = Backbone.history.getFragment();
+        if (frag) {
+          var splitTokens = frag.split("/");
+          var validApplicationIDs = ["addons", "thingspeak", "matlab_grader"];//Add additional application to the list in future
+          frag = (splitTokens[0] && validApplicationIDs.indexOf(splitTokens[0]) > -1) ? splitTokens[1] : splitTokens[0];
+        }
+      }
+      return baseRoutes[frag];
+    }
+
+  });
+  return MATLABDriveRouter;
+}); // require

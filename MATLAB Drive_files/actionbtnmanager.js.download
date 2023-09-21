@@ -1,0 +1,1109 @@
+define([
+  "backbone",
+  "util",
+  "dojo/i18n!nls/mldoStringResource"
+],function( Backbone, Util, MLDOStrings ) {
+
+ var ACCEPTABLE_TYPES = ['TYPE_FILE', 'TYPE_FOLDER', 'TYPE_SHAREDFOLDER', 'TYPE_INVITATION', 'TYPE_MIXED'];
+ var ACCEPTABLE_ACCESS_TYPES = ['OWNER', 'READ_WRITE', 'READ_ONLY', 'READ_ONLY_FROM_OPEN'];
+
+ var Action = function(selector, fnCallback) {
+   this.selector = selector;
+   this.callback = fnCallback;
+ };
+ Action.prototype = {
+   getSelector: function() { return this.selector; },
+   getCallback: function() { return this.callback; },
+   setLabel: function(text) {
+     if (text && text.length) {
+       var menuText = document.querySelector(this.getSelector() + ' .actionMenuText');
+       if (menuText) {
+         menuText.innerText = text;
+       }
+       var iconText = document.querySelector(this.getSelector() + ' .iconText');
+       if (iconText) {
+         iconText.innerText = text;
+       }
+     }
+   },
+
+   // Disable an action by:
+   // 1. Make it look disabled (CSS)
+   // 2. Turn off event listening
+   disable: function() {
+     var action = document.querySelector(this.getSelector());
+     if (action) {
+       action.classList.add('disabledIcon');
+       action.removeEventListener('click', this.getCallback(), false);
+       var dropdownToggle = action.querySelector('a.dropdown-toggle');
+       if (dropdownToggle) {
+         dropdownToggle.disabled = true;
+       }
+     }
+   },
+
+   // Enable an action by:
+   // 1. Make it look enabled (CSS)
+   // 2. Set one, and only one, click event listener.
+   enable: function() {
+     var action = document.querySelector(this.getSelector());
+     if (action) {
+       action.classList.remove('disabledIcon');
+       // to avoid having multiple calls to our handler, remove any previously set handlers first.
+       action.removeEventListener('click', this.getCallback(), false);
+       action.addEventListener('click', this.getCallback(), false);
+       var dropdownToggle = action.querySelector('a.dropdown-toggle');
+       if (dropdownToggle) {
+         dropdownToggle.disabled = false;
+       }
+     }
+   }
+ };
+
+  /**
+   * Controls disabling and enabling the icons on the action toolbar.
+   * Also set or unsets click event listeners appropriate for the node type
+   * of the selected node.
+   * @param options optional map of option settings
+   */
+  var ActionButtonController = function(options) {
+    this.sharingEnabled = false;
+    this.personalInvitationsEnabled = false;
+    this.folderUploadEnabled = false;
+    this.folderDownloadEnabled = false;
+    this.moveEnabled = false;
+    this.openWithEnabled = false;
+    if (options && typeof options === "object") {
+      if (options.isSharingEnabled === true) {
+        this.sharingEnabled = true;
+      }
+      if (options.folderUploadEnabled === true) {
+        this.folderUploadEnabled = true;
+      }
+      if (options.folderDownloadEnabled === true) {
+        this.folderDownloadEnabled = true;
+      }
+      if (options.moveEnabled === true) {
+        this.moveEnabled = true;
+      }
+        if (options.openWithEnabled === true) {
+            this.openWithEnabled = true;
+        }
+      if (this.sharingEnabled && options.isPersonalInvitationsEnabled === true) {
+        this.personalInvitationsEnabled = true;
+      }
+    }
+  };
+
+  ActionButtonController.prototype = {
+
+    validateDisableArguments: function(args) {
+      var validArgs = {};
+      if (!args || typeof args !== "object") {
+        throw new TypeError("Invalid arguments");
+      }
+
+      if (("isShareable" in args) && args.isShareable === true) {
+        validArgs.isShareable = true;
+      } else {
+        validArgs.isShareable = false;
+      }
+
+      if (("isSharedFolder" in args) && args.isSharedFolder === true) {
+        validArgs.isSharedFolder = true;
+      } else {
+        validArgs.isSharedFolder = false;
+      }
+
+      if (("hasActiveLink" in args) && args.hasActiveLink === true) {
+        validArgs.hasActiveLink = true;
+      } else {
+        validArgs.hasActiveLink = false;
+      }
+
+      if (("accessType" in args) &&
+           typeof args.accessType === "string" &&
+           args.accessType.length &&
+           ACCEPTABLE_ACCESS_TYPES.indexOf(args.accessType.toUpperCase()) >= 0) {
+        validArgs.accessType = args.accessType.toUpperCase();
+      } else {
+        validArgs.accessType = "";
+      }
+
+      if (("allContentIsShared" in args) && args.allContentIsShared === true) {
+        validArgs.allContentIsShared = true;
+      } else {
+        validArgs.allContentIsShared = false;
+      }
+
+      if (("disableFolderActions" in args) && args.disableFolderActions === true) {
+        validArgs.disableFolderActions = true;
+      } else {
+        validArgs.disableFolderActions = false;
+      }
+
+      if (("canEdit" in args) && args.canEdit === true) {
+        validArgs.canEdit = true;
+      } else {
+        validArgs.canEdit = false;
+      }
+
+      if (("gridRowCount" in args) && typeof args.gridRowCount === "number" && !isNaN(args.gridRowCount)) {
+        validArgs.gridRowCount = args.gridRowCount;
+      } else {
+        validArgs.gridRowCount = 0;
+      }
+
+      if (("sharedParentPath" in args) && typeof args.sharedParentPath === "string") {
+        validArgs.sharedParentPath = args.sharedParentPath;
+      } else {
+        validArgs.sharedParentPath = "";
+      }
+
+      if (("pageName" in args) && typeof args.pageName === "string") {
+        validArgs.pageName = args.pageName;
+      } else {
+        validArgs.pageName = "";
+      }
+
+      return validArgs;
+    },
+
+    validateUpdateArguments: function(args) {
+      var validArgs = {};
+      if (!args || typeof args !== "object") {
+        throw new TypeError("Invalid arguments");
+      }
+
+      if (("parentWritable" in args) && args.parentWritable === true) {
+        validArgs.parentWritable = true;
+      } else {
+        validArgs.parentWritable = false;
+      }
+
+      if (("selectedContentIsShared" in args) && args.selectedContentIsShared === true) {
+        validArgs.selectedContentIsShared = true;
+      } else {
+        validArgs.selectedContentIsShared = false;
+      }
+
+      if (("accessType" in args) &&
+           typeof args.accessType === "string" &&
+           args.accessType.length &&
+           ACCEPTABLE_ACCESS_TYPES.indexOf(args.accessType.toUpperCase()) >= 0) {
+        validArgs.accessType = args.accessType.toUpperCase();
+      } else {
+        validArgs.accessType = "";
+      }
+
+      if (("hasActiveLink" in args) && args.hasActiveLink === true) {
+        validArgs.hasActiveLink = true;
+      } else {
+        validArgs.hasActiveLink = false;
+      }
+
+      if (("type" in args) &&
+           typeof args.type === "string" &&
+           args.type.length &&
+           ACCEPTABLE_TYPES.indexOf(args.type.toUpperCase()) >= 0) {
+        validArgs.type = args.type.toUpperCase();
+      } else {
+        throw new TypeError("Invalid type argument");
+      }
+
+      if (("allContentIsShared" in args) && args.allContentIsShared === true) {
+        validArgs.allContentIsShared = true;
+      } else {
+        validArgs.allContentIsShared = false;
+      }
+
+      if (("inTrash" in args) && args.inTrash === true) {
+        validArgs.inTrash = true;
+      } else {
+        validArgs.inTrash = false;
+      }
+
+      if (("canEdit" in args) && args.canEdit === true) {
+        validArgs.canEdit = true;
+      } else {
+        validArgs.canEdit = false;
+      }
+
+      if (("canPaste" in args) && args.canPaste === true) {
+        validArgs.canPaste = true;
+      } else {
+        validArgs.canPaste = false;
+      }
+
+      if (("canOpenInMATLABOnline" in args) && args.canOpenInMATLABOnline === true) {
+            validArgs.canOpenInMATLABOnline = true;
+        } else {
+            validArgs.canOpenInMATLABOnline = false;
+      }
+
+      if (("selectedCount" in args) && typeof args.selectedCount === "number" && !isNaN(args.selectedCount)) {
+        validArgs.selectedCount = args.selectedCount;
+      } else {
+        if ((!args.selectedCount && args.selectedCount === null) || isNaN(args.selectedCount)) {
+          throw new TypeError("Invalid selectedCount argument");
+        } else {
+          validArgs.selectedCount = 0;
+        }
+      }
+
+      if (("path" in args) && typeof args.path === "string") {
+        validArgs.path = args.path;
+      } else {
+        validArgs.path = "";
+      }
+
+      if (("sharedParentPath" in args) && typeof args.sharedParentPath === "string") {
+        validArgs.sharedParentPath = args.sharedParentPath;
+      } else {
+        validArgs.sharedParentPath = "";
+      }
+
+      if (("initiator" in args) && typeof args.initiator === "string") {
+        validArgs.initiator = args.initiator;
+      } else {
+        validArgs.initiator = "";
+      }
+
+      validArgs.isSharedFolder = (validArgs.type === 'TYPE_SHAREDFOLDER');
+
+      validArgs.disableFolderActions = ( (validArgs.type === 'TYPE_FILE' && !validArgs.parentWritable) ||
+                                         ( (validArgs.type === 'TYPE_FOLDER' || validArgs.type === 'TYPE_SHAREDFOLDER' || validArgs.type === 'TYPE_MIXED') && !validArgs.type.canEdit )
+                                       );
+
+      return validArgs;
+    },
+
+    /**
+     * Disable all action buttons then selectively enable specific buttons based on criteria.
+     * parameters: args
+     * fields:
+     *   gridRowCount: The number of rows in the current filebrowser grid.
+     *   disableFolderActions:  Include the actions specific to folders also (normally, folder actions are enabled).
+     *   isShareable:  The folder is not being shared or is not part of the contents of a shared folder.
+     *   isSharedFolder:  The current folder is a shared folder.
+     *   canEdit: The current folder can be edited (i.e. not read-only).
+     *   accessType: only for shared folders. "owner", "read_write", "read_only" are valid values.
+     *   allContentIsShared: true if all content is part of shared folders
+     */
+    disableAllActions: function(disableAllActionsArgs) {
+      args = this.validateDisableArguments(disableAllActionsArgs);
+      // disable all buttons.
+      //
+      // files/folders actions
+      //
+      if (this.downloadAction) {
+        this.downloadAction.disable();
+      }
+      if (this.deleteAction) {
+        this.deleteAction.disable();
+      }
+      if (this.renameAction) {
+        this.renameAction.disable();
+      }
+      if (this.cutAction) {
+        this.cutAction.disable();
+      }
+      if (this.copyAction) {
+        this.copyAction.disable();
+      }
+      if (this.pasteAction) {
+        this.pasteAction.disable();
+      }
+      if (this.moveAction) {
+        this.moveAction.disable();
+      }
+      //
+      // file only actions
+      //
+      if(this.openAction) {
+          this.openAction.disable();
+      }
+      if(this.viewAction) {
+          this.viewAction.disable();
+      }
+      if(this.viewInNewTabAction) {
+        this.viewInNewTabAction.disable();
+      }
+      //
+      // folder only actions
+      //
+      if (this.shareAction) {
+        this.shareAction.disable();
+      }
+      if (this.newFolderAction) {
+        this.newFolderAction.disable();
+      }
+      if (this.uploadAction) {
+        this.uploadAction.disable();
+      }
+      if (this.uploadFilesAction) {
+        this.uploadFilesAction.disable();
+      }
+      if (this.uploadFolderAction) {
+        this.uploadFolderAction.disable();
+      }
+      //
+      // Sharing invitation actions
+      //
+      if (this.manageAction) {
+        this.manageAction.disable();
+      }
+      if (this.linkAction) {
+        this.linkAction.disable();
+      }
+      if (this.leaveAction) {
+        this.leaveAction.disable();
+      }
+      //
+      // trash actions
+      //
+      if (this.restoreAction) {
+        this.restoreAction.disable();
+      }
+      if (this.permanentlyDeleteAction) {
+        this.permanentlyDeleteAction.disable();
+      }
+      if (this.permanentlyDeleteAllAction) {
+            this.permanentlyDeleteAllAction.disable();
+      }
+      if (this.goToDriveAction) {
+        this.goToDriveAction.disable();
+      }
+      if (this.addAction) {
+        this.addAction.disable();
+      }
+      if (this.addToDriveAction) {
+        this.addToDriveAction.disable();
+      }
+      if (this.declineAction) {
+        this.declineAction.disable();
+      }
+      if (this.shareLinkAction) {
+        this.shareLinkAction.disable();
+      }
+      if (this.copyToDriveAction) {
+        this.copyToDriveAction.disable();
+      }
+      //
+      // Enable specific actions based on criteria.
+      //
+      this.enableSpecificActions(args);
+    },
+
+    // Assumption:  Actions already disabled when this is called.
+    enableSpecificActions: function(args) {
+      // folder actions
+      this.enableFolderActions(args.disableFolderActions);
+      if (args.pageName && args.pageName === "preview") {
+        this.enablePreviewActions();
+      }
+      // row count based actions
+      this.enableActionsBasedOnRowCount(args.gridRowCount, args.allContentIsShared);
+      //share actions
+      this.enableSharingActions({
+        isShareable: args.isShareable,
+        isSharedFolder: args.isSharedFolder,
+        hasActiveLink: args.hasActiveLink,
+        accessType: args.accessType,
+        canEdit: args.canEdit,
+        sharedParentPath: args.sharedParentPath
+      });
+    },
+
+    // Assumption:  Actions already disabled when this is called.
+    enableFolderActions: function(disableFolderActions) {
+      if (!disableFolderActions) {
+        if (this.uploadAction) {
+          this.uploadAction.enable();
+          if (this.uploadFilesAction) {
+            this.uploadFilesAction.enable();
+          }
+          if (this.uploadFolderAction) {
+            this.uploadFolderAction.enable();
+          }
+        }
+        if (this.newFolderAction) {
+          this.newFolderAction.enable();
+        }
+      }
+      // download works even on read-only folders
+      if (this.downloadAction) {
+        this.downloadAction.enable();
+      }
+      if (this.openWithEnabled && this.openAction) {
+        this.openAction.enable();
+      }
+    },
+
+    // Assumption:  Actions already disabled when this is called.
+    enablePreviewActions: function () {
+      if (this.goToDriveAction) {
+        this.goToDriveAction.enable();
+      }
+      if (this.addAction) {
+        this.addAction.enable();
+      }
+      if (this.addToDriveAction) {
+        this.addToDriveAction.enable();
+      }
+      if (this.copyToDriveAction) {
+        this.copyToDriveAction.enable();
+      }
+      if (this.declineAction) {
+        this.declineAction.enable();
+      }
+      if (this.shareLinkAction) {
+        this.shareLinkAction.enable();
+      }
+      if (this.downloadAction) {
+        this.downloadAction.enable();
+      }
+      if (this.openWithEnabled && this.openAction) {
+        this.openAction.enable();
+      }
+    },
+
+    // Assumption:  Actions already disabled when this is called.
+    enableActionsBasedOnRowCount: function(gridRowCount, allContentIsShared) {
+      if (gridRowCount && typeof gridRowCount === "number" && !isNaN(gridRowCount) && gridRowCount > 0) {
+        if (this.permanentlyDeleteAllAction) {
+          if (!allContentIsShared) {
+            this.permanentlyDeleteAllAction.enable();
+          }
+        }
+      }
+    },
+
+    // Assumption:  Actions already disabled when this is called.
+    enableSharingActions: function(args) {
+      // if it's a shareable folder, enable these
+      // regardless of it being an already shared folder or can edit.
+      if (args.isShareable) {
+        if (this.shareAction) {
+          this.shareAction.disable();
+        }
+        if (this.linkAction) {
+          if ((args.accessType && args.accessType.toLowerCase() !== "owner") || args.hasActiveLink) {
+            this.linkAction.enable();
+          } else {
+            this.linkAction.disable();
+          }
+        }
+        // if the folder is not view-only (regardless whether it is not shared yet or already shared)
+        if (args.canEdit || args.isSharedFolder) {
+          if (this.manageAction) {
+            if (args.isSharedFolder && args.accessType && args.accessType.toLowerCase() !== "owner") {
+              this.manageAction.setLabel(MLDOStrings.filesPageViewMembersLabel);
+            } else {
+              if (!args.isSharedFolder) {
+                this.manageAction.setLabel(MLDOStrings.filesPageInviteLabel);
+              } else {
+                this.manageAction.setLabel(MLDOStrings.filesPageManageLabel);
+              }
+            }
+            if (args.accessType !== 'READ_ONLY_FROM_OPEN') {
+              this.manageAction.enable();
+            }
+          }
+        }
+        // The folder is already being shared.
+        if (args.isSharedFolder) {
+          if (this.leaveAction && args.accessType.toLowerCase() !== "owner") {
+            this.leaveAction.enable();
+          }
+        }
+      }
+    },
+
+    /*
+    **  {
+    **    selectedCount, type, canEdit, canPaste, parentWritable, accessType, selectedContentIsShared, allContentIsShared, inTrash
+    **  }
+    */
+    updateActionsForSelection: function(updateActionsForSelectionArgs) {
+      var args = this.validateUpdateArguments(updateActionsForSelectionArgs);
+      this.disableAllActions({
+        gridRowCount:0,
+        disableFolderActions: args.disableFolderActions,
+        isShareable: false,
+        isSharedFolder: args.isSharedFolder,
+        canEdit: false,
+        accessType: args.accessType,
+        allContentIsShare: args.allContentIsShared,
+        path: args.path,
+        sharedParentPath: args.sharedParentPath,
+        initiator: args.initiator,
+        hasActiveLink: args.hasActiveLink
+      });
+      this.updateAllActionsForSelection(args);
+    },
+
+    updateAllActionsForSelection: function(args) {
+      var _isMacSafari = (navigator.userAgent.indexOf('Safari') != -1 &&
+                          navigator.userAgent.indexOf('Chrome') == -1 &&
+                          !navigator.userAgent.match(/iP(ad|hone)/i) );
+      var adownload = ("download" in document.createElement("a"));
+
+      if (!args || typeof args !== "object") {
+        throw new TypeError("Invalid parameters.");
+      }
+      if (this.uploadAction) {
+        if ( (args.selectedCount <= 1) && args.canEdit && (args.type !== 'TYPE_FILE')) {
+          this.uploadAction.enable();
+          if (this.uploadFilesAction) {
+            this.uploadFilesAction.enable();
+          }
+          if (this.uploadFolderAction) {
+            this.uploadFolderAction.enable();
+          }
+        } else {
+            this.uploadAction.disable();
+            if (this.uploadFilesAction) {
+              this.uploadFilesAction.disable();
+            }
+            if (this.uploadFolderAction) {
+              this.uploadFolderAction.disable();
+            }
+        }
+      }
+      if (this.newFolderAction) {
+        if ( (args.selectedCount <= 1) && args.canEdit && (args.type !== 'TYPE_FILE')) {
+            this.newFolderAction.enable();
+        } else {
+          this.newFolderAction.disable();
+          }
+        }
+      if (this.downloadAction) {
+        if ( ((this.folderDownloadEnabled && (args.type === 'TYPE_FOLDER' || args.type === 'TYPE_SHAREDFOLDER') && args.selectedCount <= 1) ||
+            (args.type === 'TYPE_FILE' && args.selectedCount >= 1)) &&
+             ((adownload) || (navigator && (navigator.msSaveBlob || _isMacSafari))) ) {
+          this.downloadAction.enable();
+            } else {
+          this.downloadAction.disable();
+            }
+          }
+        if (this.openAction) {
+            if (args.canOpenInMATLABOnline && this.openWithEnabled && args.selectedCount <= 1) {
+                this.openAction.enable();
+            } else {
+                this.openAction.disable();
+            }
+        }
+        if (this.viewAction) {
+            if ( args.type === 'TYPE_FILE' &&
+                (args.selectedCount === 1) ) {
+                this.viewAction.enable();
+            } else {
+                this.viewAction.disable();
+            }
+        }
+        if (this.viewInNewTabAction) {
+            if ( args.type === 'TYPE_FILE' &&
+                (args.selectedCount === 1) ) {
+                this.viewInNewTabAction.enable();
+            } else {
+                this.viewInNewTabAction.disable();
+            }
+        }
+          if (this.renameAction) {
+        if ( (args.type === 'TYPE_FOLDER' || args.type === 'TYPE_FILE' || args.type === 'TYPE_MIXED' || args.type === 'TYPE_SHAREDFOLDER') &&
+              args.parentWritable &&
+             (args.selectedCount === 1) ) {
+              this.renameAction.enable();
+            } else {
+              this.renameAction.disable();
+            }
+          }
+          if (this.cutAction) {
+        if ( (args.type === 'TYPE_FOLDER' || args.type === 'TYPE_FILE' || args.type === 'TYPE_MIXED' || args.type === 'TYPE_SHAREDFOLDER') &&
+              args.parentWritable &&
+             (args.selectedCount >= 1) ) {
+              this.cutAction.enable();
+            } else {
+              this.cutAction.disable();
+            }
+          }
+          if (this.copyAction) {
+        if ( (args.type === 'TYPE_FOLDER' || args.type === 'TYPE_FILE' || args.type === 'TYPE_MIXED' || args.type === 'TYPE_SHAREDFOLDER') &&
+             (args.selectedCount >= 1) ) {
+              this.copyAction.enable();
+            } else {
+              this.copyAction.disable();
+            }
+          }
+      if (this.pasteAction) {
+        this.updatePaste(args.canPaste && args.parentWritable && args.type !== 'TYPE_MIXED' && (args.selectedCount === 0 || args.selectedCount === 1));
+      }
+      if (this.moveAction) {
+        if (this.moveAction && (args.type === 'TYPE_FOLDER' || args.type === 'TYPE_FILE' || args.type === 'TYPE_MIXED' || args.type === 'TYPE_SHAREDFOLDER') &&
+          args.parentWritable && (args.selectedCount >= 1) ) {
+          this.moveAction.enable();
+        } else {
+          this.moveAction.disable();
+        }
+      }
+      if (this.deleteAction) {
+        if ( (args.type === 'TYPE_FOLDER' || args.type === 'TYPE_FILE' || args.type === 'TYPE_MIXED' || args.type === 'TYPE_SHAREDFOLDER') &&
+              args.parentWritable &&
+             (args.selectedCount >= 1) ) {
+          this.deleteAction.enable();
+        } else {
+          this.deleteAction.disable();
+        }
+      }
+      if (this.restoreAction) {
+        if ( (args.type === 'TYPE_FOLDER' || args.type === 'TYPE_FILE' || args.type === 'TYPE_MIXED' || args.type === 'TYPE_SHAREDFOLDER') &&
+             (args.selectedCount >= 1) ) {
+              this.restoreAction.enable();
+          } else {
+            this.restoreAction.disable();
+          }
+      }
+      if (this.permanentlyDeleteAction) {
+        if ( (args.type === 'TYPE_FOLDER' || args.type === 'TYPE_FILE' || args.type === 'TYPE_MIXED' || args.type === 'TYPE_SHAREDFOLDER') &&
+             (args.selectedCount >= 1 && !args.selectedContentIsShared) ) {
+              this.permanentlyDeleteAction.enable();
+        } else {
+          this.permanentlyDeleteAction.disable();
+        }
+      }
+      if (this.permanentlyDeleteAllAction) {
+        if (!args.allContentIsShared) {
+          this.permanentlyDeleteAllAction.enable();
+        }
+      }
+      if (this.shareAction) {
+        if ((args.selectedCount === 1) &&
+          (args.type === 'TYPE_SHAREDFOLDER' || args.type === 'TYPE_FOLDER')) {
+          //if the folder has a shared parent, it can not be shared. Also verify that the folder itself is not a sharedParentRoot
+          if ((!args.isSharedFolder && args.initiator) && (args.path !== args.sharedParentPath)) {
+            this.manageAction.disable();
+          } else {
+            this.shareAction.enable();
+          }
+        } else {
+          this.shareAction.disable();
+        }
+      }
+      if (this.manageAction) {
+        if ( (args.selectedCount === 1) &&
+             (args.type === 'TYPE_SHAREDFOLDER' || args.type === 'TYPE_FOLDER' || args.type === 'TYPE_INVITATION') &&
+              (args.canEdit || args.isSharedFolder) ) {
+          if (args.isSharedFolder && args.accessType && args.accessType.toLowerCase() !== "owner") {
+            this.manageAction.setLabel(MLDOStrings.filesPageViewMembersLabel);
+          } else {
+            if (args.type === 'TYPE_FOLDER') {
+              this.manageAction.setLabel(MLDOStrings.filesPageInviteLabel);
+            } else {
+              this.manageAction.setLabel(MLDOStrings.filesPageManageLabel);
+            }
+          }
+          if ((args.canEdit || (args.isSharedFolder && args.accessType !== 'READ_ONLY_FROM_OPEN')) && !args.inTrash) {
+            this.manageAction.enable();
+          }
+        } else {
+          this.manageAction.disable();
+        }
+      }
+      if (this.linkAction) {
+        if ( (args.selectedCount === 1) &&
+             (args.type === 'TYPE_SHAREDFOLDER' || args.type === 'TYPE_FOLDER' || args.type === 'TYPE_INVITATION') &&
+             !args.inTrash &&
+             (!args.isSharedFolder || (args.accessType && args.accessType.toLowerCase() === "owner") || args.hasActiveLink) ) {
+          if (!args.isSharedFolder || (args.accessType && args.accessType.toLowerCase() === "owner")) {
+            if (!args.hasActiveLink) {
+              this.linkAction.setLabel(MLDOStrings.filesPageCreateLinkLabel);
+            } else {
+              this.linkAction.setLabel(MLDOStrings.filesPageManageLinkLabel);
+            }
+          } else {
+            if (args.hasActiveLink) {
+              this.linkAction.setLabel(MLDOStrings.filesPageViewLinkLabel);
+            }
+          }
+          this.linkAction.enable();
+        } else {
+          this.linkAction.setLabel(MLDOStrings.filesPageViewLinkLabel);
+          this.linkAction.disable();
+        }
+      }
+      if (this.leaveAction) {
+        if ( (args.selectedCount === 1) &&
+             (args.type === 'TYPE_SHAREDFOLDER' || args.type === 'TYPE_INVITATION') &&
+              args.accessType.toLowerCase() !== "owner" && !args.inTrash) {
+          this.leaveAction.enable();
+        } else {
+          this.leaveAction.disable();
+        }
+      }
+      if(this.goToDriveAction) {
+        this.goToDriveAction.enable();
+      }
+      if(this.addAction) {
+        this.addAction.enable();
+      }
+      if(this.addToDriveAction) {
+        this.addToDriveAction.enable();
+      }
+      if(this.copyToDriveAction) {
+        this.copyToDriveAction.enable();
+      }
+      if(this.declineAction) {
+        this.declineAction.enable();
+      }
+      if(this.shareLinkAction) {
+        this.shareLinkAction.enable();
+      }
+    },
+
+    updatePaste: function(canPaste) {
+      if (this.pasteAction) {
+        if (canPaste) {
+            this.pasteAction.enable();
+        } else {
+            this.pasteAction.disable();
+        }
+      }
+    },
+
+    createCustomEvent: function(actionName, invitation) {
+      var event;
+      if (actionName && typeof actionName === 'string' && actionName.length) {
+        let data = { actionName: actionName };
+        if (invitation) {
+          if (invitation.invitationId) {
+            data.invitationId = invitation.invitationId;
+          }
+          if (invitation.invitationName) {
+            data.invitationName = invitation.invitationName;
+          }
+          if (typeof invitation.authenticated !== "undefined") {
+            data.authenticated = invitation.authenticated;
+          }
+          if (invitation.invitationStatus) {
+            data.invitationStatus = invitation.invitationStatus;
+          }
+          if (invitation.invitationFullPath) {
+            data.invitationFullPath = invitation.invitationFullPath;
+          }
+          if (invitation.invitationTombstoneId) {
+            data.invitationTombstoneId = invitation.invitationTombstoneId;
+          }
+        }
+        if (Util.isIE11() && (typeof window.CustomEvent === "object")) {
+          event = document.createEvent('CustomEvent');
+          event.initCustomEvent('mldo.treeAction', true, true, data);
+        } else {
+          event = new CustomEvent('mldo.treeAction', {detail: data});
+        }
+      }
+      return event;
+    },
+
+    initializeActionCallbacks: function(options) {
+      this.options = options || {};
+
+      // valid necessary arguments
+      if (Util.isEmptyObject(this.options)) {
+        throw new TypeError("Invalid options argument.");
+      }
+
+      // Upload files
+      if (this.folderUploadEnabled) {
+        if (this.options.uploadSelector) {
+          this.uploadCB = function (e) {
+            e.preventDefault();
+          }.bind(this);
+          this.uploadAction = new Action(this.options.uploadSelector, this.uploadCB);
+        }
+        if (this.options.uploadFilesSelector) {
+          this.uploadFilesCB = function (e) {
+            e.preventDefault();
+            var event = new this.createCustomEvent('upload');
+            document.dispatchEvent(event);
+          }.bind(this);
+          this.uploadFilesAction = new Action(this.options.uploadFilesSelector, this.uploadFilesCB);
+        }
+        if (this.options.uploadFolderSelector) {
+          this.uploadFolderCB = function (e) {
+            e.preventDefault();
+            var event = new this.createCustomEvent('uploadfolder');
+            document.dispatchEvent(event);
+          }.bind(this);
+          this.uploadFolderAction = new Action(this.options.uploadFolderSelector, this.uploadFolderCB);
+        }
+      } else {
+        if (this.options.uploadSelector) {
+          this.uploadCB = function (e) {
+            e.preventDefault();
+            var event = new this.createCustomEvent('upload');
+            document.dispatchEvent(event);
+          }.bind(this);
+          this.uploadAction = new Action(this.options.uploadSelector, this.uploadCB);
+        }
+      }
+
+      // Create new folder
+      if (this.options.newFolderSelector) {
+        this.newFolderCB = function (e) {
+          e.preventDefault();
+          var event = new this.createCustomEvent('createfolder');
+          document.dispatchEvent(event);
+        }.bind(this);
+        this.newFolderAction = new Action(this.options.newFolderSelector, this.newFolderCB);
+      }
+
+      // Download file action
+      if (this.options.downloadSelector) {
+        this.downloadCB =  function (e) {
+          e.preventDefault();
+          var event = new this.createCustomEvent('download', {invitationId: options.invitationId});
+          document.dispatchEvent(event);
+        }.bind(this);
+        this.downloadAction = new Action(this.options.downloadSelector, this.downloadCB);
+      }
+      // Open file action
+      if (this.options.openSelector) {
+          this.openCB =  function (e) {
+              e.preventDefault();
+              var event = new this.createCustomEvent('open', {invitationId: options.invitationId, authenticated: options.authenticated,
+              invitationStatus: options.invitationStatus, invitationName: options.invitationName, invitationFullPath: options.invitationFullPath,
+              invitationTombstoneId: options.invitationTombstoneId});
+              document.dispatchEvent(event);
+          }.bind(this);
+          this.openAction = new Action(this.options.openSelector, this.openCB);
+      }
+
+      // View file action
+      if (this.options.viewSelector) {
+          this.viewCB =  function (e) {
+              e.preventDefault();
+              var event = new this.createCustomEvent('viewfile', {invitationId: options.invitationId});
+              document.dispatchEvent(event);
+          }.bind(this);
+          this.viewAction = new Action(this.options.viewSelector, this.viewCB);
+      }
+        // View file in new tab action
+        if (this.options.viewInNewTabSelector) {
+            this.viewInNewTabCB =  function (e) {
+                e.preventDefault();
+                var event = new this.createCustomEvent('viewInNewTab');
+                document.dispatchEvent(event);
+            }.bind(this);
+            this.viewInNewTabAction = new Action(this.options.viewInNewTabSelector, this.viewInNewTabCB);
+        }
+      // Rename action
+      if (this.options.renameSelector) {
+        this.renameCB = function (e) {
+          e.preventDefault();
+          var event = new this.createCustomEvent('rename');
+          document.dispatchEvent(event);
+        }.bind(this);
+        this.renameAction = new Action(this.options.renameSelector, this.renameCB);
+      }
+
+      // Cut action
+      if (this.options.cutSelector) {
+        this.cutCB = function (e) {
+          e.preventDefault();
+          var event = new this.createCustomEvent('cut');
+          document.dispatchEvent(event);
+        }.bind(this);
+        this.cutAction = new Action(this.options.cutSelector, this.cutCB);
+      }
+
+      // Copy action
+      if (this.options.copySelector) {
+        this.copyCB = function (e) {
+          e.preventDefault();
+          var event = new this.createCustomEvent('copy');
+          document.dispatchEvent(event);
+        }.bind(this);
+        this.copyAction = new Action(this.options.copySelector, this.copyCB);
+      }
+
+      // Delete action
+      if (this.options.deleteSelector) {
+        this.deleteCB = function (e) {
+          e.preventDefault();
+          var event = new this.createCustomEvent('delete');
+          document.dispatchEvent(event);
+        }.bind(this);
+        this.deleteAction = new Action(this.options.deleteSelector, this.deleteCB);
+      }
+
+      // move action
+      if (this.moveEnabled) {
+        if (this.options.moveSelector) {
+          this.moveCB = function (e) {
+            e.preventDefault();
+            var event = new this.createCustomEvent('move');
+            document.dispatchEvent(event);
+          }.bind(this);
+          this.moveAction = new Action(this.options.moveSelector, this.moveCB);
+        }
+      }
+
+      // Paste action
+      if (this.options.pasteSelector) {
+        this.pasteCB = function (e) {
+          e.preventDefault();
+          var event = new this.createCustomEvent('paste');
+          document.dispatchEvent(event);
+        }.bind(this);
+        this.pasteAction = new Action(this.options.pasteSelector, this.pasteCB);
+      }
+
+      // Restore action
+      if (this.options.restoreSelector) {
+        this.restoreCB = function (e) {
+          e.preventDefault();
+          var event = new this.createCustomEvent('restore');
+          document.dispatchEvent(event);
+        }.bind(this);
+        this.restoreAction = new Action(this.options.restoreSelector, this.restoreCB);
+      }
+
+      // permanentlyDelete action
+      if (this.options.permanentlyDeleteSelector) {
+        this.permanentlyDeleteCB = function (e) {
+          e.preventDefault();
+          var event = new this.createCustomEvent('permanentlydelete');
+          document.dispatchEvent(event);
+        }.bind(this);
+        this.permanentlyDeleteAction = new Action(this.options.permanentlyDeleteSelector, this.permanentlyDeleteCB);
+      }
+
+      // permanentlyDeleteAll action
+      if (this.options.permanentlyDeleteAllSelector) {
+        this.permanentlyDeleteAllCB = function (e) {
+          e.preventDefault();
+          var event = new this.createCustomEvent('permanentlydeleteall');
+          document.dispatchEvent(event);
+        }.bind(this);
+        this.permanentlyDeleteAllAction = new Action(this.options.permanentlyDeleteAllSelector, this.permanentlyDeleteAllCB);
+      }
+
+      if (this.sharingEnabled) {
+        // share action
+        if (this.options.shareSelector) {
+          this.shareCB = function(e) {
+            e.preventDefault();
+          }.bind(this);
+          this.shareAction = new Action(this.options.shareSelector, this.shareCB);
+        }
+
+        if (this.personalInvitationsEnabled) {
+          // manage action
+          if (this.options.manageSelector) {
+            this.manageCB = function(e) {
+              e.preventDefault();
+              var event = new this.createCustomEvent('manage');
+              document.dispatchEvent(event);
+            }.bind(this);
+            this.manageAction = new Action(this.options.manageSelector, this.manageCB);
+          }
+        }
+
+        // link action
+        if (this.options.linkSelector) {
+          this.linkCB = function(e) {
+            e.preventDefault();
+            var event = new this.createCustomEvent('link');
+            document.dispatchEvent(event);
+          }.bind(this);
+          this.linkAction = new Action(this.options.linkSelector, this.linkCB);
+        }
+
+        // leave action
+        if (this.options.leaveSelector) {
+          this.leaveCB = function(e) {
+            e.preventDefault();
+            var event = new this.createCustomEvent('leave');
+            document.dispatchEvent(event);
+          }.bind(this);
+          this.leaveAction = new Action(this.options.leaveSelector, this.leaveCB);
+        }
+
+        // goToDrive action
+        if (this.options.goToDriveSelector) {
+          this.goToDriveCB = function(e) {
+            e.preventDefault();
+            var event = new this.createCustomEvent('gotodrive', {
+              invitationId: options.invitationId, invitationName: options.invitationName});
+            document.dispatchEvent(event);
+          };
+          _.bindAll(this, "goToDriveCB");
+          this.goToDriveAction = new Action(this.options.goToDriveSelector, this.goToDriveCB);
+        }
+
+        // add action
+        if (this.options.addSelector) {
+          this.addCB = function(e) {
+            e.preventDefault();
+            var event = new this.createCustomEvent('add');
+            document.dispatchEvent(event);
+          };
+          _.bindAll(this, "addCB");
+          this.addAction = new Action(this.options.addSelector, this.addCB);
+        }
+
+        // addToDrive action
+        if (this.options.addToDriveSelector) {
+          this.addToDriveCB = function(e) {
+            e.preventDefault();
+            var event = new this.createCustomEvent('addtodrive', {
+              invitationId: options.invitationId, invitationName: options.invitationName, authenticated: options.authenticated});
+            document.dispatchEvent(event);
+          };
+          _.bindAll(this, "addToDriveCB");
+          this.addToDriveAction = new Action(this.options.addToDriveSelector, this.addToDriveCB);
+        }
+
+        // copyToDrive action
+        if (this.options.copyToDriveSelector) {
+          this.copyToDriveCB = function(e) {
+            e.preventDefault();
+            var event = new this.createCustomEvent('copytodrive', {
+              invitationId: options.invitationId, invitationName: options.invitationName, authenticated: options.authenticated});
+            document.dispatchEvent(event);
+          };
+          _.bindAll(this, "copyToDriveCB");
+          this.copyToDriveAction = new Action(this.options.copyToDriveSelector, this.copyToDriveCB);
+        }
+
+        // decline action
+        if (this.options.declineSelector) {
+          this.declineCB = function(e) {
+            e.preventDefault();
+            var event = new this.createCustomEvent('decline', {
+              invitationId: options.invitationId, invitationName: options.invitationName});
+            document.dispatchEvent(event);
+          };
+          _.bindAll(this, "declineCB");
+          this.declineAction = new Action(this.options.declineSelector, this.declineCB);
+        }
+
+        // shareLink action
+        if (this.options.shareLinkSelector) {
+          this.shareLinkCB = function(e) {
+            e.preventDefault();
+            var event = new this.createCustomEvent('sharelink', {
+                  invitationId: options.invitationId, invitationName: options.invitationName});
+            document.dispatchEvent(event);
+          };
+          _.bindAll(this, "shareLinkCB");
+          this.shareLinkAction = new Action(this.options.shareLinkSelector, this.shareLinkCB);
+        }
+      }
+    }
+
+  };
+
+  return ActionButtonController;
+}); // require

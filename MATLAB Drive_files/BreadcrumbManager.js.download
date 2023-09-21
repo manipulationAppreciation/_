@@ -1,0 +1,738 @@
+/*
+ * To use, create <div class="breadcrumbContainer"></div> element where you want it.
+ * Provide unique xpath (i.e. css selector to the parent element of that breadcrumbContainer element)
+ * Create new instance of BreadcrumbManager.
+ * call the breadcrumbManager's render method in your render method BEFORE you render any tree
+ * add a call to the breadcrumbManager's stop() method where you would stop your listeners.
+ * See FilesPageView or FolderChooserView for examples.
+*/
+
+define([
+  'underscore',
+  "dojo/i18n!nls/mldoStringResource",
+  "dojo/string"
+], function(_, MLDOStrings, DojoString) {
+
+  /*
+   * Helper functions
+   */
+
+  // Is the passed in element an 'li' html element?
+  function liFilter(element) {
+    return element.nodeName.toLowerCase() == 'li';
+  }
+  // get all sibling elements that follow the passed in element.
+  function getNextSiblings(el, filter) {
+      var siblings = [];
+      while (el && el.nextSibling) {
+        el = el.nextSibling;
+        if (!filter || filter(el)) {
+          siblings.push(el);
+        }
+      }
+      return siblings;
+  }
+
+  /*
+   * Main class that is returned
+   */
+
+  var BreadcrumbManager = function(args) {
+    this.setDefaultOptions();
+    this.initialize(args);
+  };
+
+  BreadcrumbManager.prototype = {
+
+    initialize: function(args) {
+      if (this.optionsAreValid(args)) {
+        this.applyOptions(args);
+      }
+      this.adjustOptionsAccordingToWindowSize();
+    },
+
+    getBreadcrumbContainer: function() {
+      var breadcrumbContainer;
+      let breadcrumbContainerSelector = this.getBreadcrumbsBaseSelector() + ' div.breadcrumbContainer';
+      breadcrumbContainer = this.getOptions().el.querySelector(breadcrumbContainerSelector);
+      return breadcrumbContainer;
+    },
+
+    getBreadcrumbList: function() {
+      var breadcrumbList;
+      let breadcrumbListSelector = this.getBreadcrumbsBaseSelector() + ' div.breadcrumbContainer > ol.breadcrumb';
+      breadcrumbList = this.getOptions().el.querySelector(breadcrumbListSelector);
+      return breadcrumbList;
+    },
+
+    render: function() {
+      var breadcrumbContainer = this.getBreadcrumbContainer();
+      var rootFolderName = _.escape(this.getOptions().getRootFolderNameMethod());
+      if (breadcrumbContainer) {
+        if (this.getOptions().updateSharedFolderBreadcrumb) {
+          breadcrumbContainer.innerHTML = '<ol class=\"breadcrumb\"><li class=\"driveBreadcrumbIcon active\">' + rootFolderName + '</li></ol>';
+        } else {
+          breadcrumbContainer.innerHTML = breadcrumbContainer.innerHTML + '<ol class=\"breadcrumb\"><li class=\"active\">' + rootFolderName + '</li></ol>';
+        }
+      }
+      this.start();
+    },
+
+    startGoToListeners: function() {
+      var notFirstListElementSelector = this.getBreadcrumbsBaseSelector() + ' div.breadcrumbContainer > ol.breadcrumb li:not(.menu-item):first-child';
+      var listElementAnchorSelector = this.getBreadcrumbsBaseSelector() + ' div.breadcrumbContainer > ol.breadcrumb li a';
+      var notFirstListElements = this.getOptions().el.querySelectorAll(notFirstListElementSelector);
+      var listAnchors = this.getOptions().el.querySelectorAll(listElementAnchorSelector);
+      if (notFirstListElements && notFirstListElements.length) {
+        // querySelectorAll returns a NodeList, which is not a real array.  Convert to real array.
+        notFirstListElements = Array.prototype.slice.call(notFirstListElements);
+        notFirstListElements.forEach(this.addGoToRootListeners.bind(this));
+      }
+      if (listAnchors && listAnchors.length) {
+        // querySelectorAll returns a NodeList, which is not a real array.  Convert to real array.
+        listAnchors = Array.prototype.slice.call(listAnchors);
+        listAnchors.forEach(this.addGoToBreadcrumbListeners.bind(this));
+      }
+    },
+
+    start: function() {
+      var breadcrumbContainer = this.getBreadcrumbContainer();
+      if (breadcrumbContainer) {
+        breadcrumbContainer.addEventListener('click', this.deSelectGrid.bind(this), false);
+        breadcrumbContainer.addEventListener('update:breadcrumbs', this.handleUpdateEvent.bind(this));
+        breadcrumbContainer.addEventListener('updateshared:breadcrumbs', this.handleUpdateEvent.bind(this));
+      }
+    },
+
+    stopGoToListeners: function() {
+      var notFirstListElementSelector = this.getBreadcrumbsBaseSelector() + ' div.breadcrumbContainer > ol.breadcrumb li:not(.menu-item):first-child';
+      var listElementAnchorSelector = this.getBreadcrumbsBaseSelector() + ' div.breadcrumbContainer > ol.breadcrumb li a';
+      var notFirstListElements = this.getOptions().el.querySelectorAll(notFirstListElementSelector);
+      var listAnchors = this.getOptions().el.querySelectorAll(listElementAnchorSelector);
+      if (notFirstListElements && notFirstListElements.length) {
+        // querySelectorAll returns a NodeList, which is not a real array.  Convert to real array.
+        notFirstListElements = Array.prototype.slice.call(notFirstListElements);
+        notFirstListElements.forEach(this.removeGoToRootListeners.bind(this));
+      }
+      if (listAnchors && listAnchors.length) {
+        // querySelectorAll returns a NodeList, which is not a real array.  Convert to real array.
+        listAnchors = Array.prototype.slice.call(listAnchors);
+        listAnchors.forEach(this.removeGoToBreadcrumbListeners.bind(this));
+      }
+    },
+
+    stop: function() {
+      var breadcrumbContainer = this.getBreadcrumbContainer();
+      if (breadcrumbContainer) {
+        breadcrumbContainer.removeEventListener('click', this.deSelectGrid.bind(this), false);
+        breadcrumbContainer.removeEventListener('update:breadcrumbs', this.handleUpdateEvent.bind(this));
+        breadcrumbContainer.removeEventListener('updateshared:breadcrumbs', this.handleUpdateEvent.bind(this));
+      }
+    },
+
+    handleUpdateEvent: function(e) {
+      var type;
+      var folderPath;
+      var sharedParentRoot;
+      if (e) {
+        type = (e.type ? e.type.toLowerCase() : '');
+        folderPath = ((e.detail && e.detail.folderpath) ? e.detail.folderpath : '');
+      }
+      if (type && folderPath) {
+        if (type === 'update:breadcrumbs') {
+          this.updateBreadcrumbs(folderPath);
+        }
+        if (type === 'updateshared:breadcrumbs' && this.options.updateSharedFolderBreadcrumb) {
+          sharedParentRoot = e.detail.sharedparentroot;
+          this.updateSharedFolderIconBreadcrumb(folderPath, sharedParentRoot);
+        }
+      }
+    },
+
+    addGoToRootListeners: function(element, index, list) {
+      this.startEventListener(element, 'click', this.goToRoot);
+    },
+
+    removeGoToRootListeners: function(element, index, list) {
+      this.stopEventListener(element, 'click', this.goToRoot);
+    },
+
+    addGoToBreadcrumbListeners: function(element, index, list) {
+      this.startEventListener(element, 'click', this.goToBreadcrumb);
+    },
+
+    removeGoToBreadcrumbListeners: function(element, index, list) {
+      this.stopEventListener(element, 'click', this.goToBreadcrumb);
+    },
+
+    startEventListener: function(element, event, handler) {
+      element.addEventListener(event, handler.bind(this), false);
+    },
+
+    stopEventListener: function(element, event, handler) {
+      element.removeEventListener(event, handler.bind(this), false);
+    },
+
+    goToRoot: function(e) {
+      var liListSelector = this.getBreadcrumbsBaseSelector() + ' div.breadcrumbContainer > ol.breadcrumb li';
+      var liList = this.getOptions().el.querySelectorAll(liListSelector) || [];
+      var folderPath = '/';
+      if (liList.length !== 1) {
+        e.preventDefault();
+        if (folderPath && this.getOptions().goToMethod !== BreadcrumbManager.DEFAULT_GOTO_METHOD) {
+          this.getOptions().goToMethod(folderPath);
+        }
+      }
+    },
+
+    goToBreadcrumb: function(e) {
+      e.preventDefault();
+      var currentCrumbLi = e.target.parentNode;
+      var currentText = e.target.text;
+      var siblings = [];
+      var previousCrumb;
+      var crumbList;
+      var folderPath = '/';
+      if (e.target && e.target.dataset && e.target.dataset.folderpath) {
+        folderPath = e.target.dataset.folderpath;
+      }
+      if (currentCrumbLi && currentText) {
+        currentText = _.escape(currentText); // TODO Refactor
+        siblings = getNextSiblings(currentCrumbLi, liFilter);
+        siblings.forEach(function(el) { el.parentNode.removeChild(el); });
+        currentCrumbLi.classList.add('active');
+        previousCrumb = currentCrumbLi.previousElementSibling;
+        crumbList = currentCrumbLi.parentNode;
+        if (previousCrumb && crumbList) {
+          if (previousCrumb.length === 0) {
+            crumbList.insertAdjacentHTML('beforeend', '<li class="active">' + currentText + '</li>');
+          } else {
+            previousCrumb.insertAdjacentHTML('afterend', '<li class="active">' + currentText + '</li>');
+          }
+        }
+        currentCrumbLi.parentNode.removeChild(currentCrumbLi);
+      }
+      if (folderPath && this.getOptions().goToMethod !== BreadcrumbManager.DEFAULT_GOTO_METHOD) {
+        this.getOptions().goToMethod(folderPath);
+      }
+    },
+
+    deSelectGrid: function(event) {
+      if (this.getOptions().deSelectMethod !== BreadcrumbManager.DEFAULT_DESELECT_METHOD) {
+        this.getOptions().deSelectMethod(event);
+      }
+    },
+
+    ensureRequiredOptions: function(options) {
+      var requiredOptionsPresent = true;
+      if (!options || typeof options !== 'object') {
+        throw new TypeError('Invalid options argument');
+      }
+      if (!options.baseSelector || typeof options.baseSelector !== 'string') {
+        throw new TypeError('Invalid baseSelector argument');
+      }
+      if (!options.el || typeof options.el !== 'object') {
+        throw new TypeError('Invalid el argument');
+      }
+      if (!options.goToMethod || typeof options.goToMethod !== 'function') {
+        throw new TypeError('Invalid goToMethod argument');
+      }
+      if (!options.deSelectMethod || typeof options.deSelectMethod !== 'function') {
+        throw new TypeError('Invalid deSelectMethod argument');
+      }
+      if (!options.getRootFolderNameMethod || typeof options.getRootFolderNameMethod !== 'function') {
+        throw new TypeError('Invalid getRootFolderNameMethod argument');
+      }
+      return requiredOptionsPresent;
+    },
+
+    optionsAreValid: function(options) {
+      var isValid = false;
+      var badOptionMsg;
+      try {
+        isValid = this.ensureRequiredOptions(options);
+      } catch (e) {
+        badOptionMsg = e.message;
+        isValid = false;
+      }
+      if (isValid) {
+        if (options.parentDisplayCount && (isNaN(options.parentDisplayCount) || options.parentDisplayCount < 0 || options.parentDisplayCount > 20)) {
+          isValid = false;
+        }
+        if (options.visibleShortLength && (isNaN(options.visibleShortLength) || options.visibleShortLength < 0 || options.visibleShortLength > 20)) {
+          isValid = false;
+        }
+        if (options.visibleLongLength && (isNaN(options.visibleLongLength) || options.visibleLongLength < 0 || options.visibleLongLength > 50)) {
+          isValid = false;
+        }
+        if (options.alwaysUseShortTruncation && typeof options.alwaysUseShortTruncation !== 'boolean') {
+          isValid = false;
+        }
+      }
+
+      return isValid;
+    },
+
+    applyOptions: function(options) {
+      if (options.baseSelector) {
+        this.options.baseSelector = options.baseSelector;
+      }
+      if (options.hasOwnProperty('parentDisplayCount') && typeof options.parentDisplayCount === 'number') {
+        this.options.parentDisplayCount = options.parentDisplayCount;
+        this.options.originalParentDisplayCount = options.parentDisplayCount;
+      }
+      if (options.hasOwnProperty('alwaysUseShortTruncation') && typeof options.alwaysUseShortTruncation === 'boolean') {
+        this.options.alwaysUseShortTruncation = options.alwaysUseShortTruncation;
+      }
+      if (options.hasOwnProperty('truncateRootFolderName') && typeof options.truncateRootFolderName === 'boolean') {
+        this.options.truncateRootFolderName = options.truncateRootFolderName;
+      }
+      if (options.getRootFolderNameMethod) {
+        this.options.getRootFolderNameMethod = options.getRootFolderNameMethod;
+      }
+      if (options.visibleShortLength) {
+        this.options.visibleShortLength = options.visibleShortLength;
+      }
+      if (options.visibleLongLength) {
+        this.options.visibleLongLength = options.visibleLongLength;
+      }
+      if (options.el) {
+        this.options.el = options.el;
+      }
+      if (options.goToMethod) {
+        this.options.goToMethod = options.goToMethod;
+      }
+      if (options.deSelectMethod) {
+        this.options.deSelectMethod = options.deSelectMethod;
+      }
+      if (options.hasOwnProperty('minimumVisibleLIs') && (typeof options.minimumVisibleLIs === 'number')) {
+        this.options.minimumVisibleLIs = options.minimumVisibleLIs;
+      }
+      this.options.updateSharedFolderBreadcrumb = options.updateSharedFolderBreadcrumb;
+    },
+
+    getOptions: function() {
+      return this.options;
+    },
+
+    getBreadcrumbsBaseSelector: function() {
+      return (this.options ? this.options.baseSelector : '');
+    },
+
+    truncatePath: function(str, shouldMakeShorter) {
+      var visLen = (shouldMakeShorter ? this.getOptions().visibleShortLength : this.getOptions().visibleLongLength);
+      var lengthLimit = visLen * 2 + 1;
+      var start;
+      var end;
+      if (str && str.length > lengthLimit) {
+        start = str.substring(0, visLen);
+        end = str.substring(str.length - visLen, str.length);
+        return start + '\u2026' + end;
+      } else {
+        return str;
+      }
+    },
+
+    adjustOptionsAccordingToWindowSize: function() {
+      let docBodyWidth = document.body.clientWidth;
+      if (docBodyWidth < BreadcrumbManager.THRESHOLD_FOR_VERY_SMALL_TRUNCATION) {
+        this.options.visibleLongLength = 4;
+        this.options.visibleShortLength = 3;
+        this.options.alwaysUseShortTruncation = true;
+//        this.options.originalParentDisplayCount = 0;
+        this.options.parentDisplayCount = 0;
+      } else if (docBodyWidth < BreadcrumbManager.THRESHOLD_FOR_SMALL_TRUNCATION) {
+        this.options.visibleLongLength = 8;
+        this.options.visibleShortLength = 4;
+        this.options.alwaysUseShortTruncation = true;
+      }
+    },
+
+    calculateWidthOfTruncatedBreadcrumb: function() {
+      var width = 0;
+      let wideChar = 'M';
+      let charLength = this.getOptions().alwaysUseShortTruncation ? this.getOptions().visibleShortLength : this.getOptions().visibleLongLength;
+      charLength *= 3;
+      var wideName;
+      for (let i = 0; i < charLength; i++) {
+        wideName += wideChar;
+      }
+      let exampleLI = this.createLinkBreadcrumb(wideName, "/");
+      var hiddenList = document.createElement('ol');
+      hiddenList.style.position = 'absolute';
+      hiddenList.style.top = '-300px';
+      hiddenList.style.left = '-500px';
+      hiddenList.innerHTML = exampleLI;
+      hiddenList.id = 'mldoBreadcrumbHiddenList';
+      document.body.appendChild(hiddenList);
+      let element = document.querySelector('ol#mldoBreadcrumbHiddenList > li');
+      if (element) {
+        width = element.clientWidth;
+      }
+      document.body.removeChild(hiddenList);
+      return width;
+    },
+
+    calculateWidthOfRootBreadcrumb: function() {
+      var width = 0;
+      let breadCrumbsList = this.getBreadcrumbList();
+      if (breadCrumbsList) {
+        let rootLI = breadCrumbsList.querySelector('li:first-child');
+        if (rootLI) {
+          width = rootLI.clientWidth;
+        }
+      }
+      return width;
+    },
+
+    calculateDropdownWidth: function() {
+      return 80;  // close enough
+    },
+
+    adjustParentDisplayCountByWidth: function(liCount) {
+      let breadcrumbContainer = this.getBreadcrumbContainer();
+      let originalParentDisplayCount = this.options.originalParentDisplayCount + 1;  // plus current folder
+      if (breadcrumbContainer) {
+        let dropdownThreshold = this.getOptions().originalParentDisplayCount + this.getOptions().minimumVisibleLIs;
+        let maxBreadcrumbListWidth = this.calculateBreadcrumbListWidth(liCount, originalParentDisplayCount, dropdownThreshold);
+        let breadcrumbContainerWidth = breadcrumbContainer.clientWidth;
+        let count = this.calculateEffectiveParentDisplayCount(breadcrumbContainerWidth, maxBreadcrumbListWidth, liCount, dropdownThreshold);
+        this.options.parentDisplayCount = count;
+      }
+    },
+
+    calculateEffectiveParentDisplayCount: function(breadcrumbContainerWidth, maxBreadcrumbListWidth, liCount, dropdownThreshold) {
+      var count = this.options.originalParentDisplayCount;
+      if (breadcrumbContainerWidth >= maxBreadcrumbListWidth) {
+        this.options.parentDisplayCount = count;
+      } else {
+        let calculatedWidth;
+        while (count > 0) {
+          calculatedWidth = this.calculateBreadcrumbListWidth(liCount, count, dropdownThreshold);
+          if (breadcrumbContainerWidth >= calculatedWidth) {
+            break;
+          }
+          count--;
+        }
+      }
+      return count;
+    },
+
+    calculateBreadcrumbListWidth: function(liCount, visibleParentCount, dropdownThreshold) {
+      let calculatedWidth;
+      let maxWidthOfTruncatedLI = this.calculateWidthOfTruncatedBreadcrumb();
+      let rootElementWidth = this.calculateWidthOfRootBreadcrumb();
+      let dropdownWidth = this.calculateDropdownWidth();
+      if (liCount < dropdownThreshold) {
+        calculatedWidth = rootElementWidth + maxWidthOfTruncatedLI + (maxWidthOfTruncatedLI * (visibleParentCount + 1));
+      } else {
+        calculatedWidth = rootElementWidth + dropdownWidth + (maxWidthOfTruncatedLI * (visibleParentCount + 1));
+      }
+      return calculatedWidth;
+    },
+
+    updateBreadcrumbs: function(path) {
+      this.stopGoToListeners();
+      var processedPath = this.getDecodedAndEscapedPath(path);
+      var parentList = this.getParentFolderListFromPath(processedPath);
+      if (parentList && parentList.length) {
+        this.adjustParentDisplayCountByWidth(parentList.length);
+      }
+      var limit = this.getOptions().parentDisplayCount + this.getOptions().minimumVisibleLIs;
+      var breadcrumbs = this.getBreadcrumbList();
+      if (breadcrumbs) {
+        breadcrumbs.innerHTML = '';
+        if ( parentList.length > limit ) {
+          this.renderDropdownBreadcrumbDisplay(breadcrumbs, parentList);
+        } else {
+          this.renderNormalBreadcrumbDisplay(breadcrumbs, parentList);
+        }
+      }
+      this.startGoToListeners();
+    },
+
+    getDecodedAndEscapedPath: function(path) {
+      var processedPath = path;
+      if (path && typeof path === "string" && path.length && path !== "/") {
+        var decodedPath;
+        try {
+          decodedPath = decodeURI(path);
+        } catch (e) {
+          decodedPath = path;
+        }
+        processedPath = _.escape(decodedPath);
+      }
+      return processedPath;
+    },
+
+    getParentFolderListFromPath: function(path) {
+      var parentList = [];
+      var rootFolderName = this.getOptions().getRootFolderNameMethod();
+      if (path && typeof path === "string") {
+        if (path === '/') {
+          parentList.push(rootFolderName);
+        } else {
+          parentList = path.split('/');
+          if (parentList.length > 0 && !parentList[0]) {
+            parentList[0] = rootFolderName;
+          }
+        }
+      }
+      return parentList;
+    },
+
+    getBreadcrumbDropdownParentList: function(parentList, parentDisplayCount) {
+      var dropdownParentList = [];
+      var item;
+      var linkPath = "";
+      if (parentList && parentList.length && !isNaN(parentDisplayCount) && parentDisplayCount >= 0) {
+        for (var i = 1; i < parentList.length - parentDisplayCount - 1; i++) {
+          item = parentList[i];
+          linkPath += '/' + item;
+          dropdownParentList.push({name: item, linkPath: linkPath});
+        }
+      }
+      return dropdownParentList;
+    },
+
+    getBreadcrumbDisplayParentList: function(parentList, excludeList) {
+      var excludeCount = excludeList.length;
+      var displayList = [];
+      var item;
+      var excludeItem;
+      var linkPath = "";
+      for (var j = 0; j < excludeList.length; j++) {
+        excludeItem = excludeList[j];
+        linkPath += '/' + excludeItem.name;
+      }
+      if (parentList && parentList.length && !isNaN(excludeCount) && excludeCount >= 0 && parentList.length > excludeCount) {
+        for (var i = excludeCount + 1; i < parentList.length; i++) {
+          item = parentList[i];
+          linkPath += '/' + item;
+          displayList.push({name: item, linkPath: linkPath});
+        }
+      }
+      return displayList;
+    },
+
+    createBreadcrumbDropdown: function(parentList) {
+      var html = "";
+      var item;
+      if (parentList && parentList.length) {
+        html += this.createBreadcrumbDropdownStart();
+        for (var i = 0; i < parentList.length; i++) {
+          item = parentList[i];
+          if (item && item.name && item.linkPath) {
+            html += this.createLinkBreadcrumb(item.name, item.linkPath, "menu-item");
+          }
+        }
+        html += this.createBreadcrumbDropdownStop();
+      }
+      return html;
+    },
+
+    renderDropdownBreadcrumbDisplay: function(breadcrumbs, parentList) {
+      var linkPath = "";
+      var listLength = parentList.length;
+      var item;
+      var parentsForDropdown = this.getBreadcrumbDropdownParentList(parentList, this.getOptions().parentDisplayCount);
+      var parentsForDisplay = this.getBreadcrumbDisplayParentList(parentList, parentsForDropdown);
+      breadcrumbs.innerHTML = breadcrumbs.innerHTML + this.createBreadcrumbRoot(parentList);
+      breadcrumbs.innerHTML = breadcrumbs.innerHTML + this.createBreadcrumbDropdown(parentsForDropdown);
+      for (var i = 0; i < parentsForDisplay.length; i++) {
+        item = parentsForDisplay[i].name;
+        linkPath = parentsForDisplay[i].linkPath;
+        if (i < (parentsForDisplay.length - 1)) {
+          breadcrumbs.innerHTML = breadcrumbs.innerHTML + this.createLinkBreadcrumb(item, linkPath);
+        } else {
+          breadcrumbs.innerHTML = breadcrumbs.innerHTML + this.createActiveBreadcrumb(item);
+        }
+      }
+    },
+
+    renderNormalBreadcrumbDisplay: function(breadcrumbs, parentList) {
+      var linkPath = "";
+      var listLength = parentList.length;
+      var item;
+      breadcrumbs.innerHTML = breadcrumbs.innerHTML + this.createBreadcrumbRoot(parentList);
+      for (var i = 1; i < listLength; i++) {
+        item = parentList[i];
+        if (i < (listLength - 1)) {
+          if (i >= 1) {
+            linkPath += '/' + item;
+          }
+          breadcrumbs.innerHTML = breadcrumbs.innerHTML + this.createLinkBreadcrumb(item, linkPath);
+        } else {
+          breadcrumbs.innerHTML = breadcrumbs.innerHTML + this.createActiveBreadcrumb(item);
+        }
+      }
+    },
+
+    createBreadcrumbDropdownStart: function() {
+      return '<li class=\"no-icon\"><div class=\"btn-group dropdown\"><button title=\"' + MLDOStrings.moreFolders + '\" type=\"button\" data-toggle=\"dropdown\" class=\"btn btn-default dropdown-toggle\">' +
+        '<div class=\"breadcrumbDropdownButtonText\">&#133;&nbsp; </div><div class=\"caretContainer\"><b class=\"caret\"></b></div>' +
+        '</button>' +
+        '<ul class=\"dropdown-menu\">';
+    },
+
+    createBreadcrumbDropdownStop: function() {
+      return '</ul></div></li>';
+    },
+
+    createBreadcrumbRoot: function(parentList) {
+      var rootFolderName = _.escape(this.getOptions().getRootFolderNameMethod());
+      var linkPath = "/";
+      var breadcrumbRoot = "";
+      if (this.getOptions().truncateRootFolderName) {
+        rootFolderName = this.truncatePath(rootFolderName, this.getOptions().alwaysUseShortTruncation);
+      }
+      if (parentList.length === 1) {
+        breadcrumbRoot = '<li class="active">' + rootFolderName + '</li>';
+      } else {
+        breadcrumbRoot = this.createRootLinkBreadcrumb(rootFolderName, linkPath);
+      }
+      return breadcrumbRoot;
+    },
+
+    createActiveBreadcrumb: function(item) {
+      return '<li class=\"active\" title=\"' + item + '\">' +
+      this.truncatePath(item, this.getOptions().alwaysUseShortTruncation) +
+      '<span></span></li>';
+    },
+
+    createLinkBreadcrumb: function(item, linkPath, cssClassName) {
+      var className = ((cssClassName && typeof cssClassName === "string") ? ' class=\"' + cssClassName + '\"' : '');
+      return '<li' + className + '><a href=\"#\" title=\"' + item + '\" data-folderpath=\"' + linkPath + '\">' +
+        this.truncatePath(item, ( ((className && className.length > 0) || this.getOptions().alwaysUseShortTruncation) ? true : false) ) +
+          '<span data-folderpath=\"' + linkPath + '\"></span>' +
+        '</a></li>';
+    },
+
+    createRootLinkBreadcrumb: function(item, linkPath) {
+      return '<li><a href=\"#\" title=\"' + item + '\" data-folderpath=\"' + linkPath + '\">' + item +
+          '<span data-folderpath=\"' + linkPath + '\"></span>' +
+        '</a></li>';
+    },
+
+  updateSharedFolderIconBreadcrumb: function(path, sharedParentRoot) {
+      if (path === "/" || !sharedParentRoot) {
+        return;
+      }
+      var selector = this.getBreadcrumbsBaseSelector() + ' div.breadcrumbContainer > ol.breadcrumb li:not(.no-icon)';
+      var listOfBreadcrumbs = this.getOptions().el.querySelectorAll(selector);
+      var fullPath = "";
+      var text = '';
+      var title = '';
+      for (var i = 1; i < listOfBreadcrumbs.length; i++, text = '') {
+        text = listOfBreadcrumbs[i].innerText.trim();
+        if (text && text.indexOf('\u2026') > 0) {
+          title = listOfBreadcrumbs[i].getAttribute('title');
+          if (!title && listOfBreadcrumbs[i].querySelector('a')) {
+            title = listOfBreadcrumbs[i].querySelector('a').getAttribute('title');
+          }
+          text = title.trim();
+        }
+        fullPath += "/" + text;
+        if (fullPath === sharedParentRoot) {
+          listOfBreadcrumbs[i].classList.add("shared");
+        }
+      }
+    },
+
+    setDefaultOptions: function() {
+      this.options = {
+        baseSelector: '',
+        originalParentDisplayCount: BreadcrumbManager.DEFAULT_PARENT_DISPLAY_COUNT,
+        parentDisplayCount: BreadcrumbManager.DEFAULT_PARENT_DISPLAY_COUNT,
+        alwaysUseShortTruncation: true,
+        visibleShortLength: BreadcrumbManager.DEFAULT_VISIBLE_SHORT_LENGTH,
+        visibleLongLength: BreadcrumbManager.DEFAULT_VISIBLE_LONG_LENGTH,
+        el: document,
+        goToMethod: BreadcrumbManager.DEFAULT_GOTO_METHOD,
+        deSelectMethod: BreadcrumbManager.DEFAULT_DESELECT_METHOD,
+        getRootFolderNameMethod: BreadcrumbManager.DEFAULT_GET_ROOT_FOLDER_NAME_METHOD,
+        minimumVisibleLIs: BreadcrumbManager.DEFAULT_MINIMUM_VISABLE_LIS,
+        truncateRootFolderName: false
+      };
+    }
+  };
+
+  Object.defineProperty(BreadcrumbManager, "DEFAULT_PARENT_DISPLAY_COUNT", {
+    value: 2,
+    writable: false,
+    enumerable: false,
+    configurable: true
+  });
+
+  Object.defineProperty(BreadcrumbManager, "DEFAULT_VISIBLE_SHORT_LENGTH", {
+    value: 6,
+    writable: false,
+    enumerable: false,
+    configurable: true
+  });
+
+  Object.defineProperty(BreadcrumbManager, "DEFAULT_VISIBLE_LONG_LENGTH", {
+    value: 15,
+    writable: false,
+    enumerable: false,
+    configurable: true
+  });
+
+  Object.defineProperty(BreadcrumbManager, "DEFAULT_TRUNCATION_SHORT_LIMIT", {
+    value: 15,
+    writable: false,
+    enumerable: false,
+    configurable: true
+  });
+
+  Object.defineProperty(BreadcrumbManager, "DEFAULT_TRUNCATION_LONG_LIMIT", {
+    value: 33,
+    writable: false,
+    enumerable: false,
+    configurable: true
+  });
+
+  Object.defineProperty(BreadcrumbManager, "DEFAULT_GOTO_METHOD", {
+    value: function(folderPath) { /* do nothing */ },
+    writable: false,
+    enumerable: false,
+    configurable: false
+  });
+
+  Object.defineProperty(BreadcrumbManager, "DEFAULT_DESELECT_METHOD", {
+    value: function(e) { /* do nothing */ },
+    writable: false,
+    enumerable: false,
+    configurable: false
+  });
+
+  Object.defineProperty(BreadcrumbManager, "DEFAULT_GET_ROOT_FOLDER_NAME_METHOD", {
+    value: function(e) { return MLDOStrings.rootFolderNameMatlabDrive; },
+    writable: false,
+    enumerable: false,
+    configurable: false
+  });
+
+  Object.defineProperty(BreadcrumbManager, "DEFAULT_MINIMUM_VISABLE_LIS", {
+    value: 2, // root and current folder (don't count dropdown)
+    writable: false,
+    enumerable: false,
+    configurable: true
+  });
+
+  Object.defineProperty(BreadcrumbManager, "THRESHOLD_FOR_VERY_SMALL_TRUNCATION", {
+    value: 767,
+    writable: false,
+    enumerable: false,
+    configurable: true
+  });
+
+  Object.defineProperty(BreadcrumbManager, "THRESHOLD_FOR_SMALL_TRUNCATION", {
+    value: 1100,
+    writable: false,
+    enumerable: false,
+    configurable: true
+  });
+
+  return BreadcrumbManager;
+});

@@ -1,0 +1,66 @@
+define([
+    "dojo/_base/declare",
+    "mw-filebrowser/actions/Action",
+    "mw-keybindings/DefaultKeys",
+    "dojo/keys",
+    "mw-filename-utils/FileNameUtil",
+    "util",
+    "dojo/i18n!nls/mldoStringResource",
+    "dojo/string"
+], function (declare, Action, DefaultKeys, keys, FileNameUtil, Util, MLDOStrings, DojoString) {
+  return declare(Action, {
+    constructor: function (args) {
+        args = args || {};
+        var context = args.context;
+        var makeActionAvailable = args.showAction || false;
+        this.sharingEnabled = args.isSharingEnabled || false;
+        this.name = "deleteAction";
+        this.label = MLDOStrings.contextMenuDeleteLabel;
+        this.enabled = makeActionAvailable;
+        this.section = {
+            id: "MISC",
+            name: "MISC",
+            allowSubMenu: false,
+            forceSubMenu: false
+        };
+        this.keyCode = keys.DELETE;
+        this.shortcut = "Delete";
+        this.supportsKeyBinding = true;
+        this.isApplicableTo = function (path) {
+          var selectedFileCount = context.getSelectedRowCount();
+          var parentWritable = true;
+          if (selectedFileCount < 1) {
+            this.enabled = false;
+          } else {
+            var fileInfos = context.getSelectedItemFileInfos();
+            for (var i = 0; i < fileInfos.length; i++) {
+              fileInfo = fileInfos[i];
+              if (!fileInfo.filePermissions.parentCanWrite) {
+                parentWritable = false;
+              }
+            }
+            this.enabled = makeActionAvailable && parentWritable && FileNameUtil.isFileInfo(fileInfo);
+          }
+          return this.enabled;
+        };
+        this.callback = function (action) {
+          var fileInfos = context.getSelectedItemFileInfos();
+          var sortedFileInfos = Util.sortFileInfosByPath(fileInfos);
+          var fileInfo = fileInfos[0];
+          var currentFolder = context.getCurrentFolder();
+          var path = FileNameUtil.pathFromFileInfo(fileInfo);
+          if (currentFolder !== "/") {
+              path = currentFolder + path;
+          }
+          if (this.isApplicableTo()) {
+            if (fileInfos.length === 1 && fileInfo && path) {
+              context.handleDeleteAction(path, fileInfo);
+            } else if (fileInfos.length > 1) {
+              context.handleMultiSelectDelete(sortedFileInfos, 0, 0);
+            }
+          }
+        };
+    }
+  });
+
+});

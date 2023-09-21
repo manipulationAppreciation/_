@@ -1,0 +1,123 @@
+define([
+  "underscore",
+  "widgets/abstractWidget",
+  "folderChooserView"
+], function(_, AbstractWidget, FolderChooserView) {
+  var FolderChooserWidget = function(args) {
+    var initializeArgs = {
+      widgetName: "folderchooser",
+      embeddedCore: (args && (typeof args === "object") && args.embeddedCore) ? args.embeddedCore : null,
+      apsType: "FILES"
+    };
+    this.initialize(initializeArgs);
+  };
+  FolderChooserWidget.prototype = Object.create(AbstractWidget.prototype);
+  FolderChooserWidget.prototype.constructor = FolderChooserWidget;
+  FolderChooserWidget.prototype.initialize = function(args) {
+    // super
+    Object.getPrototypeOf(FolderChooserWidget.prototype).initialize.call(this, args);
+    _.bindAll(this, "getInstance");
+  };
+  /*
+   *  List the contents of the folder path specified in configOptions.folderPath,
+   *  if any.  If the folder path is not specified then the root folder "/" is
+   *  used.  When this method is called without a sessionId (e.g. when used as
+   *  the "src" value in a iframe), a message of "folderpathcontents" is posted
+   *  to the parent window.  It's a signal that the app is loaded.  If the
+   *  embedding page then posts another message with the "configOptions" and
+   *  "sessionId" values specified, we render the widget using data associated
+   *  with that sessionID.
+   */
+  FolderChooserWidget.prototype.getInstance = function(containerId, sessionId, configOptions) {
+    containerId = containerId || "";
+    configOptions = configOptions || {};
+    var context = this;
+    var treeViewId = "embeddedFolderChooserTree";
+    var listWidgetId = "EmbeddedFolderChooser";
+    var embeddedWidgetName = this.getName();
+    var chooser;
+    var promise;
+    // Override MLDOFileService useHtmlLocalStorage method to
+    // prevent using local storage for embedded widgets.
+    configOptions = configOptions || {
+      showFileNameSelector: false,
+      showNewFolderAction: false,
+      showRenameAction: false,
+      desiredHeightPx: "600",
+      desiredWidthPx: "400",
+      startingFullPath: "/",
+      rootFolderName: MLDOStrings.defaultApplicationLabel,
+      suggestedFileName: ""
+    };
+    // super
+    Object.getPrototypeOf(FolderChooserWidget.prototype).getInstance.call(this, containerId, sessionId, configOptions);
+    if (sessionId) {
+      configOptions.isEmbedded = true;
+      configOptions.embeddedName = embeddedWidgetName;
+      chooser = new FolderChooserView(configOptions);
+      this.setController(chooser);
+      chooser.fileService.gdsDAO.setSessionId(sessionId);
+      disposibleElement = document.createElement('div');
+      this.getWidgetContainer().append(disposibleElement);
+      chooser.setElement(disposibleElement);
+      chooser.setEmbeddedContainerId(containerId);
+      chooser.setEmbeddedClientHost(this.getEmbeddedCore().getClientHost());
+      chooser.$el.on("show.bs.modal", function() {
+        $('#embeddedWidgetContainer.embeddedWidget > .horizontalIconContainer').hide();
+      });
+      chooser.$el.on("hidden.bs.modal", function() {
+        // only logout if we gnerated the GDS session because that means we're managing it.
+        if (context.getEmbeddedCore().isSessionIdGenerated()) {
+          context.getEmbeddedCore().logout(chooser);
+        }
+        $('#embeddedWidgetContainer.embeddedWidget > .horizontalIconContainer').show();
+        window.parent.postMessage(JSON.stringify({ name: "widgetclosed:" + embeddedWidgetName + ":" + containerId }), context.getEmbeddedCore().getClientHost());
+        context.setController(null);
+      });
+      promise = chooser.start();
+      promise.done(function(results) {
+        var folder;
+        if (results) {
+          results = results.selection;
+        }
+        if (results && ("folderPath" in results) && results.folderPath.length) {
+          folder = results.folderPath;
+        }
+        if (folder && folder.length) {
+          window.parent.postMessage(JSON.stringify({ name: "widgetcmdcomplete:" + embeddedWidgetName + ":" + containerId, commandData: results }), context.getEmbeddedCore().getClientHost());
+        } else {
+          var err = {errorCode: "OPERATION_CANCELLED", message: "cancelled"};
+          window.parent.postMessage(JSON.stringify({ name: "widgetcmdfailure:" + embeddedWidgetName + ":" + containerId, commandData: err.message }), context.getEmbeddedCore().getClientHost());
+        }
+      });
+      chooser.render();
+    } else {
+      // signal we are ready
+      window.parent.postMessage(JSON.stringify({ name: "widgetinit:" + embeddedWidgetName + ":" + containerId }), this.getEmbeddedCore().getClientHost());
+    }
+  };
+
+  FolderChooserWidget.prototype.setClientString = function(clientString) {
+    if (clientString && typeof clientString !== "string") {
+      throw new TypeError("Invalid clientString");
+    }
+    this.getController().fileService.gdsDAO.setClientString(clientString);
+  };
+
+  FolderChooserWidget.prototype.setGdsClientType = function(gdsClientType) {
+    if (gdsClientType && typeof gdsClientType !== "string") {
+      throw new TypeError("Invalid gdsClientType");
+    }
+    this.getController().fileService.gdsDAO.setGdsClientType(gdsClientType);
+  };
+
+  FolderChooserWidget.prototype.clean = function() {
+    var controller = this.getController();
+    if (controller) {
+      controller.destroyFolderBrowser();
+      controller.destroyNewFolderManager();
+    }
+  };
+
+  return FolderChooserWidget;
+});

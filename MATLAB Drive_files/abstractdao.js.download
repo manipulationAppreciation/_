@@ -1,0 +1,77 @@
+/**
+ * Abstract class that defines expected interface for DAO
+ */
+define(function() {
+  var abstractMethod = function () { throw new Error("Abstract method."); };
+
+  AbstractDAO = function()  { throw new Error("Cannot instantiate abstract class."); };
+
+  /*
+   * methods of interface that we want to get inherited
+   */
+  AbstractDAO.serviceHandshake = abstractMethod;
+  AbstractDAO.getFolderData = abstractMethod;
+  AbstractDAO.setAuthToken = abstractMethod;
+  AbstractDAO.getAuthToken = abstractMethod;
+  AbstractDAO.getSessionId = abstractMethod;
+  AbstractDAO.setSessionId = abstractMethod;
+  AbstractDAO.setOriginId = abstractMethod;
+  AbstractDAO.getOriginId = abstractMethod;
+  AbstractDAO.getMinutesBeforeRelogin = abstractMethod;
+  AbstractDAO.setMinutesBeforeRelogin = abstractMethod;
+  AbstractDAO.getLoginData = abstractMethod;
+  AbstractDAO.setLoginData = abstractMethod;
+  AbstractDAO.getUserId = abstractMethod;
+  AbstractDAO.prototype.getUserId = abstractMethod;
+  AbstractDAO.setGdsClientType = abstractMethod;
+  AbstractDAO.getGdsClientType = abstractMethod;
+  AbstractDAO.setClientString = abstractMethod;
+  AbstractDAO.getClientString = abstractMethod;
+  AbstractDAO.updateLoginInformation = abstractMethod;
+  AbstractDAO.clearLoginInformation = abstractMethod;
+  AbstractDAO.setSessionListener = abstractMethod;
+  AbstractDAO.getStorageUsage = abstractMethod;
+  AbstractDAO.uploadFile = abstractMethod;
+  AbstractDAO.getDownloadURI = abstractMethod;
+  AbstractDAO.createFolder = abstractMethod;
+  AbstractDAO.rename = abstractMethod;
+  AbstractDAO.move = abstractMethod;
+  AbstractDAO.delete = abstractMethod;
+  AbstractDAO.logout = abstractMethod;
+  AbstractDAO.permanentlyDelete = abstractMethod;
+  AbstractDAO.permanentlyDeleteAll = abstractMethod;
+  AbstractDAO.restore = abstractMethod;
+  AbstractDAO.getTrashData = abstractMethod;
+  AbstractDAO.getShowHidden = abstractMethod;
+  AbstractDAO.setShowHidden = abstractMethod;
+  AbstractDAO.getShowShared = abstractMethod;
+  AbstractDAO.getApplicationId = abstractMethod;
+  AbstractDAO.setApplicationId = abstractMethod;
+  AbstractDAO.copy = abstractMethod;
+  AbstractDAO.isValidSharePermission = abstractMethod;
+  AbstractDAO.createPersonalSharingInvitation = abstractMethod;
+  AbstractDAO.createOpenSharingInvitation = abstractMethod;
+  AbstractDAO.getOpenSharingInvitations = abstractMethod;
+  AbstractDAO.revokeOpenSharingInvitation = abstractMethod;
+  AbstractDAO.getPendingSharingInvitations = abstractMethod;
+  AbstractDAO.getAcceptedSharingInvitations = abstractMethod;
+  AbstractDAO.getSharingCollaborators = abstractMethod;
+  AbstractDAO.revokeSharingPermission = abstractMethod;
+  AbstractDAO.acceptSharingInvitation = abstractMethod;
+  AbstractDAO.declineSharingInvitation = abstractMethod;
+  AbstractDAO.createPersonalFromOpenSharingInvitation = abstractMethod;
+  AbstractDAO.getFolderSettings = abstractMethod;
+  AbstractDAO.search = abstractMethod;
+  AbstractDAO.getUserProfileSettings = abstractMethod;
+  AbstractDAO.loadUserProfileSettings = abstractMethod;
+  AbstractDAO.saveUrlAsFile = abstractMethod;
+  AbstractDAO.getFolderOnlyData = abstractMethod;
+  AbstractDAO.previewInvitation = abstractMethod;
+  AbstractDAO.previewFile = abstractMethod;
+  AbstractDAO.getInvitation = abstractMethod;
+  AbstractDAO.getPreviewInvitation = abstractMethod;
+  AbstractDAO.copyFolderFromInvitation = abstractMethod;
+  AbstractDAO.updateRecipientInvitations = abstractMethod;
+
+  return AbstractDAO;
+});

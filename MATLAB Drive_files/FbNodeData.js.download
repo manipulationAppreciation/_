@@ -1,0 +1,96 @@
+define([
+    "filebrowser/gdsdata/FbFileNode",
+    "filebrowser/gdsdata/FbFolderNode"
+], function(FbFileNode, FbFolderNode) {
+
+  /**
+   * Creates FileBrowser2 node data from GDS data contained in the response.
+   * Node data consists of "self" and "contents".
+   * "self" is a folder node describing the current folder node.
+   * "contents" is a collection of file nodes and folder nodes that are
+   * the children nodes of the current node.
+   */
+  FbNodeData = function(response, parent) {
+    parent = parent || {};
+    var parsedResponse = null;
+    if (response && response.folderSummary) {
+      parsedResponse = this.parseFileResponse(response, parent);
+    } else if (response && (response.deletedFiles || response.deletedFolders)) {
+      parsedResponse = this.parseTrashResponse(response, parent);
+    } else if (response && response.searchResultSummary) {
+      parsedResponse = this.parseSearchResponse(response, parent);
+    }
+    return parsedResponse;
+  };
+
+  FbNodeData.prototype.parseFileResponse = function(response, parent) {
+    if (!response || !response.files || !Array.isArray(response.files) ||
+        !response.folders || !Array.isArray(response.folders) || !response.folderSummary ||
+        typeof response.folderSummary !== "object" || !parent) {
+      throw new TypeError("Invalid arguments");
+    }
+    var parsedResponse = {};
+    var summary = null;
+    if (parent && parent.parent && parent.path) {
+      summary = new FbFolderNode(response.folderSummary, {parent: parent.parent, path: parent.parent}, false, true);
+    } else {
+      summary = new FbFolderNode(response.folderSummary, parent, true, true);
+    }
+    var folders = response.folders;
+    var files = response.files;
+    var contents = this.parseContents(folders, files, parent, summary.filePermissions.canWrite);
+    parsedResponse.self = summary;
+    parsedResponse.contents = contents;
+    return parsedResponse;
+  };
+
+  FbNodeData.prototype.parseTrashResponse = function(response, parent) {
+    if (!response || !response.deletedFiles || !Array.isArray(response.deletedFiles) ||
+        !response.deletedFolders || !Array.isArray(response.deletedFolders) || !parent) {
+      throw new TypeError("Invalid arguments");
+    }
+    var parsedResponse = {};
+    var folders = response.deletedFolders;
+    var files = response.deletedFiles;
+    var contents = this.parseContents(folders, files, parent, true);
+    parsedResponse.contents = contents;
+    return parsedResponse;
+  };
+
+  FbNodeData.prototype.parseSearchResponse = function(response, parent) {
+    if (!response || !parent || !response.files || !Array.isArray(response.files) || !response.folders || !Array.isArray(response.folders)) {
+      throw new TypeError("Invalid arguments");
+    }
+    var parsedResponse = {};
+    var folders = response.folders;
+    var files = response.files;
+    var contents = this.parseContents(folders, files, parent, true);
+    parsedResponse.contents = contents;
+    return parsedResponse;
+  };
+
+  FbNodeData.prototype.parseContents = function(folders, files, parent, parentCanWrite) {
+    if (!folders || !Array.isArray(folders) || !files || !Array.isArray(files) || !parent) {
+      throw new TypeError("Invalid arguments");
+    }
+    var contents = [];
+    var len = 0;
+    if (folders && folders.length > 0) {
+      len = folders.length;
+      for (var i = 0; i < len; i++) {
+        var folder = new FbFolderNode(folders[i], parent, false, !!parentCanWrite);
+        contents.push(folder);
+      }
+    }
+    if (files && files.length > 0) {
+      len = files.length;
+      for (var j = 0; j < len; j++) {
+        var file = new FbFileNode(files[j], parent, !!parentCanWrite);
+        contents.push(file);
+      }
+    }
+    return contents;
+  };
+
+  return FbNodeData;
+});

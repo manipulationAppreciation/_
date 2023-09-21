@@ -1,0 +1,513 @@
+/* istanbul ignore next */
+define([
+  "dao/abstractdao"
+], function( AbstractDAO ) {
+  /**
+   * Mock implementation of AbstractDAO interface .
+   * Uses config object to get needed URL Parameters
+   *
+   * throws TypeError if config is missing or not what is expected.
+   */
+  MockDAO = function(config) {
+    if (!config || typeof config !== 'object' || !config.getGdsURL) {
+      throw new TypeError("Incompatible config file parameter.");
+    }
+    this.config = config;
+    this.authToken = null;
+    this.sessionId = null;
+    this.loginData = null;
+    this.originId = null;
+    this.minutesBeforeRelogin = null;
+    this.sessionListener = null;
+    this.applicationId = "";
+    this.gdsClientType = null;
+    this.clientString = "";
+    this.showHidden = false;
+    this.showShared = ("isSharingEnabled" in this.config)? this.config.isSharingEnabled() : false;
+    this.SHARED_PERMISSIONS = {
+      read_only: "read_only",
+      read_write: "read_write"
+    };
+  };
+
+  MockDAO.prototype = Object.create(AbstractDAO); // inherit from AbstractDAO
+  MockDAO.prototype.contructor = MockDAO; // reset constructor to this class
+  MockDAO.prototype.setShowHidden = function(showHidden) { this.showHidden = showHidden; };
+  MockDAO.prototype.getShowHidden = function() { return this.showHidden; };
+  MockDAO.prototype.getShowShared = function() {
+    return this.showShared;
+  };
+  MockDAO.prototype.setApplicationId = function(appId) { this.applicationId = appId; };
+  MockDAO.prototype.getApplicationId = function() { return this.applicationId; };
+  MockDAO.prototype.updateLoginInformation = function(sessionRenewalData) {
+    if (sessionRenewalData && (typeof sessionRenewalData === "object")) {
+      if (sessionRenewalData.sessionId) {
+        this.setSessionId(sessionRenewalData.sessionId);
+      }
+      if (sessionRenewalData.minutesBeforeRelogin) {
+        this.setMinutesBeforeRelogin(sessionRenewalData.minutesBeforeRelogin);
+      }
+      if (("loginProfile" in sessionRenewalData) && sessionRenewalData.loginProfile) {
+        if (sessionRenewalData.loginProfile.mwaToken) {
+          this.setAuthToken(sessionRenewalData.loginProfile.mwaToken);
+        }
+        this.setLoginData({
+          firstName: sessionRenewalData.loginProfile.firstName,
+          lastName: sessionRenewalData.loginProfile.lastName,
+          userID: sessionRenewalData.loginProfile.userId,
+          emailAddress: sessionRenewalData.loginProfile.emailAddress,
+          token: sessionRenewalData.loginProfile.mwaToken
+        });
+      }
+    }
+  };
+
+  MockDAO.prototype.clearLoginInformation = function() {
+    this.setAuthToken(null); // assume authToken no good.
+    this.setSessionId(null);
+
+    this.setLoginData(null);
+    this.setMinutesBeforeRelogin(null);
+  };
+
+
+  MockDAO.prototype.mockSuccessResponse = function(response) {
+      var deferred = $.Deferred().resolve(response);
+      return deferred.promise();
+  };
+  MockDAO.prototype.mockFailureResponse = function(response) {
+      var deferred = $.Deferred().reject(response);
+      return deferred.promise();
+  };
+  MockDAO.prototype.doCommonStuff = function(responseData, success) {
+    var promise = null;
+    if (success) {
+      promise = this.mockSuccessResponse(responseData);
+    } else {
+      promise = this.mockFailureResponse(responseData);
+    }
+    return promise;
+  };
+  /*
+   * Mock method override
+   */
+  MockDAO.prototype.setAuthToken = function(authToken) { this.authToken = authToken; };
+  MockDAO.prototype.getAuthToken = function() { return this.authToken; };
+  MockDAO.prototype.setOriginId = function(originId) { this.originId = originId; };
+  MockDAO.prototype.getOriginId = function() { return this.originId; };
+  MockDAO.prototype.setSessionId = function(sessionId) { this.sessionId = sessionId; };
+  MockDAO.prototype.setSessionListener = function(listener) { this.sessionListener = listener; };
+  MockDAO.prototype.getSessionId = function() { return this.sessionId; };
+  MockDAO.prototype.getMinutesBeforeRelogin = function() { return this.minutesBeforeRelogin; };
+  MockDAO.prototype.setMinutesBeforeRelogin = function(minutes) { this.minutesBeforeRelogin = minutes; };
+  MockDAO.prototype.getLoginData = function() { return this.loginData; };
+  MockDAO.prototype.setLoginData = function(data) { this.loginData = data; };
+  MockDAO.prototype.getUserId = function() { return (this.getLoginData()) ? this.getLoginData().userID : ""; };
+  MockDAO.prototype.setGdsClientType = function(clientType) { this.gdsClientType = clientType; };
+  MockDAO.prototype.getGdsClientType = function() { return this.gdsClientType; };
+  MockDAO.prototype.setClientString = function(clientString) { this.clientString = clientString; };
+  MockDAO.prototype.getClientString = function() { return this.clientString; };
+  MockDAO.prototype.serviceHandshake = function(authToken) {
+    var responseData = { sessionId:"c211dc5ee7aefa48037379c2e5a395f52ffd2ed182d90dfc76468255",
+                        minutesBeforeRelogin:"1430"
+    };
+    var errorData = {message: "Mock error message", errorCode: "AUTHENTICATION_ERROR"};
+    return this.doCommonStuff(responseData, true);
+  };
+  MockDAO.prototype.logout = function() { /* do nothing */ };
+  MockDAO.prototype.getStorageUsage = function() {
+      let storageUsagePerApplication = {
+        MATLAB_DRIVE: 3250000000,
+        THINGSPEAK: 0,
+        ADDONS: 0,
+        INSTANT_ADDONS: 0,
+        MATLAB_GRADER: 0
+      };
+      var responseData = { usageQuota: "5000000000",
+              storageUsage: "3250000000", storageUsagePerApplication: storageUsagePerApplication};
+      var errorData = {message: "Mock authentication error message", errorCode: "SERVER_ERROR"};
+      var promise = this.doCommonStuff(responseData, true);
+      return promise;
+  };
+  MockDAO.prototype.uploadFile = function(folder, fileName, file, getXHR, overwrite) {
+    var responseData = {name:"dummyFile",size:561276,writable:true,watermark:"1461263046:1",createdDate:1461263045990,lastModifiedDate:1461263045990};
+    var errorData = {message: "dummyFile already exists. Specify a unique name for this file or folder.", errorCode: "RESOURCE_ALREADY_EXISTS"};
+    var promise = this.doCommonStuff(responseData, true);
+    return promise;
+  };
+  MockDAO.prototype.getFolderData = function(relativePath) {
+    var responseData = null;
+    if (!relativePath || relativePath === '#' || relativePath === "/") {
+      responseData = {folderSummary: { name: "/",  createdDate: 1453402481661, lastModifiedDate: 1455223499446, writable:true, watermark:"1455223499:18" },
+                      files: [
+                          { name: "subfile2", size: 11, writable: true, watermark: "1455645331:1", createdDate: 1455645331364, lastModifiedDate: 1455645331364 },
+                          { name: "subfile3", size: 11,  writable: true, watermark: "1455645379:1", createdDate: 1455645379915, lastModifiedDate: 1455645379915 }
+                      ],
+                      folders: [
+                          { name: "subfolder", writable: true, watermark: "1455645328:3", createdDate: 1455645328140, lastModifiedDate: 1455645328140 },
+                          { name: "subfolder2", writable: true, watermark: "1455645373:3", createdDate: 1455645373976, lastModifiedDate: 1455645373976 }
+                      ]
+      };
+    } else if (relativePath === '/subfolder') {
+      responseData = {folderSummary: { name: "subfolder", writable: true, watermark: "1455645328:3", createdDate: 1455645328140, lastModifiedDate: 1455645328140 },
+                      files: [
+                          { name: "subfile1-1", size: 11, writable: true, watermark: "1455645331:1", createdDate: 1455645331364, lastModifiedDate: 1455645331364 },
+                          { name: "subfile1-2", size: 12,  writable: true, watermark: "1455645379:1", createdDate: 1455645379715, lastModifiedDate: 1455645379915 },
+                          { name: "subfile1-3", size: 13,  writable: true, watermark: "1455645379:1", createdDate: 1455645377915, lastModifiedDate: 1455645379915 }
+                      ],
+                      folders: [
+                          { name: "subfolder3", writable: true, watermark: "1455645328:3", createdDate: 1455645328140, lastModifiedDate: 1455645328140 },
+                          { name: "subfolder4", writable: true, watermark: "1455645373:3", createdDate: 1455645373976, lastModifiedDate: 1455645373976 }
+                      ]
+      };
+    } else if (relativePath === '/subfolder2') {
+      responseData = {folderSummary: { name: "subfolder2", writable: true, watermark: "1455645328:3", createdDate: 1455645328140, lastModifiedDate: 1455645328140 },
+                      files: [
+                          { name: "subfile2-1", size: 11, writable: true, watermark: "1455645331:1", createdDate: 1455645331364, lastModifiedDate: 1455645331364 },
+                          { name: "subfile2-2", size: 12,  writable: true, watermark: "1455645379:1", createdDate: 1455645379715, lastModifiedDate: 1455645379915 },
+                          { name: "subfile2-3", size: 13,  writable: true, watermark: "1455645379:1", createdDate: 1455645377915, lastModifiedDate: 1455645379915 },
+                          { name: "subfile2-4", size: 12,  writable: true, watermark: "1455645379:1", createdDate: 1455645379715, lastModifiedDate: 1455645379915 },
+                          { name: "subfile2-5", size: 13,  writable: true, watermark: "1455645379:1", createdDate: 1455645377915, lastModifiedDate: 1455645379915 }
+                      ],
+                      folders: []
+      };
+    } else if (relativePath === '/subfolder/subfolder3') {
+      responseData = {folderSummary: { name: "subfolder3", writable: true, watermark: "1455645328:3", createdDate: 1455645328140, lastModifiedDate: 1455645328140 },
+                      files: [],
+                      folders: []
+      };
+    } else if (relativePath === '/subfolder/subfolder4') {
+      responseData = {folderSummary: { name: "subfolder4", writable: true, watermark: "1455645328:3", createdDate: 1455645328140, lastModifiedDate: 1455645328140 },
+                      files: [
+                          { name: "subfile4-1", size: 11, writable: true, watermark: "1455645331:1", createdDate: 1455645331364, lastModifiedDate: 1455645331364 },
+                          { name: "subfile4-2", size: 12,  writable: true, watermark: "1455645379:1", createdDate: 1455645379715, lastModifiedDate: 1455645379915 },
+                          { name: "subfile4-3", size: 13,  writable: true, watermark: "1455645379:1", createdDate: 1455645377915, lastModifiedDate: 1455645379915 },
+                          { name: "subfile4-4", size: 12,  writable: true, watermark: "1455645379:1", createdDate: 1455645379715, lastModifiedDate: 1455645379915 },
+                          { name: "subfile4-5", size: 13,  writable: true, watermark: "1455645379:1", createdDate: 1455645377915, lastModifiedDate: 1455645379915 }
+                      ],
+                      folders: []
+      };
+    }
+    var errorData = {message: "Mock authentication error message", errorCode: "AUTHENTICATION_ERROR"};
+    var promise = this.doCommonStuff(responseData, true);
+    return promise;
+  };
+
+  MockDAO.prototype.getFolderOnlyData = function(relativePath) {
+    var responseData = null;
+    if (!relativePath || relativePath === '#' || relativePath === "/") {
+      responseData = {folderSummary: { name: "/",  createdDate: 1453402481661, lastModifiedDate: 1455223499446, writable:true, watermark:"1455223499:18" },
+                      files: [],
+                      folders: [
+                          { name: "subfolder", writable: true, watermark: "1455645328:3", createdDate: 1455645328140, lastModifiedDate: 1455645328140 },
+                          { name: "subfolder2", writable: true, watermark: "1455645373:3", createdDate: 1455645373976, lastModifiedDate: 1455645373976 }
+                      ]
+      };
+    } else if (relativePath === '/subfolder') {
+      responseData = {folderSummary: { name: "subfolder", writable: true, watermark: "1455645328:3", createdDate: 1455645328140, lastModifiedDate: 1455645328140 },
+                      files: [],
+                      folders: [
+                          { name: "subfolder3", writable: true, watermark: "1455645328:3", createdDate: 1455645328140, lastModifiedDate: 1455645328140 },
+                          { name: "subfolder4", writable: true, watermark: "1455645373:3", createdDate: 1455645373976, lastModifiedDate: 1455645373976 }
+                      ]
+      };
+    } else if (relativePath === '/subfolder2') {
+      responseData = {folderSummary: { name: "subfolder2", writable: true, watermark: "1455645328:3", createdDate: 1455645328140, lastModifiedDate: 1455645328140 },
+                      files: [],
+                      folders: []
+      };
+    } else if (relativePath === '/subfolder/subfolder3') {
+      responseData = {folderSummary: { name: "subfolder3", writable: true, watermark: "1455645328:3", createdDate: 1455645328140, lastModifiedDate: 1455645328140 },
+                      files: [],
+                      folders: []
+      };
+    } else if (relativePath === '/subfolder/subfolder4') {
+      responseData = {folderSummary: { name: "subfolder4", writable: true, watermark: "1455645328:3", createdDate: 1455645328140, lastModifiedDate: 1455645328140 },
+                      files: [],
+                      folders: []
+      };
+    }
+    var errorData = {message: "Mock authentication error message", errorCode: "AUTHENTICATION_ERROR"};
+    var promise = this.doCommonStuff(responseData, true);
+    return promise;
+  };
+
+  MockDAO.prototype.getDownloadURI = function(relativePath) {
+    responseData = '{ "downloadUrl": "/F1/testName.txt", "name": "testName.txt", "contentType": "text/plain", "size": "1000234" }';
+    return this.doCommonStuff(responseData, true);
+  };
+
+    MockDAO.prototype.createFolder = function(path) {
+        var errorData = {message: path + " already exists. Specify a unique name for this file or folder", errorCode: "RESOURCE_ALREADY_EXISTS"};
+        return this.doCommonStuff({}, true);
+    };
+
+  MockDAO.prototype.move = function(origPath, newPath, overwrite) {
+    var responseData = {};
+    var errorData = {message: "Mock filename conflict error message", errorCode: "RESOURCE_ALREADY_EXISTS"};
+    return this.doCommonStuff(responseData, true);
+  };
+
+  MockDAO.prototype.copy = function(origPath, newPath, overwrite) {
+    var responseData = {};
+    var errorData = {message: "Mock filename conflict error message", errorCode: "RESOURCE_ALREADY_EXISTS"};
+    return this.doCommonStuff(responseData, true);
+  };
+
+  MockDAO.prototype.rename = function(origPath, newPath) {
+    var responseData = {};
+    var errorData = {message: "Mock filename conflict error message", errorCode: "RESOURCE_ALREADY_EXISTS"};
+    return this.doCommonStuff(responseData, true);
+  };
+
+  MockDAO.prototype.delete = function(filepath, isFolder) {
+      var responseData = {};
+      var errorData = {message: "Mock unable to delete", errorCode: "SERVER_ERROR"};
+      return this.doCommonStuff(responseData, true);
+  };
+
+  MockDAO.prototype.permanentlyDelete = function(tombstoneId) {
+    var responseData = {};
+    var errorData = {message: "Mock unable to permanently delete", errorCode: "SERVER_ERROR"};
+    return this.doCommonStuff(responseData, true);
+  };
+  MockDAO.prototype.permanentlyDeleteAll = function() {
+    var responseData = {};
+    var errorData = {message: "Mock unable to permanently delete all", errorCode: "SERVER_ERROR"};
+    return this.doCommonStuff(responseData, true);
+  };
+  MockDAO.prototype.restore = function(tombstoneId) {
+    var responseData = {};
+    var errorData = {message: "Mock unable to restore", errorCode: "SERVER_ERROR"};
+    return this.doCommonStuff(responseData, true);
+  };
+  MockDAO.prototype.getTrashData = function() {
+    var responseData = {
+      deletedFiles:[
+        {
+          name:"FrequencyAnalysisExample.m",
+          size:21076,
+          writable:false,
+          watermark:"1478712300:3",
+          parentResource:{
+            path:"/One",
+            bucket:null
+          },
+          deletedDate:1478712397292,
+          tombstone:"d6c4dc6d-126d-4329-b668-ca876870756f",
+          lastModifiedDate:1478712300237,
+          createdDate:1478712300237
+        },
+        {
+          name:"GaussianFilterExample.m",
+          size:8633,
+          writable:false,
+          watermark:"1478712300:12",
+          parentResource:{
+            path:"/One",
+            bucket:null
+          },
+          deletedDate:1478712406391,
+          tombstone:"eec2b418-f823-4346-82f0-83d7030a9f5b",
+          lastModifiedDate:1478712300980,
+          createdDate:1478712300980
+        },
+        {
+          name:"example.txt",
+          size:9,
+          writable:false,
+          watermark:"1478712317:3",
+          parentResource:{
+            path:"/",
+            bucket:null
+          },
+          deletedDate:1478712417448,
+          tombstone:"9c0f2e68-8e93-46db-8741-69e0a40cbbda",
+          lastModifiedDate:1478712317582,
+          createdDate:1478712317582
+        }
+      ],
+      deletedFolders:[
+
+      ]
+    };
+    var errorData = {message: "Mock unable to get trash contents", errorCode: "SERVER_ERROR"};
+    return this.doCommonStuff(responseData, true);
+  };
+  MockDAO.prototype.isValidSharePermission = function(permission) {
+    return (permission && typeof permission === "string" && (permission.toLowerCase() in this.SHARED_PERMISSIONS));
+  };
+  MockDAO.prototype.createPersonalSharingInvitation = function(path, invitee, readOnly) {
+    var responseData = {permissionId: "1234"};
+    var errorData = {message: "Mock unable to initiate share", errorCode: "SERVER_ERROR"};
+    return this.doCommonStuff(responseData, true);
+  };
+  MockDAO.prototype.createOpenSharingInvitation = function(path, permission) {
+    var responseData = {sharedLinkId: "abcd-1234-ab12-12ab-efab", operation: "READ_WRITE"};
+    var errorData = {message: "link already exists", errorCode: "RESOURCE_ALREADY_EXISTS"};
+    return this.doCommonStuff(responseData, true);
+  };
+  MockDAO.prototype.getOpenSharingInvitations = function(path, permission) {
+    var responseData = [{sharedLinkId: "abcd-1234-ab12-12ab-efab", operation: "READ_WRITE"}, {sharedLinkId: "dcba-4321-12ab-12ab-bafe", operation: "READ_ONLY"}];
+    var errorData = {message: "mock error", errorCode: "SERVER_ERROR"};
+    return this.doCommonStuff(responseData, true);
+  };
+  MockDAO.prototype.deletedSharedLink = function(sharedLinkId) {
+    var responseData = {};
+    var errorData = {message: "The resource does not exist", errorCode: "RESOURCE_DOES_NOT_EXIST"};
+    return this.doCommonStuff(responseData, true);
+  };
+  MockDAO.prototype.getPendingSharingInvitations = function() {
+    var responseData = {};
+    var errorData = {message: "The resource does not exist", errorCode: "RESOURCE_DOES_NOT_EXIST"};
+    return this.doCommonStuff(responseData, true);
+  };
+  MockDAO.prototype.getAcceptedSharingInvitations = function() {
+    var responseData = {};
+    var errorData = {message: "The resource does not exist", errorCode: "RESOURCE_DOES_NOT_EXIST"};
+    return this.doCommonStuff(responseData, true);
+  };
+  MockDAO.prototype.getSharingCollaborators = function(path,onlyAccepted) {
+    var responseData = {
+      permissions: [
+        {
+          permissionId: "661cd4c7-6d33-4f65-b145-04162db35c11",
+          subject: {
+            subjectName:  "glenn.connell@mathworks.com"
+          },
+          resource: {
+           path: "/",
+           bucket: "gconnell"
+          },
+          operation: "READ_WRITE",
+          status: "ACTIVE",
+          accepted: true
+       },
+       {
+         permissionId: "a7f65b8e-5c6d-4601-8b28-842f003862c6",
+         subject: {
+           subjectName:"gerald.horn@mathworks.com"
+         },
+         resource:{
+           path:"/",
+           bucket:"gconnell"
+         },
+         operation:"READ_ONLY",
+         status:"PENDING",
+         accepted:false
+       },
+       {
+         permissionId: "48421e18-e275-45a9-b400-ff611613100d",
+         subject: {
+           subjectName:"kevin.fisher@mathworks.com"
+         },
+         resource:{
+           path:"/",
+           bucket:"gconnell"
+         },
+         operation:"READ_ONLY",
+         status:"PENDING",
+         accepted:false
+       }
+     ]
+    };
+    var errorData = {message: "The resource does not exist", errorCode: "RESOURCE_DOES_NOT_EXIST"};
+    return this.doCommonStuff(responseData, true);
+  };
+  MockDAO.prototype.revokeSharingPermission = function(permissionId) {
+    var responseData = {};
+    var errorData = {message: "The resource does not exist", errorCode: "RESOURCE_DOES_NOT_EXIST"};
+    return this.doCommonStuff(responseData, true);
+  };
+  MockDAO.prototype.acceptSharingInvitation = function(invitationId, path) {
+    var responseData = {};
+    var errorData = {message: "The resource does not exist", errorCode: "RESOURCE_DOES_NOT_EXIST"};
+    return this.doCommonStuff(responseData, true);
+  };
+  MockDAO.prototype.declineSharingInvitation = function(invitationId) {
+    var responseData = {};
+    var errorData = {message: "The resource does not exist", errorCode: "RESOURCE_DOES_NOT_EXIST"};
+    return this.doCommonStuff(responseData, true);
+  };
+  MockDAO.prototype.createPersonalFromOpenSharingInvitation = function(linkId) {
+    var responseData = {};
+    var errorData = {message: "The resource does not exist", errorCode: "RESOURCE_DOES_NOT_EXIST"};
+    return this.doCommonStuff(responseData, true);
+  };
+  MockDAO.prototype.getFolderSettings = function(folderPath) {
+    var responseData = {};
+    var errorData = {message: "The resource does not exist", errorCode: "RESOURCE_DOES_NOT_EXIST"};
+    return this.doCommonStuff(responseData, true);
+  };
+  MockDAO.prototype.search = function(params) {
+    var responseData = {};
+    var errorData = {message: "The resource does not exist", errorCode: "RESOURCE_DOES_NOT_EXIST"};
+    return this.doCommonStuff(responseData, true);
+  };
+  MockDAO.prototype.getUserProfileSettings = function() {
+    var responseData = {};
+    var errorData = {message: "Mock unable to get user profile settings data", errorCode: "SERVER_ERROR"};
+    return this.doCommonStuff(responseData, true);
+  };
+
+  MockDAO.prototype.loadUserProfileSettings = function() {
+    return;
+  };
+
+  MockDAO.prototype.saveUrlAsFile = function(folderPath, fileName, url) {
+    var responseData = {};
+    var errorData = {message: "Mock unable to get user profile settings data", errorCode: "SERVER_ERROR"};
+    return this.doCommonStuff(responseData, true);
+  };
+
+  MockDAO.prototype.previewInvitation = function(invitationId, folderPath) {
+    if (!this.config.isInvitationPreviewEnabled || !this.config.isInvitationPreviewEnabled()) {
+      return;
+    }
+    var responseData = {};
+    var errorData = {message: "The resource does not exist", errorCode: "RESOURCE_DOES_NOT_EXIST"};
+    return this.doCommonStuff(responseData, true);
+  };
+
+  MockDAO.prototype.previewFile = function(invitationId, relativePath) {
+    if (!this.config.isInvitationPreviewEnabled || !this.config.isInvitationPreviewEnabled()) {
+      return;
+    }
+    var responseData = {};
+    var errorData = {message: "The resource does not exist", errorCode: "RESOURCE_DOES_NOT_EXIST"};
+    return this.doCommonStuff(responseData, true);
+  };
+
+  MockDAO.prototype.getInvitation = function(invitationId) {
+    if (this.config.isSharingEnabled && this.config.isSharingEnabled()) {
+      var responseData = {invitationId: invitationId, name: "tempName"};
+      return this.doCommonStuff(responseData, true);
+    }
+  };
+
+  MockDAO.prototype.getPreviewInvitation = function(invitationId) {
+    if (!this.config.isInvitationPreviewEnabled || !this.config.isInvitationPreviewEnabled()) {
+      return;
+    }
+    var errorData = {message: "The invitation does not exist", errorCode: "invitationType_DOES_NOT_EXIST"};
+    return this.doCommonStuff(errorData, false);
+  };
+
+  MockDAO.prototype.copyFolderFromInvitation = function(invitationId, sourcePath, targetPath) {
+    if (!this.config.isCopyToDriveEnabled || !this.config.isCopyToDriveEnabled()) {
+      return;
+    }
+    var errorData = {message: "The invitation does not exist", errorCode: "invitationType_DOES_NOT_EXIST"};
+    return this.doCommonStuff(errorData, false);
+  };
+
+  MockDAO.prototype.updateRecipientInvitations = function(path, invitations) {
+    if (!this.config.isEditPermissionsEnabled || !this.config.isEditPermissionsEnabled()) {
+      return;
+    }
+    var errorData = {message: "Mock unable to update invitation", errorCode: "SERVER_ERROR"};
+    return this.doCommonStuff(errorData, false);
+  };
+
+  return MockDAO;
+}); // require

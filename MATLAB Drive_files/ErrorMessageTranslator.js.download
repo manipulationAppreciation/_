@@ -1,0 +1,152 @@
+/*jshint esversion: 6 */
+define([
+  "underscore",
+  "dojo/i18n!nls/mldoStringResource",
+  "dojo/string",
+  "ErrorCodeMessageMap"
+], function(_, MLDOStrings, DojoString, ErrorCodeMessageMap) {
+
+  var ErrorMessageTranslator = function() {
+    this.errorCodeToMessageMap = new ErrorCodeMessageMap();
+    this.errorCodeToMessageMap.initialize();
+  };
+
+  ErrorMessageTranslator.prototype = {
+
+    doMessageTranslation: function(errorCode, operationName, applyErrorCodeInversely, substitutionTokenValues, debugOn) {
+      var translationResults = {
+        found: false,
+        message: ""
+      };
+      var translation;
+      var msgData = this.errorCodeToMessageMap.get(errorCode, operationName, applyErrorCodeInversely, substitutionTokenValues, debugOn);
+      if (msgData && typeof msgData === "object" && msgData.stringId && msgData.stringId.length) {
+        msgTemplate = MLDOStrings[msgData.stringId];
+        if (msgTemplate && typeof msgTemplate === "string") {
+          translationResults.found = true;
+          if (("hasSubstitutionTokens" in msgData) && (msgData.hasSubstitutionTokens === true) &&
+                substitutionTokenValues && Array.isArray(substitutionTokenValues) && substitutionTokenValues.length) {
+                  actualSubstitutionTokenValuesLength = substitutionTokenValues.length;
+                  try {
+                    translation = DojoString.substitute(msgTemplate, substitutionTokenValues);
+                  } catch( e ) {
+                    if (debugOn) {
+                      expectedSubstitutionTokenValuesLength = (msgTemplate.match(/\$\{[\d]+\}/g) || []).length;
+                      if (expectedSubstitutionTokenValuesLength !== actualSubstitutionTokenValuesLength) {
+                        throw new Error("Incorrect number of string substitution tokens passed in.\n Expected: " +
+                                        expectedSubstitutionTokenValuesLength + ", Actual: " + actualSubstitutionTokenValuesLength +
+                                        ", for string ID: \"" + msgData.stringId + "\".");
+                      } else {
+                        throw e;
+                      }
+                    } else {
+                      translation = error.message;
+                    }
+                  }
+          } else {
+            translation = msgTemplate;
+          }
+          translationResults.message = translation;
+        }
+      }
+      return translationResults;
+    },
+
+    /**
+      * @description For the provided error/operationName combo, lookup the translated message
+      * if it exists; otherwise, return the provided default message.
+      * @param error: Object {errorCode: code, message: default}
+      * @param operationNam: string, unique identifier
+      * @param substitutionTokenValues: [optional array of substitution values]
+      * @param debugOn: boolean if true causes Errors to be thrown for debugging.
+      * For a given error, search for a matching message map in three steps.
+      * STOP as soon as one is found. So, for example, if a map is found in
+      * step 2, step 3 won't be executed.
+      *
+      * Step 1: look for a map where error.errorCode/operationName is mactched.
+      * Step 2: look for a map where (error !== error.errorCode)/operationName is mactched
+      * Step 3: look for a map that matches "ALL_UNMATCHED_ERRORS"/operationName
+      *
+      * If found mark results.found = true.  Set results.message to be the translated message.
+      * @return results: Object{found: boolean, message: translation}
+      */
+    getTranslatedMessage: function(error, operationName, substitutionTokenValues, debugOn) {
+      var translation;
+      var errorCode;
+      var translationResults;
+      var applyErrorCodeInversely = false;
+
+      // Validity checks
+      if (!error || typeof error !== "object" || !("message" in error)) {
+        throw new TypeError("Invalid error argument");
+      }
+      if (typeof operationName !== "string" || !operationName) {
+        throw new TypeError("Invalid operationName argument");
+      }
+      if (substitutionTokenValues && !Array.isArray(substitutionTokenValues)) {
+        throw new TypeError("Invalid substitutionTokenValues argument");
+      }
+      errorCode = error.errorCode;
+
+      // Make sure errorCode is a string.
+      if (!errorCode && typeof errorCode !== "string") {
+        // An aborted action error will have no error code but a message
+        // of "Ation aborted.".
+        if (error.message === "Action aborted.") {
+          errorCode = "ACTION_ABORTED";
+        } else {
+          errorCode = "NO_ERROR_CODE";
+        }
+      }
+
+      // set the default return value to be the passed in message
+      translation = _.escape(error.message);
+
+      // Lookup the errorCode/operationName map and use it if found.
+      translationResults = this.doMessageTranslation(errorCode, operationName, applyErrorCodeInversely, substitutionTokenValues, debugOn);
+      if (translationResults.found) {
+        translation = translationResults.message;
+      }
+      if (!translationResults.found) { // No errorCode/operationName map found.
+        // Now see if there are any maps for anything but the error (i.e. error !== errorCode)
+        applyErrorCodeInversely = true;  // error !== errorCode
+        translationResults = this.doMessageTranslation(errorCode, operationName, applyErrorCodeInversely, substitutionTokenValues, debugOn);
+        if (translationResults.found) {
+          translation = translationResults.message;
+        }
+      }
+      if (!translationResults.found) { // No errorCode/operationName map found.
+        // Now see if there are any maps for unmatched Errors
+        errorCode = "ALL_UNMATCHED_ERRORS";
+        applyErrorCodeInversely = false;
+        translationResults = this.doMessageTranslation(errorCode, operationName, applyErrorCodeInversely, substitutionTokenValues, debugOn);
+        if (translationResults.found) {
+          translation = translationResults.message;
+        }
+      }
+
+      return translation;
+    }
+
+  };
+
+  /**
+   ** Singleton design pattern
+   **/
+  var instance;
+
+  function createInstance() {
+      var translator = new ErrorMessageTranslator();
+      return translator;
+  }
+
+  return {
+      getInstance: function () {
+          if (!instance) {
+              instance = createInstance();
+          }
+          return instance;
+      }
+  };
+
+}); // require

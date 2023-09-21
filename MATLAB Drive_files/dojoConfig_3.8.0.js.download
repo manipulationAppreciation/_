@@ -1,0 +1,24 @@
+/**
+* Created by ghorn on 3/31/2016.
+*/
+var libPath = "/assets_3.8.0/lib";
+var dojoConfig = {
+     isDebug: false,
+     async: true,
+     cacheBust: false,
+     supportedLocales: ["en-us","ja-jp", "ko-kr", "zh-cn"],
+
+     baseUrl: "/assets_3.8.0/js//",
+     packages: [
+         {name: "dojo", location: libPath + "/dojo"},
+         {name: "dgrid", location: libPath + "/dgrid"},
+         {name: "underscore", location: libPath, main: "underscore.min"},
+         {name: "jquery", location: libPath, main: "jquery-2.2.0.min"},
+         {name: "backbone", location: libPath, main: "backbone-min"},
+         {name: "bootstrap", location: libPath, main: "bootstrap.min"},
+         {name: "mldo-embedded-client", location: libPath + "/mldo-embedded-client", main: "EmbeddedClient"}
+     ],
+     has: {
+         "production": 0
+     }
+ };

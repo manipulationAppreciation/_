@@ -1,0 +1,148 @@
+// Copyright 2013-2017 MathWorks, Inc.
+// jshint esversion: 6
+
+/* istanbul ignore next */
+define([
+    "mw-keybindings/BindingUtils",
+    "mw-menu/CheckBoxMenuItem",
+    "mw-menu/Menu",
+    "mw-menu/MenuItem",
+    "mw-menu/MenuSeparator",
+    "mw-menu/PopupMenuItem"
+], function (BindingUtils, CheckBoxMenuItem, Menu, MenuItem, MenuSeparator,
+             PopupMenuItem) {
+    var keyBindingMap, actionsGroupedBySection;
+    var createContextMenuItem = function (action) {
+        return new MenuItem({
+            text: action.label,
+            disabled: !action.enabled,
+            shortcut: action.shortcut,
+            tag: action.tag
+        });
+    };
+
+    var createCheckBoxContextMenuItem = function (action) {
+        return new CheckBoxMenuItem({
+            closeMenuOnClick: true,
+            text: action.label,
+            disabled: !action.enabled,
+            checked: action.checked,
+            tag: action.tag
+        });
+    };
+
+    var createSubMenu = function (actionIds, actionService, filePaths) {
+        var subMenu = new Menu({});
+        var subMenuActions = [];
+        var subMenuSections = {};
+        actionIds.forEach(function (actionId) {
+            var subMenuActionObject = {action: actionService.getAction(actionId), service: actionService};
+            subMenuActions.push(subMenuActionObject);
+        });
+        subMenuActions.forEach(function(actionObject) {
+          var action = actionObject.action;
+          var section = action.section;
+          organize(subMenuSections, {action: action, service: actionService}, section);
+        });
+        renderGroupedActionsInContextMenu(subMenuSections, subMenu, filePaths);
+        return subMenu;
+    };
+
+    var createPopupMenuItem = function (parentAction, subMenu) {
+        var popupMenu = new PopupMenuItem({
+            text: parentAction.name,
+            menu: subMenu,
+            tag: parentAction.tag
+        });
+        popupMenu.own(subMenu);
+        return popupMenu;
+    };
+
+    var renderActionInContextMenu = function (menu, actionObject, filePaths) {
+        var menuItem = "";
+        var action = actionObject.action;
+        var actionService = actionObject.service;
+        action.tag = actionService._nameSpace + "/" + action.id;
+        action.shortcut = action.supportsKeyBinding ? (action.shortcut ? action.shortcut : (keyBindingMap[action.id] ? BindingUtils.getKeyBindingData(keyBindingMap[action.id]).shortcut : "")) : "";
+        if (action.needsCheckBox) {
+            menuItem = createCheckBoxContextMenuItem(action);
+        } else if (action.allowSubMenu) {
+            var actionIdsInSubmenu = action.childActionIds;
+            menuItem = createPopupMenuItem(action, createSubMenu(actionIdsInSubmenu, actionService, filePaths));
+        } else {
+            menuItem = createContextMenuItem(action);
+        }
+        menu.addChild(menuItem);
+        menuItem.on("click", function () {
+            actionService.executeAction(action.id, actionService._actionById(action.id)._properties);
+        });
+    };
+
+    var renderGroupedActionsInContextMenu = function (actionsGroupedBySection, contextMenu, filePaths) {
+        contextMenu.destroyDescendants();
+        Object.keys(actionsGroupedBySection).forEach(function (section) {
+            if (contextMenu.hasChildren()) {
+                contextMenu.addChild(new MenuSeparator());
+            }
+            var actionObjectsInSection = actionsGroupedBySection[section];
+            actionObjectsInSection.forEach(function (actionObjectInSection) {
+                var action = actionObjectInSection.action;
+                if ((action.hasOwnProperty("isApplicableTo") && action.isApplicableTo(filePaths)) || (!action.hasOwnProperty("isApplicableTo"))) {
+                    renderActionInContextMenu(contextMenu, actionObjectInSection, filePaths);
+                }
+            });
+        });
+    };
+
+    var groupActionsInActionServiceBySection = function (groupedSections, actionService) {
+        var actions = actionService.getAllActions();
+        actions.forEach(function (action) {
+            var section = action.section;
+            if (!section.parent) {
+                organize(groupedSections, {action: action, service: actionService}, section);
+            } else {
+                organize(groupedSections, {action: section, service: actionService}, section.parent, action.id);
+            }
+        });
+    };
+
+    var organize = function (groupedSections, actionObject, section, childActionId) {
+        if (groupedSections[section.id]) {
+            var actionsInSection = groupedSections[section.id];
+            if (!isActionInSection(actionObject, actionsInSection)) {
+                if (childActionId) {
+                    actionObject.action.childActionIds = [childActionId];
+                }
+                actionsInSection.push(actionObject);
+            } else {
+                var childActionIds = getActionObjectInSection(actionObject, actionsInSection)[0].action.childActionIds;
+                if (childActionIds) {
+                    childActionIds.push(childActionId);
+                }
+            }
+        } else {
+            groupedSections[section.id] = [actionObject];
+        }
+    };
+
+    var isActionInSection = function (actionObject, actionsInSection) {
+        return getActionObjectInSection(actionObject, actionsInSection).length === 1;
+    };
+
+    var getActionObjectInSection = function (actionObject, actionsInSection) {
+        return actionsInSection.filter(function (a) {
+            return a.action.id === actionObject.action.id;
+        });
+    };
+
+    return {
+        buildContextMenu: function (contextMenu, actionServices, filePaths,
+                                    keyBinding) {
+            keyBindingMap = keyBinding;
+            actionsGroupedBySection = {};
+            actionServices.forEach(function(actionService) { groupActionsInActionServiceBySection(actionsGroupedBySection, actionService); });
+//            actionServices.forEach( (actionService) => { groupActionsInActionServiceBySection(actionsGroupedBySection, actionService); } );
+            renderGroupedActionsInContextMenu(actionsGroupedBySection, contextMenu, filePaths);
+        }
+    };
+});

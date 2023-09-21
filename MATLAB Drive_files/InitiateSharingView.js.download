@@ -1,0 +1,1436 @@
+define([
+ "underscore",
+ "jquery",
+ "bootstrap",
+ "backbone",
+ "templates/InitiateSharingDialog",
+ "config",
+ "dao/gdsdao",
+ "sharingFileService",
+ "dojo/i18n!nls/mldoStringResource",
+ "dojo/string",
+ "util",
+ "emailAddressValidator"
+], function( _, $, Bootstrap, Backbone, InitiateSharingTemplate, GCONFIG, GDSDAO, SharingFileService, MLDOStrings, DojoString, Util, EmailAddressValidator ) {
+
+  return Backbone.View.extend({
+
+      template: InitiateSharingTemplate,
+
+      _isMacSafari: function() {
+        return(navigator.userAgent.indexOf('Safari') != -1 && navigator.userAgent.indexOf('Chrome') == -1 && !navigator.userAgent.match(/iP(ad|hone)/i));
+      },
+
+      _getWindowLocation: function() {
+        return window.location;
+      },
+
+
+      validDialogTypes: {
+        links: "links",
+        manage: "manage",
+        view: "view"
+      },
+
+      events: {
+          "click .initiateSharing": "share",
+          "keydown #emailInput": "onKeydown",
+          "click #createShareLink" : "createLink",
+          "click #copyShareLink" : "copyLink",
+          "click #deleteShareLink" :  "showDeleteLinkConfirmation",
+          "click #doLinkDelete" : "deleteLink",
+          "click #doCollaboratorDelete" : "deleteCollaborator",
+          "click #cancelLinkDelete" : "hideDeleteLinkConfirmation",
+          "click #cancelCollaboratorDelete" : "hideDeleteCollaboratorConfirmation",
+          "click #sharingInviteeList ul li.newInvitee button.statusIconContainer.deleteInvitee" : "deleteInvitee",
+          "click #sharingInviteeList ul li.collaborator button.statusIconContainer.showDeleteCollaboratorConfirmation" : "showDeleteCollaboratorConfirmation",
+          "click #addInviteeButton" : "addShareInvitee",
+          "click #returnButton" : "reset",
+          "keyup #shareCommentsInput" : "countCommentCharacters",
+          "click #updateAccessTypeButton" : "updateAccessType"
+      },
+
+      initialize: function(args) {
+        if (!args || typeof args !== "object" || Object.keys(args).length === 0) {
+          throw new TypeError("Invalid arguments");
+        }
+        this.isEmbedded = false;
+        this.embeddedContainerId = "";
+        this.embeddedClientHost = "*";
+        if (args.isEmbedded && args.isEmbedded === true) {
+          this.isEmbedded = true;
+        }
+        this.embeddedName = (this.isEmbedded && args.embeddedName) ? args.embeddedName : "initiatesharing";
+        if ( !this.isEmbedded) {
+          if (! args.fileService || typeof args.fileService !== "object" || !args.fileService.createPersonalSharingInvitation) {
+            throw new TypeError("Invalid fileService argument");
+          }
+          this.fileService = args.fileService;
+        } else {  // embedded widget uses its own fileService
+          this.fileService = this.createGDSFileService();
+        }
+        this.path = args.path; // undefined when previewing an invitation
+        if (! args.folderInfo || typeof args.folderInfo !== "object") {
+          throw new TypeError("Invalid folderInfo argument");
+        }
+        this.folderInfo = args.folderInfo;
+        this.dialogType = this.validDialogTypes[args.type] || 'manage';
+        this.personalInvitationsEnabled = args.personalInvitationsEnabled || false;
+        if (!this.personalInvitationsEnabled) {
+          //TODO throw error if dialogType not allowed?
+          // Do this instead?:
+          // this.dialogType = "links";
+          // Or, just allow "manage" or "view" anyway -- what we're doing now.
+        }
+        this.editPermissionsEnabled = args.editPermissionsEnabled || false;
+        this.viewOnly = !this.folderInfo.filePermissions.canWrite;
+        this.isOwner = (!this.folderInfo.accessType || this.folderInfo.accessType.toLowerCase() === "owner");
+        this.hasActiveLink = this.folderInfo.hasActiveLink;
+        this.currentUserEmail = args.currentUserEmail || "";
+        this.errorList = [];
+        this.links = {};
+        this.invitationId = args.invitationId;
+        this.emailValidator = new EmailAddressValidator({
+          currentUserEmail: this.currentUserEmail
+        });
+        this.invitations = [];
+        _.bindAll(this, "createLink", "share", "deleteInvitee", "getInviteeInput",
+                        "getInputContainer", "setInputFocus", "deleteLink",
+                        "copyLink", "updateLinks", "handleGetLinksError",
+                        "handleGetLinksResults", "showLink", "deleteCollaborator",
+                        "updateCollaboratorList", "addShareInvitee", "reset",
+                        "clearMessages", "getCollaboratorListEntry", "getErrorList",
+                        "getInputGuidanceTextContainer", "addEntryToInviteeList",
+                        "processCollaboratorListResults", "addCollaboratorToList",
+                        "handleGetSharingCollaboratorsFailure",
+                        "removeEntryFromCollaboratorList", "createGDSFileService",
+                        "handleRevokeOpenSharingInvitationSuccess",
+                        "handleRevokeOpenSharingInvitationFailure",
+                        "notifyEmbeddedContainerOfResize",
+                        "handleExternalUpdate", "validateCompleteEmailAddress",
+                        "validatePartialEmailAddress",
+                        "handleRevokeSharingPermissionFailure");
+      },
+
+      getFolderInfo: function() {
+          return this.folderInfo;
+      },
+
+      getValidator: function() {
+        return this.emailValidator;
+      },
+
+      /**
+        * @description Validates an array of email addresses that is still being typed in
+        * so, the ending is not validated; only what has been typed in is validated.
+        * @param e: event
+        * @param options: optional object - containing boolean field "checkEnding"
+        * @return boolean: true if valid; false otherwise
+      */
+      validatePartialEmailAddress: function(e, options) {
+        var text = this.getInviteeInput().val();
+        var emailString = /(^\s*[^;,|\s*](.*[^;,|\s*])?[;,]?\s*$|^\s*$)/;
+        var regex = new RegExp(emailString);
+        if (!regex.test(text))  {
+          this.displayValidationError(MLDOStrings.initiateSharingDialogValidationEmptyEmailAddress);
+          this.getInviteeInput().focus();
+          return false;
+        }
+        if (text.length) {
+          text = _.escape(text);
+        }
+        var emailArray = this.extractMultipleEmails(text);
+        var checkEnding = (options && typeof options === "object" && options.checkEnding) ? true : false;
+        var isValid = true;
+        var results;
+
+        results = this.getValidator().validateMultipleEmailAddresses(emailArray, checkEnding);
+
+        if (results && results.illegalSubstring) {
+          this.displayValidationError(MLDOStrings.initiateSharingDialogInvalidEmailIllegal);
+          this.disableAdd();
+          this.getInviteeInput().focus();
+        } else if (results && results.lengthTooLong) {
+          this.displayValidationError(MLDOStrings.initiateSharingDialogInvalidEmailTooLong);
+          this.disableAdd();
+          this.getInviteeInput().focus();
+        } else if (results && results.inviteSelf) {
+          isValid = false;
+          this.displayValidationError(MLDOStrings.initiateSharingDialogInvalidEmailToSelf);
+          this.disableAdd();
+          this.getInviteeInput().focus();
+        } else if (results && results.badDomain) {
+          isValid = false;
+          this.displayValidationError(DojoString.substitute(MLDOStrings.initiateSharingDialogInvalidEmailDomain, [results.domain]));
+          this.disableAdd();
+          this.getInviteeInput().focus();
+        } else if (results && results.atSignCount > 1) {
+          isValid = false;
+          this.displayValidationError(MLDOStrings.initiateSharingDialogValidationAtSignText);
+          this.disableAdd();
+        } else if (/^\s*$/.test(text)) {
+          this.hideValidationError();
+          this.enableAdd();
+        } else {
+          this.hideValidationError();
+          this.enableAdd();
+        }
+
+        return isValid;
+      },
+
+      /**
+        * @description Validates an array of email addresses
+        * @param e: event
+        * @return boolean: true if valid; false otherwise
+      */
+      validateCompleteEmailAddress: function(e) {
+        return this.validatePartialEmailAddress(e, {checkEnding: true});
+      },
+
+      render: function() {
+          var self = this;
+          var title = DojoString.substitute(MLDOStrings.initiateSharingDialogTitle, [self.folderInfo.name]);
+          switch (this.dialogType) {
+            case 'links':
+              if(this.isOwner) {
+                if(this.hasActiveLink) {
+                  title = DojoString.substitute(MLDOStrings.initiateSharingDialogTitleManageLinks, [self.folderInfo.name]);
+                } else {
+                  title = DojoString.substitute(MLDOStrings.initiateSharingDialogTitleCreateLinks, [self.folderInfo.name]);
+                }
+              } else {
+                title = DojoString.substitute(MLDOStrings.initiateSharingDialogTitleViewLinks, [self.folderInfo.name]);
+              }
+              break;
+            case 'manage':
+              title = DojoString.substitute((self.folderInfo.isSharedFolder ? MLDOStrings.initiateSharingDialogTitleManage : MLDOStrings.initiateSharingDialogTitleInvite), [self.folderInfo.name]);
+              break;
+            case 'view':
+              title = DojoString.substitute(MLDOStrings.initiateSharingDialogTitleView, [self.folderInfo.name]);
+              break;
+          }
+          this.$el.html(this.template({
+            modalTitle: title,
+            inputLabel: MLDOStrings.initiateSharingDialogFolderNameInputLabel,
+            collaboratorListLabel: MLDOStrings.initiateSharingDialogCurrentlySharedWithLabel,
+            createLinkText: MLDOStrings.initiateSharingDialogCreateLink,
+            copyLinkText: MLDOStrings.initiateSharingDialogCopyLink,
+            deleteLinkText: MLDOStrings.initiateSharingDialogDeleteLink,
+            deleteLinkWarningDetails: MLDOStrings.initiateSharingDialogDeleteWarning,
+            noShareOperationsAvailable: MLDOStrings.initiateSharingDialogNoLinksAvailable,
+            readWritePermissionName: MLDOStrings.initiateSharingDialogPermission_read_write,
+            readOnlyPermissionName: MLDOStrings.initiateSharingDialogPermission_read_only,
+            shareButton: MLDOStrings.initiateSharingDialogButtonShare,
+            closeButton: MLDOStrings.initiateSharingDialogButtonClose,
+            returnButton: MLDOStrings.initiateSharingDialogButtonReturn,
+            deleteLinkConfirmation: MLDOStrings.initiateSharingDialogConfirmLinkDelete,
+            deleteLinkButtonLabel: MLDOStrings.initiateSharingDialogDeleteLinkButton,
+            deleteCollaboratorButtonLabel: MLDOStrings.initiateSharingDialogRemovePermissionButton,
+            cancelButtonLabel: MLDOStrings.initiateSharingDialogCancelButton,
+            addUserButtonLabel: MLDOStrings.initiateSharingDialogAddUserButtonLabel,
+            emailPrompt: MLDOStrings.initiateSharingDailogEnterEmailAddress,
+            commentsPrompt: MLDOStrings.initiateSharingDialogEnterEmailComments,
+            explainCreateLinkText: DojoString.substitute(MLDOStrings.initiateSharingDailogExplainCreateLink, [self.folderInfo.name]),
+            explainCopyLinkText: DojoString.substitute(MLDOStrings.initiateSharingDailogExplainCopyLink, [self.folderInfo.name]),
+            explainDeleteLinkText: MLDOStrings.initiateSharingDailogExplainDeleteLink,
+            multiEmailTextWarning: MLDOStrings.initiateSharingDialogmultiEmailTextWarning,
+            activeUsersLabel: MLDOStrings.initiateSharingDialogActiveUsersLabel,
+            updateAccessTypeButtonLabel: MLDOStrings.initiateSharingDialogUpdateAccessTypeButtonLabel,
+            isEmbedded: this.isEmbedded
+          }));
+          if (this.dialogType !== 'view') {
+            this.$el.on("shown.bs.modal", this.setInputFocus);
+          }
+          this.$el.on("show.bs.modal", this.updateLinks);
+          if (this.dialogType !== "links") {
+            this.$el.on("show.bs.modal", this.updateCollaboratorList);
+          }
+          this.$el.on("shown.bs.modal", function(e) {
+            setTimeout(function() {self.notifyEmbeddedContainerOfResize();}, 0);
+          });
+          this.$el.on("hidden.bs.modal", function() {
+              Util.reEnableTabbingOnPage(Util.getTabbableElements());
+              document.removeEventListener('keydown', Util.returnFocusToFirstElementInModal);
+              self.remove();
+          });
+          this.$el.off('dragover'); // clear previous listeners
+          this.$el.on('dragover', this.dragNotAllowed);
+          this.$el.off('updatesharingdialog:mldo', this.handleExternalUpdate);
+          this.$el.on('updatesharingdialog:mldo', this.handleExternalUpdate);
+          this.$el.bind('input', this.validatePartialEmailAddress);
+          $('#emailInput').blur(this.validateCompleteEmailAddress);
+          $('#emailInput').focus(this.clearMessages);
+          $('#emailInput').focus(this.notifyEmbeddedContainerOfResize);
+          $('#createShareLink').hide();
+          $('#noShareOperationsWarning').hide();
+          $('#initiateSharingDialog .modal-body div.createLinkContainer').hide();
+          $('#copyShareLink').hide();
+          $('#deleteShareLinkContainer').hide();
+          $('input#linkUrlContainer').hide();
+          $('#returnButton').hide();
+          switch (this.dialogType) {
+            case 'links':
+              if (this.isOwner) {
+                $('#explainCreateLink').show();
+                $('#createShareLink').show();
+              } else {
+                $('#explainCreateLink').hide();
+                $('#createShareLink').hide();
+              }
+              $('input#linkUrlContainer').hide();
+              $('#explainCopyLink').hide();
+              $('#explainDeleteLink').hide();
+              this.hideUpdateAccessType();
+              $('#initiateSharingDialog .modal-body div.createLinkContainer').show();
+              $('#initiateSharingDialog .modal-body #sharing_validation_group').hide();
+              $('#initiateSharingDialog .modal-body #sharing_comments').hide();
+              $('#initiateSharingDialog .modal-body #sharingInviteeListContainer').hide();
+              $('#initiateSharingDialog .modal-footer #initiateShareButton').hide();
+              $('#initiateSharingDialog .modal-body').addClass('links');
+              $('#initiateSharingDialog .modal-body #sharingInviteeListContainer').removeClass('viewmembers');
+              break;
+            case 'manage':
+              $('#initiateSharingDialog .modal-body div.createLinkContainer').hide();
+              $('#initiateSharingDialog .modal-body #sharing_validation_group').show();
+              if (!$('#embeddedWidgetContainer').hasClass("mw-desktop")) {
+                $('#initiateSharingDialog .modal-body #sharing_comments').show();
+              }
+              $('#initiateSharingDialog .modal-body #sharingInviteeListContainer').show();
+              $('#initiateSharingDialog .modal-body').removeClass('links');
+              $('#initiateSharingDialog .modal-body #sharingInviteeListContainer').removeClass('viewmembers');
+              break;
+            case 'view':
+              $('#initiateSharingDialog .modal-body div.createLinkContainer').hide();
+              $('#initiateSharingDialog .modal-body #sharing_validation_group').hide();
+              $('#initiateSharingDialog .modal-body #sharing_comments').hide();
+              $('#initiateSharingDialog .modal-body #sharingInviteeListContainer').show();
+              $('#initiateSharingDialog .modal-body').removeClass('links');
+              $('#initiateSharingDialog .modal-body #sharingInviteeListContainer').addClass('viewmembers');
+              break;
+          }
+          if (this.viewOnly) {
+            $('#initiateSharingDialog .modal-body #mldoSharingInfoMessage').hide();
+            $('#initiateSharingDialog .modal-body #sharing_validation_group').hide();
+            $('#initiateSharingDialog .modal-body #sharing_comments').hide();
+            $('#initiateSharingDialog .modal-body #sharingInviteeListContainer').show();
+            $('#initiateSharingDialog .modal-body div.createLinkContainer #deleteShareLinkContainer').hide();
+            $('#initiateSharingDialog .modal-body').addClass('viewOnlyBody');
+            $('#initiateSharingDialog .modal-footer').addClass('viewOnlyFooter');
+          } else {
+            $('#initiateSharingDialog .modal-body').removeClass('viewOnlyBody');
+            $('#initiateSharingDialog .modal-footer').removeClass('viewOnlyFooter');
+          }
+          if (this.isEmbedded) {
+            $('#initiateSharingDialog').modal({backdrop: false});
+          } else {
+            $('#initiateSharingDialog').modal({backdrop: 'static'});
+          }
+          return this;
+      },
+
+      handleExternalUpdate: function(e) {
+        if (this.dialogType === 'manage') {
+          this.updateCollaboratorList();
+        } else if (this.dialogType === 'links') {
+          this.updateLinks();
+        }
+      },
+
+      getEmbeddedContainerId: function() {
+        return this.embeddedContainerId;
+      },
+      setEmbeddedContainerId: function(id) {
+        if (this.isEmbedded) {
+          this.embeddedContainerId = id;
+        }
+      },
+      getEmbeddedClientHost: function() { return this.embeddedClientHost; },
+      setEmbeddedClientHost: function(host) { if (host && typeof host === "string" && host.length) { this.embeddedClientHost = host; } },
+      getEmbeddedName: function() { return this.embeddedName; },
+      setEmbeddedName: function(name) { this.embeddedName = name; },
+
+      notifyEmbeddedContainerOfResize: function() {
+        if (this.isEmbedded && this.getEmbeddedContainerId()) {
+          var height = $('div#initiateSharingDialog .modal-dialog').height();
+          var width = $('div#initiateSharingDialog .modal-dialog').width();
+          var msgName = "widgetresized:" + this.getEmbeddedName() + ":" + this.getEmbeddedContainerId();
+          var msg = JSON.stringify({name: msgName, height: height, width: width});
+          window.parent.postMessage(msg, this.getEmbeddedClientHost());
+        }
+      },
+
+      getErrorList: function() {
+        if (!this.errorList || !Array.isArray(this.errorList)) {
+          this.errorList = [];
+        }
+        return this.errorList;
+      },
+
+      setErrorList: function(list) { this.errorList = list; },
+
+      setInputFocus: function() {
+        Util.disableTabbingOnPage(Util.getTabbableElements());
+        Util.enableTabbingOnModal(Util.getTabbableElements());
+        const firstFocusableElement = document.querySelector('button.cancelSharing'); // get first element to be focused inside modal
+        const lastFocusableElement = document.querySelector('button#closeInitiateShareButton'); // get last element to be focused inside modal
+        document.addEventListener('keydown', Util.returnFocusToFirstElementInModal.bind(null, firstFocusableElement, lastFocusableElement), false);
+        switch (this.dialogType) {
+          case "manage":
+            this.getInputContainer().show();
+            this.getInputGuidanceTextContainer().show();
+            this.getInviteeInput().focus();
+            break;
+
+          case "links":
+            if(this.hasActiveLink) {
+              $('input#linkUrlContainer').focus();
+            } else {
+              $('button#closeInitiateShareButton').focus();
+            }
+            break;
+        }
+      },
+
+      dragNotAllowed: function(e) {
+        if (e && e.preventDefault && e.originalEvent && e.originalEvent.dataTransfer) {
+          e.preventDefault();
+          e.originalEvent.dataTransfer.dropEffect = 'none';
+        }
+      },
+
+      disableAdd: function() {
+        $('#addInviteeButton').prop('disabled', true);
+      },
+
+      enableAdd: function() {
+        $('#addInviteeButton').prop('disabled', false);
+      },
+
+      disableSubmit: function() {
+          $('.initiateSharing').prop('disabled', true);
+      },
+
+      enableSubmit: function() {
+          $('.initiateSharing').prop('disabled', false);
+      },
+
+      enableUpdateAccessType: function() {
+        $('#updateAccessTypeButton').prop('disabled', false);
+      },
+
+      disableUpdateAccessType: function() {
+        $('#updateAccessTypeButton').prop('disabled', true);
+      },
+
+      hideUpdateAccessType: function() {
+        document.querySelector('button#updateAccessTypeButton').style.display = 'none';
+      },
+
+      getInvitationsToUpdateList: function() {
+        return this.invitations;
+      },
+
+      getInviteeListSize: function() {
+        var size = 0;
+        size = $('#sharingInviteeList ul > li.newInvitee').length || 0;
+        return size;
+      },
+
+      displayValidationError: function(err) {
+          $('.inline_form_error_msg').html(err);
+          $('.inline_form_error').show();
+          $('#shareEmailInputContainer').addClass('has-error has-feedback');
+          $('.form-control-feedback').show();
+          this.notifyEmbeddedContainerOfResize();
+      },
+
+      hideValidationError: function() {
+        var sizeWillChange = $('.inline_form_error').is(':visible');
+        $('.inline_form_error').hide();
+        $('.inline_form_error_msg').empty();
+        $('#shareEmailInputContainer').removeClass('has-error has-feedback');
+        $('.form-control-feedback').hide();
+        if (sizeWillChange) {
+          this.notifyEmbeddedContainerOfResize();
+        }
+      },
+
+      getInviteeListHeader: function() { return $('div#sharingInviteeListContainer #collaboratorListTitle'); },
+
+      share: function(e) {
+        var context = this;
+        var inviteeList = [];
+        var successList = [];
+        var failureList = this.getErrorList() || [];
+        if (e && e.preventDefault) {
+          e.preventDefault();
+        }
+        this.disableSubmit();
+        this.getInviteeListHeader().hide();
+        this.getInputContainer().hide();
+        this.getInputGuidanceTextContainer().hide();
+        this.getCommentsContainer().hide();
+        $('#commentLength').hide();
+        $('#addInviteeButton').hide();
+        this.hideUpdateAccessType();
+        this.clearMessages();
+        $('#sharingInviteeList ul > li.newInvitee').each(function(index) {
+          var comments = $(this).data("comments");
+          var invitee = {
+            email: $(this).data("email"),
+            permission: $(this).data("permission"),
+            path: context.path,
+            comments:  encodeURIComponent(_.escape(comments.replace(/\s/g, ' ')))
+          };
+          inviteeList.push(invitee);
+        });
+        if (inviteeList.length) {
+          this.initiateMultipleShares(inviteeList, successList, failureList);
+        } else if (failureList.length) {
+          var $resultList = this.createResultsHtml(successList, failureList);
+          this.showMessage(MLDOStrings.initiateSharingDialogErrorWarning, true);
+          $('#mldo-sharing-error-container').show();
+          $('#sharingInviteeResultList').show().html($resultList);
+        }
+        this.notifyEmbeddedContainerOfResize();
+      },
+
+      getPermission: function() {
+        return $('#selectedSharePermission').val();
+      },
+
+      getComments: function() {
+        return document.getElementById("shareCommentsInput").value;
+      },
+
+      getAccessTypeName: function(value) {
+        var name = "";
+        var permission;
+        if (value && value.length && typeof value === "string") {
+          permission = value.toUpperCase();
+          switch ( permission ) {
+            case "READ_ONLY":
+              name = MLDOStrings.initiateSharingDialogPermission_read_only;
+              break;
+            case "READ_WRITE":
+              name = MLDOStrings.initiateSharingDialogPermission_read_write;
+              break;
+            case "MANAGE_ACCESS":
+              name = MLDOStrings.initiateSharingDialogPermission_manage_access;
+              break;
+            case "OWNER":
+              name = MLDOStrings.initiateSharingDialogPermission_owner;
+              break;
+            default:
+              break;
+          }
+        }
+        return name;
+      },
+
+      countCommentCharacters: function () {
+        var count = document.getElementById("shareCommentsInput").textLength;
+        var limit = document.getElementById("shareCommentsInput").maxLength;
+        document.getElementById("commentLength").innerText = count + "/" + limit;
+        if (count >= limit) {
+          document.getElementById("commentLength").classList.add("error");
+          document.getElementById("commentLength").style.display = "block";
+        } else if (count === 0) {
+          document.getElementById("commentLength").style.display = "none";
+        } else {
+          document.getElementById("commentLength").classList.remove("error");
+          document.getElementById("commentLength").style.display = "block";
+        }
+      },
+
+      updateAccessType: function(e) {
+        if (this.editPermissionsEnabled) {
+          var context = this;
+          context.hideUpdateAccessType();
+          let returnButton = document.querySelector('button#returnButton');
+          if (returnButton) {
+            returnButton.style.display = 'inline-block';
+          }
+          let invitations = this.getInvitationsToUpdateList();
+          let promise = this.fileService.updateRecipientInvitations(this.path, invitations);
+          promise.done(function(res) {
+            if (res.errors.length === 0) {
+              context.showMessage(DojoString.substitute(MLDOStrings.initiateSharingDialogUpdateAccessTypeSuccessful, [invitations.length]), false);
+            } else if (res.invitations.length < invitations.length) {
+              context.showMessage(DojoString.substitute(MLDOStrings.initiateSharingDialogUpdateAccessTypePartial, [res.errors.length, res.invitations.length]), true);
+            } else if (res.invitations.length === 0) {
+              context.showMessage(DojoString.substitute(MLDOStrings.initiateSharingDialogUpdateAccessTypeError, [invitations.length]), true);
+            }
+          }).fail(function(err) {
+              context.showMessage(DojoString.substitute(MLDOStrings.initiateSharingDialogUpdateAccessTypeError, invitations ? [invitations.length]: []), true);
+            }
+          ).always(
+            context.invitations = []);
+        }
+      },
+
+      initiateMultipleShares: function(inviteeList, successList, failureList) {
+        var context = this;
+        if (inviteeList && typeof inviteeList === "object" && inviteeList.length > 0) {
+          var invitee = inviteeList.pop();
+          var promise = this.initiateSingleShare(invitee);
+          var clone = JSON.parse(JSON.stringify(invitee));
+          promise.done(function(data) {
+            successList.push(clone);
+          })
+          .fail(function(err) {
+            clone.errorCode = err.errorCode;
+            clone.message = Util.getErrorMessageTranslator().getTranslatedMessage(err,
+                                                                                  "initiateSharingView.initiateMultipleShares",
+                                                                                  [_.escape(context.folderInfo.name)],
+                                                                                  context.fileService.isThrowErrorOnMessageTranslationEnabled());
+            failureList.push(clone);
+          })
+          .always(function() {
+            if (inviteeList.length > 0) {
+              context.initiateMultipleShares(inviteeList, successList, failureList);
+            } else {
+              var $resultList = context.createResultsHtml(successList, failureList);
+              if (failureList.length) {
+                context.showMessage(MLDOStrings.initiateSharingDialogErrorWarning, true);
+                $('#mldo-sharing-error-container').show();
+                if (successList.length) {
+                  context.showMessage(DojoString.substitute(MLDOStrings.initiateSharingDialogSomeErrorsWarning, [context.folderInfo.name]), true);
+                }
+              } else {
+                context.showMessage(DojoString.substitute(MLDOStrings.initiateSharingDialogSharingSuccessful, [context.folderInfo.name]), false);
+              }
+              $('#sharingInviteeResultList').show().html($resultList);
+              var focusRowData = {path: context.path};
+              context.fileService.focusRowAfterGridRefresh(focusRowData);
+              context.fileService.refreshGrid();
+              context.notifyEmbeddedContainerOfResize();
+            }
+          });
+        } else {
+          if (inviteeList && typeof inviteeList !== "object") {
+            throw new TypeError("Invalid inviteeList argument. Should be an array.");
+          }
+        }
+      },
+
+      createResultsHtml: function(successList, failureList) {
+        var context = this;
+        var $inviteeListElement = $('#sharingInviteeList');
+        var $resultList = $('<ul style="margin-left:0px;" class="sharingResultsList"></ul>');
+        $('#initiateShareButton').hide();
+        $('#closeInitiateShareButton').show();
+        $('#returnButton').show();
+        $inviteeListElement.empty();
+        var entry;
+        $.each(failureList, function(index, item) {
+          entry = '<li class=\"inviteResultError\">' + '<div class="statusIconContainer"><span class="notificationImageError" aria-hidden="true"></span></div>' +
+                      '<div class="inviteeEntryEmailError"><a href="javascript:void(0);">' + item.email + '</a></div>' +
+                      '<div class="inviteeEntryPermissionsError">' + item.message + '</div>' +
+                  '</li>';
+          $resultList.append($(entry));
+        });
+        $.each(successList, function(index, item) {
+          entry = '<li class=\"inviteResultSuccess\">' + '<div class="statusIconContainer"><span class="notificationImageSuccess" aria-hidden="true"></span></div>' +
+                      '<div class="inviteeEntryEmailSuccess"><a href="javascript:void(0);">' + item.email + '</a></div>' +
+                      '<div class="inviteeEntryPermissionsSuccess">' + (context.getAccessTypeName(item.permission)) + '</div>' +
+                  '</li>';
+          $resultList.append($(entry));
+        });
+        return $resultList;
+      },
+
+      initiateSingleShare: function(invitee) {
+        if (!invitee || typeof invitee !== "object" ||
+            !("path" in invitee) || typeof invitee.path !== "string" || !invitee.path.length ||
+            !("email" in invitee) || typeof invitee.email !== "string" || !invitee.email.length ||
+            !("permission" in invitee) || typeof invitee.permission !== "string" || !invitee.permission.length) {
+          throw new TypeError("Invalid invitee argument");
+        }
+        var promise = this.fileService.createPersonalSharingInvitation(invitee.path, invitee.email, invitee.permission, invitee.comments);
+        return promise;
+      },
+
+      handleGetLinksResults: function(data) {
+        if (data && "invitations" in data && data.invitations.length) {
+          var invitations = data.invitations;
+          this.links = {};
+          this.linkCounts = {};
+          var len = invitations.length;
+          for (var i = 0; i < len; i++) {
+            if ("accessType" in invitations[i] && "invitationId" in invitations[i]) {
+              this.links[invitations[i].accessType.toLowerCase()] = invitations[i].invitationId;
+              this.linkCounts.acceptedCount = invitations[i].acceptedCount;
+            }
+          }
+          this.showLink();
+        } else if(this.viewOnly || !this.isOwner) {
+          $('#createShareLink').hide();
+          $('#deleteShareLinkContainer').hide();
+          $('#sharingInviteeListContainer').hide();
+          $('#noShareOperationsWarning').show();
+          $('#linkAcceptedText').hide();
+        } else {
+          this.hideLink();
+          $('#linkAcceptedText').hide();
+        }
+        this.notifyEmbeddedContainerOfResize();
+      },
+
+      handleGetLinksError: function(err) {
+        if (err && typeof err === "object" && ("message" in err)) {
+          var msg = Util.getErrorMessageTranslator().getTranslatedMessage(err,
+                                                                          "initiateSharingView.getLinks",
+                                                                          [_.escape(this.folderInfo.name)],
+                                                                          this.fileService.isThrowErrorOnMessageTranslationEnabled());
+          this.showMessage(msg, true);
+          this.notifyEmbeddedContainerOfResize();
+        }
+      },
+
+      updateLinks: function() {
+        if (this.dialogType === "links") {
+          if (this.path) {
+            var promise = this.fileService.getOpenSharingInvitations(this.path, "read_only");
+            promise.done(this.handleGetLinksResults);
+            promise.fail(this.handleGetLinksError);
+          } else { // if the path does not exist, we are previewing the invitation
+              this.showLink();
+             if(this.viewOnly || !this.isOwner) {
+              $('#createShareLink').hide();
+              $('#deleteShareLinkContainer').hide();
+              $('#sharingInviteeListContainer').hide();
+            } else {
+              this.hideLink();
+            }
+            this.notifyEmbeddedContainerOfResize();
+          }
+        }
+      },
+
+      showLink: function() {
+        if (this.links.read_only || this.invitationId) {
+          $('#createShareLink').hide();
+          $('#createShareLink').hide();
+          $('#explainCreateLink').hide();
+          $('#sharingInviteeListContainer').hide();
+          $('#linkAcceptedText').hide();
+          $('input#linkUrlContainer').show();
+          $('#linkUrlContainer').val(this.makeLinkUrl(this.path? this.links.read_only : this.invitationId)); // if the path does not exist, we are previewing the invitation
+          var acceptedCount = (this.linkCounts) && this.linkCounts.hasOwnProperty("acceptedCount") ? this.linkCounts.acceptedCount : undefined;
+          if(acceptedCount !== null && acceptedCount !== undefined) { //so that it is displayed even if the count is 0
+              $('#linkAcceptedCount').html(acceptedCount);
+              $('#linkAcceptedText').show();
+          }
+          $('#explainCopyLink').show();
+          if (!this._isMacSafari()) {
+            $('#copyShareLink').show();
+            $('#linkUrlContainer').removeClass('fullSize');
+          } else {
+            $('#linkUrlContainer').addClass('fullSize');
+          }
+          if (!this.viewOnly && this.isOwner) {
+            $('#explainDeleteLink').show();
+            $('#deleteShareLinkContainer').show();
+          }
+        }
+      },
+
+      hideLink: function() {
+        $('#linkUrlContainer').val("");
+        $('#explainCopyLink').hide();
+        $('#copyShareLink').hide();
+        $('#explainDeleteLink').hide();
+        $('#deleteShareLinkContainer').hide();
+        $('input#linkUrlContainer').hide();
+        $('#explainCreateLink').show();
+        $('#createShareLink').show();
+      },
+
+      createLink: function(e) {
+        if (e && e.preventDefault) {
+          e.preventDefault();
+        }
+        this.clearMessages();
+        var promise = this.fileService.createOpenSharingInvitation(this.path, "read_only");
+        var context = this;
+        promise.done(function(data) {
+          if (data && data.invitation && ("accessType" in data.invitation && "invitationId" in data.invitation)) {
+            context.links[data.invitation.accessType.toLowerCase()] = data.invitation.invitationId;
+          }
+          context.showLink();
+          var focusRowData = {path: context.path};
+          context.fileService.focusRowAfterGridRefresh(focusRowData);
+          context.fileService.refreshGrid();
+          context.notifyEmbeddedContainerOfResize();
+        })
+        .fail(function(err) {
+          var msg = Util.getErrorMessageTranslator().getTranslatedMessage(err,
+                                                                          "initiateSharingView.createLink",
+                                                                          [_.escape(context.folderInfo.name)],
+                                                                          context.fileService.isThrowErrorOnMessageTranslationEnabled());
+
+          context.showMessage(msg, true);
+          context.notifyEmbeddedContainerOfResize();
+        });
+      },
+
+      makeLinkUrl: function(linkId) {
+        var url = this._getWindowLocation();
+        var protocol = url.protocol;
+        var host = url.origin;  // works in chrome
+        var hostname = url.hostname;
+        var port = url.port;
+        if (linkId) {
+          // if not chrome, host will be undefined.
+          // Make up the host from the other parts that do exist in IE and FireFox
+          if (!host) {
+            host = protocol + "//" + hostname + ":" + port;
+          }
+          if (host.indexOf("-embed") > 0) {
+            host = host.split("-embed").join('');
+          }
+          url = host;
+          url += "/sharing/" + linkId;
+        } else {
+          url = "";
+        }
+        return url;
+      },
+
+      copyLink: function(e) {
+        if (e && e.preventDefault) {
+          e.preventDefault();
+        }
+        this.clearMessages();
+        var linkId = this.links.read_only || this.invitationId;
+        if (linkId) {
+          var url = this.makeLinkUrl(linkId);
+          var range     = document.createRange();
+          var selection;
+          if (window.clipboardData) {
+            window.clipboardData.setData("Text", url);
+          } else {
+            // Create a temporary element off screen.
+            var tmpDiv = $('<div>');
+            tmpDiv.css({
+              position: "absolute",
+              left:     "-1000px",
+              top:      "-1000px",
+              background: "white",
+              color: "black"
+            });
+            // Add the input value to the temp element.
+            tmpDiv.text(url);
+            $("body").append(tmpDiv);
+            // Select temp element.
+            range.selectNodeContents(tmpDiv.get(0));
+            selection = window.getSelection ();
+            selection.removeAllRanges ();
+            selection.addRange (range);
+            document.execCommand ("copy", false, null);
+            // remove temp element.
+            tmpDiv.remove();
+          }
+          if (this._isMacSafari()) {
+            this.showMessage(MLDOStrings.initiateSharingDialogManuallyCopyLink, false);
+          } else {
+            this.showMessage(MLDOStrings.initiateSharingDialogLinkCopied, false);
+          }
+          this.notifyEmbeddedContainerOfResize();
+        }
+      },
+
+      deleteInvitee: function(e) {
+        if (e && typeof e === "object") {
+          var inviteeListLength = this.getInviteeListSize();
+          if (e.preventDefault) {
+            e.preventDefault();
+          }
+          this.clearMessages();
+          if (e.currentTarget) {
+            $(e.currentTarget).closest('li.newInvitee').remove();
+            this.notifyEmbeddedContainerOfResize();
+            if (--inviteeListLength === 0) {
+              this.disableSubmit();
+            }
+          }
+        }
+      },
+
+      createInviteeList: function() {
+        var $inviteeList = $('#sharingInviteeList ul');
+        // Create a new list if there isn't one already
+        if ($inviteeList.length === 0) {
+          $inviteeList = $('<ul style="margin-left:0px;"></ul>');
+        }
+        return $inviteeList;
+      },
+
+      getExistingInviteeList: function() {
+        var existingInviteeList = [];
+        // Get all not yet sent
+        $('#sharingInviteeList ul > li.newInvitee').each(function(index) {
+          existingInviteeList.push({email: $(this).data("email"), accessType: $(this).data("permission")});
+        });
+        // Get all already sent
+        $('#sharingInviteeList ul > li.collaborator').each(function(index) {
+          existingInviteeList.push({email: $(this).data("email"), accessType: $(this).data("permission")});
+        });
+        return existingInviteeList;
+      },
+
+      addEntryToInviteeList: function(email, permission, comments, existingInviteeList, inviteeListElement) {
+        if (!email || !email.length || typeof email !== "string") {
+          throw new TypeError("Invalid email argument");
+        }
+        if (!permission || !permission.length || typeof permission !== "string") {
+          throw new TypeError("Invalid permission argument");
+        }
+        if (typeof comments !== "string") {
+          throw new TypeError("Invalid comments argument");
+        }
+        if (!existingInviteeList || !Array.isArray(existingInviteeList)) {
+          throw new TypeError("Invalid existingInviteeList argument");
+        }
+        if (!inviteeListElement || typeof inviteeListElement !== "object") {
+          throw new TypeError("Invalid inviteeListElement argument");
+        }
+        // Do not allow the share:
+        // If editPermissions is false, and an invitation to the recipient already exists
+        // If editPermissions is true, and an invitation to the recipient exists with same permissions
+        var context = this;
+        if (existingInviteeList.findIndex(function(data) {
+            if(data.email === email && (!context.editPermissionsEnabled || (context.editPermissionsEnabled && data.accessType === permission)))
+              return true;
+          }) < 0) {
+          if (this.editPermissionsEnabled) {
+            entry = '<li class=\"newInvitee\" data-email=\"' + email + '\" data-permission=\"' + permission + '\" data-comments=\"' + comments +'\"><div class="inviteeEntryEmail">' + email + '</div>' +
+                        '<div class="inviteeEntryPermissions">' +
+                          '<select id=\"selectedEditPermissions\" class=\"mldo-modal-label sharingPermissionsSelect\">' +
+                            ((permission.toLowerCase() === "read_write") ? '<option value=\"read_write\" selected>' : '<option value=\"read_write\">') + MLDOStrings.initiateSharingDialogPermission_read_write + '&nbsp;</option>' +
+                            ((permission.toLowerCase() === "read_only") ? '<option value=\"read_only\" selected>' : '<option value=\"read_only\">') + MLDOStrings.initiateSharingDialogPermission_read_only + '&nbsp;</option>' +
+                          '</select>' +
+                        '</div>' +
+                        '<div class="inviteeEntryStatus">' + MLDOStrings.initiateSharingDialogStatusNewInvite + '</div>' +
+                        '<button class="statusIconContainer deleteInvitee btn"><a><span class="horizontalIconContainer removeCollaborator"><div class="removeCollaboratorIcon" aria-hidden="true"></div></span></a></button>' +
+                    '</li>';
+          } else {
+            entry = '<li class=\"newInvitee\" data-email=\"' + email + '\" data-permission=\"' + permission + '\" data-comments=\"' + comments + '\"><div class="inviteeEntryEmail">' + email + '</div>' +
+              '<div class="inviteeEntryPermissions">' + this.getAccessTypeName(permission) + "</div>" +
+              '<div class="inviteeEntryStatus">' + MLDOStrings.initiateSharingDialogStatusNewInvite + '</div>' +
+              '<button class="statusIconContainer deleteInvitee btn"><a><span class="horizontalIconContainer removeCollaborator"><div class="removeCollaboratorIcon" aria-hidden="true"></div></span></a></button>' +
+              '</li>';
+          }
+          inviteeListElement.prepend($(entry));
+          $('#sharingInviteeList').show().html(inviteeListElement);
+          if (this.editPermissionsEnabled) {
+            $('li.newInvitee .inviteeEntryPermissions select.sharingPermissionsSelect').on("change", function(e) {
+              $(e.currentTarget).closest('li.newInvitee').data('permission', $(this).val());
+            });
+          }
+        } else {
+          this.getErrorList().push({ email: email, message: MLDOStrings.initiateSharingDailaogEmailAlreadyInList } );
+        }
+      },
+
+      addShareInvitee: function(e) {
+        if (e && e.preventDefault) {
+          e.preventDefault();
+        }
+        var self = this;
+        var text = this.getInviteeInput().val();
+        if (!text) {
+          return;
+        }
+        var emailArray = this.extractMultipleEmails(text);
+        emailArray = [...new Set(emailArray)];
+        var permission = this.getPermission();
+        var comments =  encodeURIComponent(_.escape(this.getComments()));
+        var inviteeListElement = this.createInviteeList();
+        var existingInviteeList = this.getExistingInviteeList();
+        var entry;
+        emailArray.forEach(function(email, index, origArray) { self.addEntryToInviteeList(email, permission, comments, existingInviteeList, inviteeListElement); });
+        // reset input
+        this.getInviteeInput().val('');
+        this.getCommentInput().val('');
+        // perform 'Send' to do invitations
+        this.share();
+      },
+
+      onKeydown: function(e) {
+        if (e && typeof e === "object") {
+          var code = e.keyCode || e.which;
+          this.clearMessages();
+          if (code == 13) { // Enter key
+            if (e.preventDefault) {
+              e.preventDefault();
+            }
+            if (this.validateCompleteEmailAddress()) {
+              this.addShareInvitee(e);
+            }
+          }
+        }
+      },
+
+      extractMultipleEmails: function(text) {
+        var emailArray = [];
+        var commaPieces;
+        var semicolonPieces;
+        commaPieces = text.split(",");
+        commaPieces.forEach(function(x, i, a) {
+          if (x.indexOf(";") >= 0) {
+            semicolonPieces = x.split(";");
+            emailArray = emailArray.concat(semicolonPieces);
+          } else {
+            emailArray = emailArray.concat(x);
+          }
+        });
+        emailArray.forEach(function(email, index, originalArray) {
+          originalArray[index] = email.trim();
+        });
+        emailArray = emailArray.filter(function(item) {
+          var result = false;
+          if (item) {
+            result = true;
+          }
+          return result;
+        });
+        return emailArray;
+      },
+
+      getInputContainer: function() {
+        return $('#shareEmailInputContainer');
+      },
+
+      getCommentsContainer: function() {
+        return $('#sharing_comments');
+      },
+
+      getCommentInput: function() {
+        return $('#shareCommentsInput');
+      },
+
+      getInputGuidanceTextContainer: function() {
+        return $('div#guidanceTextContainer');
+      },
+
+      getInviteeInput: function() {
+        return $("#emailInput");
+      },
+
+      isErrorMessageVisible: function() {
+        return $('#sharing_error_notification_group').is(':visible') && $('#mldo-sharing-error-container').is(':visible');
+      },
+
+      isSuccessMessageVisible: function() {
+        return $('#sharing_error_notification_group').is(':visible') && $('#mldo-sharing-success-container').is(':visible');
+      },
+
+      showMessage: function(msg, isError) {
+        $('#sharing_error_notification_group').show();
+        if (isError) {
+          $('#mldo-sharing-success-container').hide();
+          $('#mldo-sharing-error-container').show();
+          $('#mldo-sharing-error-container div.sharingErrorWarning a').text(msg);
+        } else {
+          $('#mldo-sharing-error-container').hide();
+          $('#mldo-sharing-success-container').show();
+          $('#mldo-sharing-success-container div.sharingSuccessful a').text(msg);
+        }
+        $('#initiateSharingDialog').focus();
+      },
+
+      clearMessages: function() {
+        var $resultsListElement = $('#sharingInviteeList > ul.sharingResultsList');
+        $('#mldo-sharing-error-container div.sharingErrorWarning a').text('');
+        $('#mldo-sharing-success-container div.sharingSuccessful a').text('');
+        $('#mldo-sharing-success-container').hide();
+        $('#mldo-sharing-error-container').hide();
+        $('#sharing_error_notification_group').hide();
+        if ($resultsListElement.length) {
+          $resultsListElement.remove();
+        }
+        this.setErrorList([]);
+      },
+
+      showDeleteLinkConfirmation: function(e) {
+        if (e && e.preventDefault) {
+          e.preventDefault();
+        }
+        this.clearMessages();
+        $('#confirmDelLinkContainer').show();
+        $('button#cancelLinkDelete').focus();
+        this.notifyEmbeddedContainerOfResize();
+      },
+
+      showDeleteCollaboratorConfirmation: function(e) {
+        var invitationId = "";
+        var subjectName = "";
+        if (e && typeof e === "object") {
+          if (e.preventDefault) {
+            e.preventDefault();
+          }
+          this.clearMessages();
+          if (e.currentTarget) {
+            invitationId = $(e.currentTarget).closest('li.collaborator').data("invitationid");
+            subjectName = $(e.currentTarget).closest('li.collaborator').data("email");
+          }
+        }
+        if (invitationId && subjectName) {
+          $('#confirmDelCollaboratorContainer').data("invitationid", invitationId);
+          $('#confirmDelCollaboratorContainer').data("email", subjectName);
+        }
+        $('#delCollaboratorTitle').text(DojoString.substitute(MLDOStrings.initiateSharingDialogConfirmCollaboratorDelete, [subjectName]));
+        $('#delCollaboratorWarning').text(DojoString.substitute(MLDOStrings.initiateSharingDialogDeleteCollaboratorWarning, [subjectName]));
+        $('#confirmDelCollaboratorContainer').show();
+        $('button#cancelCollaboratorDelete').focus();
+      },
+
+      hideDeleteLinkConfirmation: function() {
+        $('#confirmDelLinkContainer').hide();
+        $('#initiateSharingDialog').focus();
+      },
+
+      hideDeleteCollaboratorConfirmation: function() {
+        $('#confirmDelCollaboratorContainer').data("invitationid", "");
+        $('#confirmDelCollaboratorContainer').data("subjectname", "");
+        $('#confirmDelCollaboratorContainer').hide();
+        $('#initiateSharingDialog').focus();
+      },
+
+      handleRevokeOpenSharingInvitationFailure: function(err) {
+        if (err && typeof err === "object" && ("message" in err)) {
+          var msg = Util.getErrorMessageTranslator().getTranslatedMessage(err,
+                                                                          "initiateSharingView.deleteLink",
+                                                                          [_.escape(this.folderInfo.name)],
+                                                                          this.fileService.isThrowErrorOnMessageTranslationEnabled());
+          this.showMessage(msg, true);
+          this.notifyEmbeddedContainerOfResize();
+        }
+      },
+
+      handleRevokeOpenSharingInvitationSuccess: function() {
+        this.hideLink();
+        var focusRowData = {path: this.path};
+        this.fileService.focusRowAfterGridRefresh(focusRowData);
+        this.fileService.refreshGrid();
+        this.notifyEmbeddedContainerOfResize();
+      },
+
+      deleteLink: function(e) {
+        if (e && e.preventDefault) {
+          e.preventDefault();
+        }
+        this.clearMessages();
+        this.hideDeleteLinkConfirmation();
+        $('#linkAcceptedText').hide();
+        $('#linkAcceptedCount').hide();
+        this.linkCounts = {};
+        var context = this;
+        var linkId = this.links.read_only;
+        var promise;
+        if (linkId) {
+          promise = this.fileService.revokeOpenSharingInvitation(linkId);
+          promise.done(this.handleRevokeOpenSharingInvitationSuccess)
+          .fail(this.handleRevokeOpenSharingInvitationFailure);
+        }
+      },
+
+      handleRevokeSharingPermissionFailure: function(err) {
+        if (err && typeof err === "object" && ("message" in err)) {
+          var msg = Util.getErrorMessageTranslator().getTranslatedMessage(err,
+                                                                          "initiateSharingView.revokeSharingPermission",
+                                                                          [_.escape(this.folderInfo.name)],
+                                                                          this.fileService.isThrowErrorOnMessageTranslationEnabled());
+          this.showMessage(msg, true);
+          this.notifyEmbeddedContainerOfResize();
+        }
+      },
+
+      removeEntryFromCollaboratorList: function(invitationId, subjectName, focusRowData) {
+        if (!invitationId || typeof invitationId !== "string") {
+          throw new TypeError("Invalid invitationId argument");
+        }
+        if (!subjectName || typeof subjectName !== "string") {
+          throw new TypeError("Invalid subjectName argument");
+        }
+        if (!focusRowData || typeof focusRowData !== "object") {
+          throw new TypeError("Invalid focusRowData argument");
+        }
+        var hasLink = this.folderInfo.hasActiveLinke || false;
+        $("#sharingInviteeList ul > li.collaborator[data-invitationid=\'" + invitationId + "\']").remove();
+        // $('#sharingInviteeList ul').html("");
+        this.showMessage(DojoString.substitute(MLDOStrings.initiateSharingDialogDeleteCollaboratorSuccessful, [subjectName]), false);
+        $('#returnButton').show(); //todo
+        this.hideUpdateAccessType();
+        if ($("#sharingInviteeList ul > li.collaborator").size() === 1) {
+          this.updateCollaboratorList();
+          this.fileService.focusRowAfterGridRefresh(focusRowData);
+          this.fileService.refreshGrid();
+        }
+        if ($("#sharingInviteeList ul li").length === 0) {
+          $('#sharingInviteeList').html($('<div class="noContents">' + (hasLink ? MLDOStrings.initiateSharingDialogNoParticipantsButHasLink : MLDOStrings.initiateSharingDialogNoParticipants) + '</div>'));
+        }
+        this.notifyEmbeddedContainerOfResize();
+      },
+
+      deleteCollaborator: function(e) {
+        var context = this;
+        if (e && e.preventDefault) {
+          e.preventDefault();
+        }
+        this.clearMessages();
+        var invitationId = $('#confirmDelCollaboratorContainer').data("invitationid");
+        var subjectName = $('#confirmDelCollaboratorContainer').data("email");
+        var focusRowData = {path: this.path};
+        if (invitationId) {
+          this.hideDeleteCollaboratorConfirmation();
+          var promise = this.fileService.revokeSharingPermission(invitationId);
+          promise.done(function(data) { context.removeEntryFromCollaboratorList(invitationId, subjectName, focusRowData); })
+          .fail(this.handleRevokeSharingPermissionFailure);
+        }
+      },
+
+      sortCollaboratorsByAccessType: function(a,b) {
+        if (!a || typeof a !== "object" || !b || typeof b !== "object" || !("accessType" in a) ||
+            !("accessType" in b) || typeof a.accessType !== "string" || typeof b.accessType !== "string") {
+          throw new TypeError("Invalid sort argument");
+        }
+        var values = { owner: 1, read_write: 2, read_only: 3 };
+        var aVal = values[a.accessType.toLowerCase()], bVal = values[b.accessType.toLowerCase()];
+        return (aVal - bVal);
+      },
+
+      getInvitationStatusName: function(collaborator) {
+        var entryStatus = "";
+        if (collaborator && typeof collaborator === "object" && ("status" in collaborator) && typeof collaborator.status === "string") {
+          switch(collaborator.status.toLowerCase()) {
+            case "accepted":
+              entryStatus = MLDOStrings.initiateSharingDialogStatusAccepted;
+              break;
+            case "declined":
+              entryStatus = MLDOStrings.initiateSharingDialogStatusDeclined;
+              break;
+            default:
+              entryStatus = MLDOStrings.initiateSharingDialogStatusPending;
+              break;
+          }
+        }
+        return entryStatus;
+      },
+
+    getDisplayName: function(persona) {
+        var displayName = "";
+        if(persona) {
+          if(persona.emailAddress) {
+            displayName += this.getValidator().isMyOwnEmailAddress(persona.emailAddress) ? MLDOStrings.meMyself : persona.emailAddress;
+          } else {
+            if(persona.firstName || persona.lastName) {
+              if(persona.firstName) {
+                displayName+= persona.firstName;
+              }
+              if(persona.lastName) {
+                if (displayName.length) {
+                  displayName += " ";
+                }
+                displayName += persona.lastName;
+              }
+            }
+          }
+        }
+        return displayName;
+    },
+
+      getCollaboratorListEntry: function(collaborator) {
+        var entry;
+        var entryStatus = this.getInvitationStatusName(collaborator);
+        var displayEmailAddress = (collaborator.recipient.emailAddress || (!collaborator.recipient.firstName && ! collaborator.recipient.lastName && !displayEmailAddress));
+        if (this.isOwner) {
+          if (this.editPermissionsEnabled && collaborator.accessType.toLowerCase() !== "owner") {
+            entry = '<li class=\"collaborator\" data-email=\"' + (collaborator.recipient.emailAddress || "Unknown") + '\" data-permission=\"' + collaborator.accessType.toLowerCase() + '\"' + '\" data-invitationid=\"' + collaborator.invitationId + '\">' +
+                        '<div class="inviteeEntryEmail">' + (this.getDisplayName(collaborator.recipient) || "Unknown") + '</div>' +
+                        '<div class="inviteeEntryPermissions">' +
+                          '<select class=\"mldo-modal-label sharingPermissionsSelect selectEditPermissions\">' +
+                            ((collaborator.accessType.toLowerCase() === "read_write") ? '<option value=\"read_write\" selected>' : '<option value=\"read_write\">') + MLDOStrings.initiateSharingDialogPermission_read_write + '&nbsp;</option>' +
+                            ((collaborator.accessType.toLowerCase() === "read_only") ? '<option value=\"read_only\" selected>' : '<option value=\"read_only\">') + MLDOStrings.initiateSharingDialogPermission_read_only + '&nbsp;</option>' +
+                          '</select>' +
+                        '</div>' +
+                        '<div class="inviteeEntryStatus">' + entryStatus + '</div>' +
+                        '<button class="statusIconContainer showDeleteCollaboratorConfirmation btn btn-default"><a><span class="horizontalIconContainer removeCollaborator"><div class="removeCollaboratorIcon" aria-hidden="true"></div></span></a></button>' +
+                    '</li>';
+          } else {
+            entry = '<li class=\"collaborator\" data-email=\"' + (collaborator.recipient.emailAddress || "Unknown") + '\" data-invitationid=\"' + collaborator.invitationId + '\">' +
+                        '<div class="inviteeEntryEmail">' + (this.getDisplayName(collaborator.recipient) || "Unknown") + '</div>' +
+                         '<div class="inviteeEntryPermissions"' + ((this.editPermissionsEnabled) ? 'style=\"padding-left:10px;\">' : '>') + this.getAccessTypeName(collaborator.accessType) + '</div>' +
+                         '<div class="inviteeEntryStatus">' + entryStatus + '</div>' +
+                         ( (collaborator.accessType.toLowerCase() === "owner") ?
+                          '<button class="statusIconContainer owner btn btn-primary"><a><span class="glyphicon glyphicon-remove" aria-hidden="true"></span></a></button>' :
+                          '<button class="statusIconContainer showDeleteCollaboratorConfirmation btn btn-default"><a><span class="horizontalIconContainer removeCollaborator"><div class="removeCollaboratorIcon" aria-hidden="true"></div></span></a></button>'
+                         ) +
+                     '</li>';
+          }
+        } else {
+          entry = '<li class=\"collaborator\">' +
+                      '<div class="inviteeEntryEmail">' + this.getDisplayName(collaborator.recipient) + '</div>' +
+                       '<div class="inviteeEntryPermissions">' + this.getAccessTypeName(collaborator.accessType) + '</div>' +
+                   '</li>';
+        }
+        return entry;
+      },
+
+      showEmptyCollaboratorList: function() {
+        var hasLink = this.folderInfo.hasActiveLink || false;
+        $('#sharingInviteeListContainer').show();
+        $('#sharingInviteeList').html($('<div class="noContents">' + (hasLink ? MLDOStrings.initiateSharingDialogNoParticipantsButHasLink : MLDOStrings.initiateSharingDialogNoParticipants) + '</div>'));
+        this.hideUpdateAccessType();
+      },
+
+      showCollaboratorListWithContents: function(listContents) {
+        $('#sharingInviteeListContainer').show();
+        $('#sharingInviteeList').html(listContents);
+      },
+
+      createCollaboratorList: function() {
+        var $collaboratorList = $('#sharingInviteeList ul');
+        // Create a new list if there isn't one already
+        if ($collaboratorList.length === 0) {
+          $collaboratorList = $('<ul class="initiateSharingInviteeList"></ul>');
+        }
+        return $collaboratorList;
+      },
+
+      sortCollaboratorListByAccessType: function(collaboratorArray) {
+        var results = [];
+        if (collaboratorArray && Array.isArray(collaboratorArray) && collaboratorArray.length > 0) {
+          results = collaboratorArray.sort(this.sortCollaboratorsByAccessType);
+        }
+        return results;
+      },
+
+      addCollaboratorToList: function(collaborator, collaboratorListElement) {
+        if (!collaborator || typeof collaborator !== "object") {
+          throw new TypeError("Invalid collaborator argument");
+        }
+        if (!collaboratorListElement || typeof collaboratorListElement !== "object") {
+          throw new TypeError("Invalid collaboratorListElement argument");
+        }
+        entry = this.getCollaboratorListEntry(collaborator);
+        collaboratorListElement.append($(entry));
+      },
+
+      processCollaboratorListResults: function(data) {
+        var context = this;
+        // empty list of old data first
+        $('#sharingInviteeList ul').remove();
+        if (data && data.invitations && Array.isArray(data.invitations)) {
+          var collaboratorArray = data.invitations;
+          var collaboratorListElement = this.createCollaboratorList();
+          var sortedCollaborators = this.sortCollaboratorListByAccessType(collaboratorArray);
+          var justOwnerWithLink = false;
+          var atLeastOneCollaborator = (sortedCollaborators.length > 0);
+          var entry;
+
+          if ( (sortedCollaborators.length === 1) && (context.folderInfo.hasActiveLink) ) {
+            justOwnerWithLink = true;
+          }
+
+          sortedCollaborators.forEach(function(collaborator, index, originalArray) {
+            context.addCollaboratorToList(collaborator, collaboratorListElement);
+          });
+
+          if (!justOwnerWithLink && atLeastOneCollaborator) {
+            this.showCollaboratorListWithContents(collaboratorListElement);
+          } else {
+            this.showEmptyCollaboratorList();
+          }
+          if (this.editPermissionsEnabled) {
+            // setup onChange handler for dropdown
+            $('li.collaborator .inviteeEntryPermissions select.sharingPermissionsSelect').on("change", function(e) {
+              let collaborator = $(e.currentTarget).closest('li.collaborator');
+              collaborator.data('permission', $(this).val());
+              let invitationId = $(e.currentTarget).closest('li.collaborator').data('invitationid');
+              // As there are only 2 possible access types,
+              // If invitation exists in the list of invitations to be updated, remove entry from list, as user is reverting the permission
+              // Else, add new entry to list of invitations to be updated.
+              if (context.getInvitationsToUpdateList().length === 0) {
+                context.getInvitationsToUpdateList().push({invitationId: invitationId, accessType: $(this).val().toUpperCase()});
+              } else {
+                let index = context.getInvitationsToUpdateList(). findIndex(data => data.invitationId === invitationId);
+                if (index > -1) {
+                  context.getInvitationsToUpdateList().splice(index, 1);
+                } else {
+                  context.getInvitationsToUpdateList().push({invitationId: invitationId, accessType: $(this).val().toUpperCase()});
+                }
+              }
+              if (context.getInvitationsToUpdateList().length) {
+                context.enableUpdateAccessType();
+              } else {
+                context.disableUpdateAccessType();
+              }
+            });
+          } else {
+            context.hideUpdateAccessType();
+          }
+        } else {
+          this.showEmptyCollaboratorList();
+        }
+      },
+
+      handleGetSharingCollaboratorsFailure: function(err) {
+        if (err && typeof err === "object" && ("message" in err)) {
+          var msg = Util.getErrorMessageTranslator().getTranslatedMessage(err,
+                                                                          "initiateSharingView.updateCollaboratorList",
+                                                                          [_.escape(this.folderInfo.name)],
+                                                                          this.fileService.isThrowErrorOnMessageTranslationEnabled());
+          this.showMessage(msg, true);
+          if (this.editPermissionsEnabled) {
+            document.querySelector('button#updateAccessTypeButton').style.display = 'none';
+          }
+        }
+      },
+
+      updateCollaboratorList: function() {
+        var onlyAccepted = false;
+        if(this.getFolderInfo().accessType && this.getFolderInfo().accessType !== "OWNER") { onlyAccepted = true; }
+        var promise = this.fileService.getSharingCollaborators(this.path, onlyAccepted);
+        promise.done(this.processCollaboratorListResults)
+        .fail(this.handleGetSharingCollaboratorsFailure);
+      },
+
+      reset: function(e) {
+        if (e && e.preventDefault) {
+          e.preventDefault();
+        }
+        this.clearMessages();
+        $('#sharingInviteeResultList > ul.sharingResultsList').remove();
+        $('#returnButton').hide();
+        this.getInputContainer().show();
+        this.getInputGuidanceTextContainer().show();
+        if (!$('#embeddedWidgetContainer').hasClass("mw-desktop")) {
+          this.getCommentsContainer().show();
+        }
+        $('#addInviteeButton').show();
+        $('#initiateShareButton').hide(); // .show();
+        $('#closeInitiateShareButton').show();
+        document.querySelector('button#updateAccessTypeButton').style.display = 'inline-block';
+        this.disableUpdateAccessType();
+        this.disableSubmit();
+        this.disableAdd();
+        this.getInviteeListHeader().show();
+        this.updateCollaboratorList();
+        this.notifyEmbeddedContainerOfResize();
+      },
+
+      createGDSFileService: function() {
+        var fs;
+        var dao = new GDSDAO(GCONFIG);
+        var listContentMethod = "getAcceptedSharingInvitations" in dao ? dao.getAcceptedSharingInvitations : undefined;
+        fs = new SharingFileService();
+        fs.initialize({ gdsDAO: dao, enableNavigation: false, listContentsMethod: listContentMethod });
+        return fs;
+      },
+
+    });
+});

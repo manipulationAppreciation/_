@@ -1,0 +1,319 @@
+define([
+  "underscore",
+  "jquery"
+], function( _, $ ) {
+
+  /**
+   * Embedded Login widget controller
+   * Expects an html element (e.g. DIV) that contains an iframe with
+   * src attribute pointed to login server.
+   *
+   * Requires:
+   *  jquery-2.2.0.min.js (or greater)
+   *
+   *
+   * Inputs:
+   *  options: UI config Parameters
+   *  config: program global config Parameters
+   *
+   *
+   * Throws:
+   *  Error if config missing or incorrect
+   *
+   * Credits:  Much of the logic and some code borrowed from test page of embedded login widget.
+   *
+   */
+  LoginUIManager = function(options, config) {
+    this.initialize(options, config);
+    /*
+     * Getters for the above items
+     */
+     this.getClientNonce = function() {
+       return this.clientNonce;
+     };
+     this.getLoginIframeId = function() {
+       return this.loginIframeId;
+     };
+     this.getLoginIframe = function() {
+       // if not set, set it.
+       if (! this.loginIframe) {
+         this.loginIframe = document.getElementById(this.getLoginIframeId());
+       }
+       return this.loginIframe;
+     };
+     this.getServerNonce = function() {
+       return this.serverNonce;
+     };
+     this.getAuthContainer = function() {
+       // if it is not set yet
+       if (!this.authContainer) {
+         // set it
+         this.authContainer = $('#' + this.authContainerId); // jQuery ID selector
+       }
+       return this.authContainer;
+     };
+     this.getLoginTextContainerId = function() {
+       return '#' + this.loginTextContainerId;
+     };
+     this.getLoginFooterId = function() {
+       return '#' + this.loginFooterId;
+     };
+     this.getLoginLinkAreaId = function() {
+       return '#' + this.loginLinkAreaId;
+     };
+     this.setClientString = function(clientString) {
+       if (clientString && typeof clientString === "string") {
+         this.clientString = clientString;
+       }
+     };
+     this.getClientString = function() {
+       return this.clientString;
+     };
+    this.setView = function(view) {
+      if (view && typeof view === "string") {
+        this.view = view;
+      }
+    };
+    this.getView = function() {
+      return this.view;
+    };
+    this.setInvitationId= function(invId) {
+      if (invId && typeof invId === "string") {
+        this.invId = invId;
+      }
+    };
+    this.getInvitationId = function() {
+      return this.invId;
+    };
+  };
+
+  LoginUIManager.prototype = {
+
+    initialize: function(options, config) {
+      var defaults = {
+        iframeId: "me",
+        authContainerId: "authContainer",
+        applicationTitle: ""
+      };
+      // options are either passed in, or use the default values
+      if (typeof options == 'object') {
+    		options = $.extend(defaults, options); // jQuery call to merge to objects, override defaults with any passed in values
+    	} else {
+    		options = defaults;
+    	}
+
+      // config should be provide and have a getLoginURL method -- if not, throw exception
+      if (!config || !config.getLoginURL) {
+        throw new Error("Config parameter missing or incorrect. Unable to configure login service connection.");
+      }
+      // the config object
+      this.config = config;
+
+      // Client Nonce is just a random number string
+      this.createClientNonce = function() {
+        return (Math.random() + '').substr(2);
+      };
+      this.clientNonce = this.createClientNonce();
+      // The holder of the Nonce we get back from the login server
+      this.serverNonce = null;
+      // The id of the iframe that contains the embedded login
+      this.loginIframeId = options.iframeId;
+      // The iframe
+      this.loginIframe = null;
+      // The id of the container of the iframe
+      this.authContainerId = options.authContainerId;
+      // The title of the application to display above the login prompt
+      this.appTitle = options.applicationTitle;
+      this.loginTextContainerId = options.loginTextContainerId;
+      this.loginFooterId = options.loginFooterId;
+      this.loginLinkAreaId = options.loginLinkAreaId;
+      this.clientString = "MLDO"; // default value
+      _.bindAll(this, "receiver");
+    },
+
+    /**
+     * Create "init" message. Turn into JSON
+     * This data is used to pass the client Nonce to server,
+     */
+    buildPostMessage: function(event, clientTransactionId, transactionId) {
+      if(!event || event !== "init") {
+        throw new Error("Invalid event value");
+      }
+      var responseData = {
+        "event": event,
+        "transactionId": clientTransactionId, // yes, this is correct
+        "clientTransactionId": transactionId,
+        "locale": "en_US",
+        "profileTier": "",
+        "showCreateAccount": true,
+        "showRememberMe": false,
+        "showLicenseField": false,
+        "contextualText": this.appTitle
+      };
+      return JSON.stringify(responseData);
+    },
+    /**
+     * Posts the 'init' message, with the client Nonce to the server.
+     */
+    setLoginNonce: function() {
+      var context = this;
+      var clientMessage = context.buildPostMessage("init", context.getClientNonce(), "");
+      var o = context.getLoginIframe();
+      o.contentWindow.postMessage(clientMessage, "*");
+    },
+    /**
+     * Create "load" message. Turn into JSON
+     * This data is used to pass the client and Server Nonces to server,
+     * to load the embedded login form.
+     */
+    buildLoadMessage: function(event, transactionId, clientTransactionId) {
+      if(!event || event !== "load") {
+        throw new Error("Invalid event value");
+      }
+      // If command is set, go to Sharing page to complete action, else preview the invitation
+      let path = this.getView();
+      if (!localStorage.getItem("mldo:command") && this.getView() === "sharing" &&
+        this.getInvitationId() !== null && typeof this.getInvitationId() !== "undefined") {
+        path += "/" + this.getInvitationId();
+      }
+      let redirectUrl = window.location.origin + "/" + path;
+      var responseData = {
+        "event": event,
+        "transactionId": transactionId,
+        "clientTransactionId": clientTransactionId,
+        "locale": "en_US",
+        "profileTier": "extended",
+        "showCreateAccount": true,
+        "showRememberMe": false,
+        "showPrivacyPolicy":false,
+        "identifierReadOnly": false,
+        "cachedRememberMe": false,
+        "requireAssociation": false,
+        "unauthorized": false,
+        "unauthorizedText": "",
+        "platform": "web",
+        "release": "1.0.0",
+        "clientString": this.getClientString(),
+        "contextualText": this.appTitle,
+        "redirectURL": redirectUrl
+      };
+      return JSON.stringify(responseData);
+    },
+    /**
+     * Posts the 'load' message, with the client and server Nonces to the server.
+     */
+    completeNonce: function(serverNonce) {
+      if (!serverNonce) {
+        throw new Error("Invalid serverNonce parameter");
+      }
+      var context = this;
+      var loadMessage = context.buildLoadMessage("load", serverNonce, context.getClientNonce());
+      var o = context.getLoginIframe();
+      o.contentWindow.postMessage(loadMessage, "*");
+    },
+    /**
+     * Start the embedded login form
+     */
+    start: function(clientString, errorText, view, invId) {
+      var context = this;
+      var $authCon = this.getAuthContainer();
+      var $iframe = $(this.getLoginIframe());
+      var $loginText = $(this.getLoginTextContainerId());
+      var $footer = $(this.getLoginFooterId());
+      var $linkArea = $(this.getLoginLinkAreaId());
+      this.setClientString(clientString);
+      this.setView(view);
+      this.setInvitationId(invId);
+
+      // Force the iframe doc to the configured doc
+      $iframe.attr('src', this.config.getLoginURL());
+      // enable display of auth container
+      $authCon.show();
+      $loginText.show();
+      $footer.show();
+      $linkArea.show();
+      // Add special Text and turn on if provided.
+      if (errorText && typeof errorText === "string" && errorText.length) {
+        $('.errorTextContainer').show();
+        $('.errorText').html(errorText);
+      } else {
+        $('.errorTextContainer').hide();
+      }
+      // setup event listener for 'message' type events on global object.
+      this.stop();
+      window.addEventListener('message', this.receiver, false);
+      // Don't proceed until iframe's doc is fully loaded.
+      $iframe.on('load', function() {
+        context.setLoginNonce();
+      });
+    },
+    /**
+     * stop the login manager. Do any cleanup
+     */
+    stop: function() {
+      window.removeEventListener('message', this.receiver, false);
+    },
+    /**
+     * Reset the embedded login form so we can use it again (i.e. redirect to login)
+     * Currently the iframe contents must be reloaded to work properly.
+     */
+    reset: function(keepLoad) {
+      var context = this;
+      var $authCon = this.getAuthContainer();
+      var $iframe = $(this.getLoginIframe());
+      this.clientNonce = this.createClientNonce();
+      this.serverNonce = null;
+      // Show the auth container and initialize the embedded login form.
+      $authCon.show();
+      if (!keepLoad) {
+        $iframe.off('load'); // remove prior listeners because they will be reset elsewhere.
+      }
+      // Force the iframe doc to reload -- workaround until embedded login provide 'reset' functionality
+      $iframe.attr('src', $iframe.attr('src'));
+    },
+    /**
+     * Hide the embedded login widget container
+     */
+    hide: function() {
+      var $loginText = $(this.getLoginTextContainerId());
+      var $footer = $(this.getLoginFooterId());
+      var $linkArea = $(this.getLoginLinkAreaId());
+      $loginText.hide();
+      $linkArea.hide();
+      $footer.hide();
+      this.getAuthContainer().hide();
+    },
+    /**
+     * Notify any registered listener of login sucess, passing profile data
+     */
+     notifyLoginSuccess: function(data) {
+       $.event.trigger("loginmgr:loginsuccess", data);
+     },
+    /**
+     * Message listener for messages from login server.
+     */
+    receiver: function(event) {
+      if(!event || !("data" in event)) {
+        throw new Error("Invalid argument passed to receiver");
+      }
+      if (event.data !== "") {
+        // get the server nonce from the response
+        var responseData = JSON.parse(event.data);
+        var eventCode = responseData.event;
+        this.serverNonce = responseData.transactionId;
+
+        if (eventCode == "nonce") {
+          // proceed to the next stop of login (i.e. send the "load" message)
+          this.completeNonce(this.serverNonce);
+        } else if (eventCode == "login") {  // login success
+          // Hide the auth container and notify any listeners of  success
+          // and pass profile data to them.
+          this.hide();
+          this.stop();
+          this.notifyLoginSuccess(responseData);
+        }
+      }
+    }
+  };
+  return LoginUIManager;
+}); // require

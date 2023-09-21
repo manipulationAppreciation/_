@@ -1,0 +1,459 @@
+define([
+  "jquery",
+  "bootstrap",
+  "backbone",
+  "util",
+  "mw-filename-utils/FileNameUtil",
+  "templates/fileConflictDialog",
+  "dojo/i18n!nls/mldoStringResource",
+  "dojo/string"
+], function( $, Bootstrap, Backbone, Util, FileNameUtil, FileConflictDialog, MLDOStrings, DojoString ) {
+
+   return Backbone.View.extend({
+
+       template: FileConflictDialog,
+
+       events: {
+           "click .replaceFileButton": "replaceFiles",
+           "click .keepFileSeparateButton": "keepFilesSeparate",
+           "change #selectAllConflicts": "selectAll",
+           "change .fileNameConflict": "onCheckBoxChanged"
+       },
+
+       initialize: function(args) {
+         if (!args || typeof args !== "object" || Object.keys(args).length === 0) {
+           throw new TypeError("Invalid arguments");
+         }
+         if (!args.filesArray || !Array.isArray(args.filesArray) || !args.filesArray.length) {
+           throw new TypeError("Invalid filesArray argument");
+         }
+         this.files = args.filesArray;
+         if (!args.dialogBodyText || typeof args.dialogBodyText !== "string") {
+           throw new TypeError("Invalid dialogBodyText argument");
+         }
+         this.dialogBodyText = args.dialogBodyText;
+         if (!args.targetFolder || typeof args.targetFolder !== "string") {
+           throw new TypeError("Invalid targetFolder argument");
+         }
+         this.targetFolder = args.targetFolder;
+         if (!args.currentFolder || typeof args.currentFolder !== "string") {
+           throw new TypeError("Invalid currentFolder argument");
+         }
+         this.currentFolder = args.currentFolder;
+         if (!args.replaceFileCallback || typeof args.replaceFileCallback !== "function") {
+           throw new TypeError("Invalid replaceFileCallback argument");
+         }
+         this.replaceFileCallback = args.replaceFileCallback;
+         if (!args.keepFileSeparateCallback || typeof args.keepFileSeparateCallback !== "function") {
+           throw new TypeError("Invalid keepFileSeparateCallback argument");
+         }
+         this.keepFileSeparateCallback = args.keepFileSeparateCallback;
+         if (args.focusRowAfterGridRefreshCallback && typeof args.focusRowAfterGridRefreshCallback !== "function") {
+           throw new TypeError("Invalid focusRowAfterGridRefreshCallback argument");
+         }
+         this.focusRowAfterGridRefreshCallback = args.focusRowAfterGridRefreshCallback;
+         if (args.dispatchTreeEventMethod && typeof args.dispatchTreeEventMethod !== "function") {
+           throw new TypeError("Invalid dispatchTreeEventMethod argument");
+         }
+         this.dispatchTreeEventMethod = args.dispatchTreeEventMethod;
+         this.isMove = args.isMove ? true : false;
+         _.bindAll(this, "render", "keepFilesSeparate", "replaceFiles", "selectAll",
+                         "setInputFocus", "recursiveSeparateFile",
+                         "recursiveSaveNewFileName", "saveNewFileName",
+                         "onReplaceOrSaveSeparateSuccess",
+                         "alwaysDoAfterReplaceOrSaveSeparate",
+                         "handleReplaceOrSaveSeparateNotifications");
+       },
+
+       render: function() {
+           var self = this;
+           var len = this.files.length;
+           var listContents = '<ul class="fileConflictList">';
+           this.$el.html(this.template({dialogTitle: MLDOStrings.fconflictDialogTitle,
+                                        dialogBodyText: this.dialogBodyText,
+                                        selectAllConflictFiles: MLDOStrings.fconflictSelectAll,
+                                        replaceButtonLabel: MLDOStrings.fconflictReplaceButtonLabel,
+                                        keepSeparateButtonLabel: MLDOStrings.fconflictKeepSeparateButtonLabel,
+                                        pleaseWaitText: MLDOStrings.fconflictPleaseWait
+                                      }));
+           this.$el.on("shown.bs.modal", this.setInputFocus);
+           this.$el.on("hidden.bs.modal", function() {
+               self.remove();
+           });
+           this.$el.off('dragover'); // clear previous listeners
+           this.$el.on('dragover', this.dragNotAllowed);
+           self.files.forEach(function(file, index) {
+             listContents += "<li>" + "<input type='checkbox' value=\"" + index +
+                             "\" class=\"fileNameConflict\"" + (len === 1 ? "checked=\"checked\"" : "") + "><span class=\"conflictFileName\">" +
+                             _.escape((self.isMove ? file.name : file.fileName)) +
+                             "</span></li>";
+           });
+           listContents += "</ul>";
+           $('.fileConflictListContainer').html(listContents);
+           if (len === 1) {
+             $('#selectAllLabel').hide();
+           } else {
+             $('#selectAllLabel').show();
+           }
+           $('#fileConflictDialog').modal({backdrop: 'static'});
+           return this;
+       },
+
+       setInputFocus: function() {
+         var len = this.files.length;
+         if (len === 1) {
+           this.enableButtons();
+         } else {
+           this.disableButtons();
+         }
+       },
+
+       dragNotAllowed: function(e) {
+         e.preventDefault();
+         e.originalEvent.dataTransfer.dropEffect = 'none';
+       },
+
+       replaceFiles: function(e) {
+         if (e && e.preventDefault) {
+           e.preventDefault();
+         }
+         var context = this;
+         var fileList = [];
+         var $checkedInputs = this.getCheckedFileInputs();
+         $checkedInputs.each(function(index) {
+           fileList.push(context.files[this.value]);
+         });
+         if (fileList && fileList.length) {
+           $('button#replaceFileButton').button("loading");
+           this.disableButtons();
+           this.recursiveReplace(fileList, 0, 0);
+         }
+       },
+
+       recursiveReplace: function(list, succeededCount, failedCount) {
+         if (!list || !list.length) {
+           return;
+         }
+         if (isNaN(succeededCount)) {
+           throw new TypeError("Invalid succeededCount argument");
+         }
+         if (isNaN(failedCount)) {
+           throw new TypeError("Invalid failedCount argument");
+         }
+         var context = this;
+         var file = list.pop();
+         var promise;
+         if (file.fileName && file.file) {
+           promise = context.replaceFileCallback(context.targetFolder, file.fileName, file.file);
+         } else if ( this.isMove && file.originalPath && file.destinationFolderFullPath && file.name) {
+           promise = context.replaceFileCallback(file.originalPath, file.destinationFolderFullPath, file.name);
+         }
+         if (promise) {
+           promise.done(function() {
+             file.status = 'COMPLETE';
+             ++succeededCount;
+           })
+           .fail(function(err) {
+             file.status = 'FAIL';
+             file.reason = Util.getErrorMessageTranslator().getTranslatedMessage(err, "fileConflictView.recursiveReplace");
+             ++failedCount;
+           })
+           .always(function() {
+             context.alwaysDoAfterReplaceOrSaveSeparate(file, (this.isMove ? file.name : file.fileName), true, list, succeededCount, failedCount);
+           });
+         }
+       },
+
+       keepFilesSeparate: function(e) {
+         if (e && e.preventDefault) {
+           e.preventDefault();
+         }
+         var context = this;
+         var fileList = [];
+         var $checkedInputs = this.getCheckedFileInputs();
+         $checkedInputs.each(function(index) {
+           fileList.push(context.files[this.value]);
+         });
+         if (fileList && fileList.length) {
+           $('button#keepFileSeparateButton').button("loading");
+           this.disableButtons();
+           this.recursiveSeparateFile(fileList, 1, 0, 0);
+         }
+       },
+
+       adjustCurrentFolder: function(targetFolderPath) {
+         var targetFullPath = (targetFolderPath ? targetFolderPath : "/");
+         var targetParent = Util.getParentPath(targetFullPath);
+         var changedCurrentFolder = false;
+         if (targetParent !== this.currentFolder) {
+           $.event.trigger("changetofilespage:mldo", {destination: targetParent});
+           this.currentFolder = targetParent;
+           changedCurrentFolder = true;
+         }
+         return changedCurrentFolder;
+       },
+
+       recursiveSeparateFile: function(list, increment, succeededCount, failedCount) {
+         if (!list || !list.length) {
+           return;
+         }
+         if (isNaN(increment)) {
+           throw new TypeError("Invalid increment argument");
+         }
+         if (isNaN(succeededCount)) {
+           throw new TypeError("Invalid succeededCount argument");
+         }
+         if (isNaN(failedCount)) {
+           throw new TypeError("Invalid failedCount argument");
+         }
+         var context = this;
+         var singleNewName = "";
+         var file = list.pop();
+         var promise;
+         if (!context.isMove && file.fileName) {
+           promise = context.saveNewFileName(file.fileName, file, increment);
+         } else if (context.isMove && file.name) {
+           promise = context.saveNewFileName(file.name, file, increment);
+         }
+         if (promise !== undefined) {
+           promise.done(function(data) {
+             file.status = 'COMPLETE';
+             ++succeededCount;
+             singleNewName = data.newName;
+           })
+             .fail(function(err) {
+               file.status = 'FAIL';
+               file.reason = err.message;
+               ++failedCount;
+             })
+             .always(function() {
+               context.alwaysDoAfterReplaceOrSaveSeparate(file, singleNewName, false, list, succeededCount, failedCount, increment);
+             });
+         }
+       },
+
+       onReplaceOrSaveSeparateSuccess: function(fileName, succeededCount, failedCount) {
+         var context = this;
+         if (this.focusRowAfterGridRefreshCallback && typeof this.focusRowAfterGridRefreshCallback === "function") {
+           var targetFolderPath = this.targetFolder;
+           var targetFolderPathLen = targetFolderPath.length;
+           if (targetFolderPath !== '/' && targetFolderPathLen && targetFolderPathLen > 1 && targetFolderPath[targetFolderPathLen - 1] === "/") {
+             targetFolderPath = targetFolderPath.substring(0, targetFolderPathLen - 1);
+           }
+
+           var changedCurrentFolder = this.adjustCurrentFolder(targetFolderPath);
+
+           if (this.currentFolder !== "/") {
+             targetFolderPath = Util.getRelativePath(targetFolderPath, this.currentFolder);
+           }
+           var focusRowData = {path: targetFolderPath};
+           if (succeededCount === 1 && failedCount === 0) {
+             focusRowData = {path: targetFolderPath + (targetFolderPath !== "/" ? "/" : "") + fileName};
+           }
+           if (changedCurrentFolder) {
+             focusRowData.parentFolder = targetFolderPath;
+             setTimeout(function() {context.focusRowAfterGridRefreshCallback(focusRowData);}, 0);
+           } else {
+             if (targetFolderPath && targetFolderPath !== "/") {
+               this.dispatchTreeEventMethod("focusrow:treecontroller", {path: targetFolderPath, parentFolder: targetFolderPath, shouldExpand: true});
+             }
+             this.focusRowAfterGridRefreshCallback(focusRowData);
+           }
+         }
+         this.refreshGrid();
+       },
+
+       handleReplaceOrSaveSeparateNotifications: function(isReplace, succeededCount, failedCount) {
+         var operation = (isReplace ? "fconflictReplace" : "fconflictSave");
+         if (succeededCount && !failedCount) {
+           if (succeededCount === 1) {
+             this.notify(DojoString.substitute(MLDOStrings[operation + "SuccessOnly"], [succeededCount]), 'NORMAL');
+           } else {
+             this.notify(DojoString.substitute(MLDOStrings[operation + "SuccessesOnly"], [succeededCount]), 'NORMAL');
+           }
+         } else if (!succeededCount && failedCount) {
+           if (failedCount === 1) {
+             this.notify(DojoString.substitute(MLDOStrings[operation + "FailureOnly"], [failedCount]), 'ERROR');
+           } else {
+             this.notify(DojoString.substitute(MLDOStrings[operation + "FailuresOnly"], [failedCount]), 'ERROR');
+           }
+         } else if (succeededCount && failedCount) {
+           if (succeededCount === 1 && failedCount === 1) {
+             this.notify(DojoString.substitute(MLDOStrings[operation + "SuccessAndFailure"], [succeededCount, failedCount]), 'ERROR');
+           } else if (succeededCount > 1 && failedCount === 1) {
+             this.notify(DojoString.substitute(MLDOStrings[operation + "SuccessesAndFailure"], [succeededCount, failedCount]), 'ERROR');
+           } else if (succeededCount === 1 && failedCount > 1) {
+             this.notify(DojoString.substitute(MLDOStrings[operation + "SuccessAndFailures"], [succeededCount, failedCount]), 'ERROR');
+           } else {
+             this.notify(DojoString.substitute(MLDOStrings[operation + "SuccessesAndFailures"], [succeededCount, failedCount]), 'ERROR');
+           }
+         }
+       },
+
+       alwaysDoAfterReplaceOrSaveSeparate: function(file, newFileName, isReplace, list, succeededCount, failedCount, increment) {
+         var fileName = (newFileName && typeof newFileName === 'string' ? newFileName : (this.isMove ? file.name : file.fileName));
+         if (list && list.length) {
+           if (isReplace) {
+             this.recursiveReplace(list, succeededCount, failedCount);
+           } else {
+             this.recursiveSeparateFile(list, increment, succeededCount, failedCount);
+           }
+         } else {
+           if (succeededCount) {
+             this.onReplaceOrSaveSeparateSuccess(fileName, succeededCount, failedCount);
+           }
+           this.handleReplaceOrSaveSeparateNotifications(isReplace, succeededCount, failedCount);
+           if (isReplace) {
+             $('button#replaceFileButton').button('reset');
+           } else {
+             $('button#keepFileSeparateButton').button("reset");
+           }
+           $('#fileConflictDialog').modal('hide');
+         }
+       },
+
+       saveNewFileName: function(origName, file, increment) {
+         if (!origName || typeof origName !== "string") {
+           throw new TypeError("Invalid origName argument");
+         }
+         if (!file || typeof file !== "object") {
+           throw new TypeError("Invalid file argument");
+         }
+         if (isNaN(increment)) {
+           throw new TypeError("Invalid increment argument");
+         }
+         var context = this;
+         var promise = $.Deferred();
+         context.recursiveSaveNewFileName(origName, file, increment, promise);
+         return promise;
+       },
+
+       recursiveSaveNewFileName: function(origName, file, increment, publicPromise) {
+         if (!origName || typeof origName !== "string") {
+           throw new TypeError("Invalid origName argument");
+         }
+         if (!file || typeof file !== "object") {
+           throw new TypeError("Invalid file argument");
+         }
+         if (isNaN(increment)) {
+           throw new TypeError("Invalid increment argument");
+         }
+         if (!publicPromise) {
+           throw new TypeError("Invalid publicPromise argument");
+         }
+         var context = this;
+         var privatePromise;
+         var newName = this.getNextIncrementedName(origName, increment);
+         if (file.fileName && file.file) {
+           privatePromise = context.keepFileSeparateCallback(context.targetFolder, newName, file.file);
+         } else if ( this.isMove && file.originalPath && file.destinationFolderFullPath && file.name) {
+           privatePromise = context.keepFileSeparateCallback(file.originalPath, file.destinationFolderFullPath, newName);
+         }
+         if (privatePromise) {
+           privatePromise.done(function() {
+             publicPromise.resolve({newName: newName});
+           })
+           .fail(function(err) {
+             if (err.errorCode === "RESOURCE_ALREADY_EXISTS") {
+               ++increment;
+               context.recursiveSaveNewFileName(origName, file, increment, publicPromise);
+             } else {
+               publicPromise.reject(err);
+             }
+           });
+         }
+       },
+
+       getNextIncrementedName: function(originalFileName, increment) {
+         var newName = "";
+         if (!originalFileName || typeof originalFileName !== "string") {
+           throw new TypeError("Invalid originalFileName argument");
+         }
+         if (isNaN(increment)) {
+           throw new TypeError("Invalid increment argument");
+         }
+         var fileName = originalFileName;
+         var fileExt = FileNameUtil.getFileNameExtension(fileName);
+         if (fileExt) {
+           fileExt = "." + fileExt;
+           fileName = fileName.substring(0, fileName.indexOf(fileExt));
+         }
+         fileName = fileName.match(/([^()]*)(\(\d+\))?(.\w+)?/)[1];
+         if (fileName && fileName.length) {
+           newName = fileName + "(" + increment + ")" + fileExt;
+         } else {
+           newName = fileExt + "(" + increment + ")";
+         }
+         return newName;
+       },
+
+       selectAll: function(e) {
+         if (e && e.preventDefault) {
+           e.preventDefault();
+         }
+         var context = this;
+         var $inputs = this.getFileInputs();
+         var enable = false;
+         var isChecked = $('#selectAllConflicts').prop('checked');
+         $inputs.each(function(index) {
+           if (isChecked) {
+             $(this).prop('checked', true);
+             enable = true;
+           } else {
+             $(this).prop('checked', false);
+           }
+         });
+         if (enable === true) {
+           context.enableButtons();
+         } else {
+           context.disableButtons();
+         }
+       },
+
+       onCheckBoxChanged: function(e) {
+         if (e && e.preventDefault) {
+           e.preventDefault();
+         }
+         var context = this;
+         var enable = false;
+         var $inputs = this.getFileInputs();
+         $inputs.each(function(index) {
+           if ($(this).is(":checked")) {
+             enable = true;
+           }
+         });
+         if (enable === true) {
+           context.enableButtons();
+         } else {
+           context.disableButtons();
+         }
+       },
+
+       getFileInputs: function() {
+         return $('div#fileConflictDialog form div.fileConflictListContainer.form-group ul.fileConflictList > li > input');
+       },
+
+       getCheckedFileInputs: function() {
+         return $('div#fileConflictDialog form div.fileConflictListContainer.form-group ul.fileConflictList > li > input:checked');
+       },
+
+       notify: function(message, severity, linkData) {
+         this.dispatchTreeEventMethod("message:treecontroller", {message: message, severity: severity, linkData: linkData});
+       },
+
+       refreshGrid: function() {
+         this.dispatchTreeEventMethod("refreshgrid:treecontroller");
+       },
+
+       disableButtons: function() {
+           $('.replaceFileButton').prop('disabled', true);
+           $('.keepFileSeparateButton').prop('disabled', true);
+       },
+
+       enableButtons: function() {
+           $('.replaceFileButton').prop('disabled', false);
+           $('.keepFileSeparateButton').prop('disabled', false);
+       }
+
+   });
+});

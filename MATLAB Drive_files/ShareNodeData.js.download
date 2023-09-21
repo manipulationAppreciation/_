@@ -1,0 +1,40 @@
+define([
+    "filebrowser/gdsdata/ShareNode"
+], function(ShareNode) {
+
+  ShareNodeData = function(response) {
+    var parsedResponse = {};
+    if (response && response.invitations) {
+      parsedResponse = this.parseResponse(response);
+    }
+    return parsedResponse;
+  };
+
+  ShareNodeData.prototype.parseResponse = function(response) {
+    if (!response || !response.invitations || !Array.isArray(response.invitations)) {
+      throw new TypeError("Invalid arguments");
+    }
+    var parsedResponse = {};
+    var contents = this.parseContents(response.invitations);
+    parsedResponse.contents = contents;
+    return parsedResponse;
+  };
+
+  ShareNodeData.prototype.parseContents = function(invitations) {
+    if (!invitations || !Array.isArray(invitations)) {
+      throw new TypeError("Invalid arguments");
+    }
+    var contents = [];
+    var len = 0;
+    if (invitations && invitations.length > 0) {
+      len = invitations.length;
+      for (var i = 0; i < len; i++) {
+        var folder = new ShareNode(invitations[i]);
+        contents.push(folder);
+      }
+    }
+    return contents;
+  };
+
+  return ShareNodeData;
+});

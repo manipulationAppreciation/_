@@ -1,0 +1,57 @@
+define([
+  "dojo/_base/declare",
+  "mw-filebrowser/columns/helpers/NameComparator",
+  "dojo/i18n!nls/mldoStringResource",
+  "dojo/string"
+], function (declare, NameComparator, MLDOStrings, DojoString) {
+
+  return declare([], {
+    constructor: function (args) {
+      args = args || {};
+      this.column = {
+        id: "OwnedByColumn",
+        label: MLDOStrings.ownedByColumnLabel,
+        renderHeaderCell: function (th) {
+          if (!th || !th.appendChild || typeof th.appendChild !== "function") {
+            throw new TypeError("Invalid th argument");
+          }
+          var ownedByColumn = document.createElement("div");
+          ownedByColumn.className = "columnHeaderLabel";
+          var labelNode = document.createTextNode(MLDOStrings.ownedByColumnLabel);
+          ownedByColumn.appendChild(labelNode);
+          th.appendChild(ownedByColumn);
+        },
+        field: "ownedBy",
+        get: function (fileInfo) {
+          var retVal = "";
+          if (!fileInfo) {
+            throw new TypeError("Invalid fileInfo argument");
+          }
+          if (fileInfo.accessType === "OWNER") {
+            retVal = MLDOStrings.meMyself;
+          } else if (fileInfo.initiator) {
+            retVal = fileInfo.initiator;
+          }
+          return retVal;
+        },
+        sortable: true,
+        sort: function (a, b) {
+          if (!a || typeof a !== "object") {
+            throw new TypeError("Invalid a argument");
+          }
+          if (!b || typeof b !== "object") {
+            throw new TypeError("Invalid b argument");
+          }
+          var valueA, valueB;
+          if (a.accessType === "OWNER" && b.accessType === "OWNER") return 0;
+          if (a.accessType === "OWNER") return -1;
+          if (b.accessType === "OWNER") return 1;
+          valueA = a.initiator;
+          valueB = b.initiator;
+          return NameComparator.caseSensitiveStringComparator(valueA, valueB);
+        },
+        hidden: true
+      };
+    }
+  });
+});

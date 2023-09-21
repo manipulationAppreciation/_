@@ -1,0 +1,277 @@
+define([
+  "mw-actiondataservice/ActionDataService",
+  "filebrowser/actions/contextmenu/DownloadAction",
+  "filebrowser/actions/contextmenu/DeleteAction",
+  "filebrowser/actions/contextmenu/RenameAction",
+  "filebrowser/actions/contextmenu/MoveAction",
+  "filebrowser/actions/contextmenu/CutAction",
+  "filebrowser/actions/contextmenu/CopyAction",
+  "filebrowser/actions/contextmenu/PasteAction",
+  "filebrowser/actions/contextmenu/UploadAction",
+  "filebrowser/actions/contextmenu/NewFolderAction",
+  "filebrowser/actions/contextmenu/RestoreAction",
+  "filebrowser/actions/contextmenu/PermanentlyDeleteAction",
+  "filebrowser/actions/contextmenu/EmptyTrashAction",
+  "filebrowser/actions/contextmenu/ViewInBrowserAction",
+  "filebrowser/actions/contextmenu/ViewNewTabAction",
+  "filebrowser/actions/contextmenu/ShareAction",
+  "filebrowser/actions/contextmenu/ManageAction",
+  "filebrowser/actions/contextmenu/LinkAction",
+  "filebrowser/actions/contextmenu/LeaveAction",
+  "filebrowser/actions/contextmenu/UploadFilesAction",
+  "filebrowser/actions/contextmenu/UploadFolderAction",
+  "filebrowser/actions/contextmenu/OpenInMatlabOnlineAction",
+  "filebrowser/actions/contextmenu/AddToDriveAction",
+  "filebrowser/actions/contextmenu/AddShortcutAction",
+  "filebrowser/actions/contextmenu/CopyToDriveAction",
+  "filebrowser/actions/contextmenu/GoToDriveAction",
+  "filebrowser/actions/contextmenu/ShareLinkAction"
+], function (ActionDataService, DownloadAction, DeleteAction, RenameAction, MoveAction,
+             CutAction, CopyAction, PasteAction, UploadAction, NewFolderAction,
+             RestoreAction, PermanentlyDeleteAction, EmptyTrashAction,
+             ViewAction, ViewNewTabAction, ShareAction,
+             ManageAction, LinkAction, LeaveAction,
+             UploadFilesAction, UploadFolderAction, OpenInMatlabOnlineAction,
+             AddToDriveAction, AddShortcutAction, CopyToDriveAction, GoToDriveAction, ShareLinkAction) {
+
+  var ActionRegistry = function(actionHandler, pageName, desiredActions, options) {
+    if (!actionHandler || typeof actionHandler !== "object") {
+      throw new TypeError("Invalid actionHandler argument");
+    }
+    this.actionHandler = actionHandler;
+    if (!pageName || typeof pageName !== "string" ) {
+      throw new TypeError("Invalid pageName argument");
+    }
+    this.pageName = pageName;
+    if (!desiredActions || typeof desiredActions !== "object") {
+      throw new TypeError("Invalid desiredActions argument");
+    }
+    this.sharingEnabled = false;
+    this.folderUploadEnabled = false;
+    this.folderDownloadEnabled = false;
+    this.moveEnabled = false;
+    if (options && typeof options === "object") {
+      if (options.isSharingEnabled === true) {
+        this.sharingEnabled = true;
+      }
+      if (this.sharingEnabled && options.isPersonalInvitationsEnabled === true) {
+        this.personalInvitationsEnabled = true;
+      }
+      if (options.folderUploadEnabled === true) {
+        this.folderUploadEnabled = true;
+      }
+      if (options.folderDownloadEnabled === true) {
+        this.folderDownloadEnabled = true;
+      }
+      if (options.moveEnabled === true) {
+        this.moveEnabled = true;
+      }
+      if (options.getInvitationDetailsMethod && typeof options.getInvitationDetailsMethod === "function") {
+        this.getInvitationDetailsMethod = options.getInvitationDetailsMethod;
+      }
+    }
+
+    var actions = [
+        new ActionDataService({
+            nameSpace: "/mldo/" + this.pageName.toLowerCase() + "actions/javascript",
+            mode: "StandAlone"
+        })
+      ];
+    if (desiredActions.gotodrive) {
+      actions[0].addAction(this.createGoToDriveAction(desiredActions.gotodrive));
+    }
+    if (desiredActions.addtodrive) {
+      actions[0].addAction(this.createAddToDriveAction(desiredActions.addtodrive));
+      actions[0].addAction(this.createAddShortcutAction(desiredActions.addtodrive, true));
+      actions[0].addAction(this.createCopyToDriveAction(desiredActions.addtodrive, true));
+    }
+    if (desiredActions.sharelink) {
+      actions[0].addAction(this.createShareLinkAction(desiredActions.sharelink));
+    }
+    if (desiredActions.openInMatlabOnline) {
+        actions[0].addAction(this.createOpenInMatlabOnlineAction(desiredActions.openInMatlabOnline));
+    }
+    if (desiredActions.viewinbrowser) {
+      actions[0].addAction(this.createViewFileAction(desiredActions.viewinbrowser));
+    }
+    if (desiredActions.viewnewtab) {
+      actions[0].addAction(this.createViewNewTabAction(desiredActions.viewnewtab));
+    }
+    if (desiredActions.upload) {
+      if (this.folderUploadEnabled) {
+        actions[0].addAction(this.createUploadFilesAction(desiredActions.upload, true));
+        actions[0].addAction(this.createUploadFolderAction(desiredActions.upload, true));
+        actions[0].addAction(this.createUploadAction(desiredActions.upload));
+       } else {
+          actions[0].addAction(this.createUploadAction(desiredActions.upload));
+      }
+    }
+    if (desiredActions.newfolder) {
+      actions[0].addAction(this.createNewFolderAction(desiredActions.newfolder));
+    }
+    if (desiredActions.share) {
+      if (this.personalInvitationsEnabled) {
+        actions[0].addAction(this.createManageAction(desiredActions.share, true));
+      }
+      actions[0].addAction(this.createLinkAction(desiredActions.share, true));
+      actions[0].addAction(this.createLeaveAction(desiredActions.share, true));
+      actions[0].addAction(this.createShareAction(desiredActions.share));
+    } else {
+      if (this.personalInvitationsEnabled && desiredActions.manage) {
+        actions[0].addAction(this.createManageAction(desiredActions.manage));
+      }
+      if (desiredActions.link) {
+        actions[0].addAction(this.createLinkAction(desiredActions.link));
+      }
+      // TODO LEAVE
+      /*
+      if (desiredActions.leave) {
+        actions[0].addAction(this.createLeaveAction(desiredActions.leave));
+      }
+      */
+    }
+    if (desiredActions.download) {
+      actions[0].addAction(this.createDownloadAction(desiredActions.download));
+    }
+    if (desiredActions.rename) {
+      actions[0].addAction(this.createRenameAction(desiredActions.rename));
+    }
+    if (desiredActions.move && this.moveEnabled) {
+      actions[0].addAction(this.createMoveAction(desiredActions.move));
+    }
+    if (desiredActions.cut) {
+      actions[0].addAction(this.createCutAction(desiredActions.cut));
+    }
+    if (desiredActions.copy) {
+      actions[0].addAction(this.createCopyAction(desiredActions.copy));
+    }
+    if (desiredActions.paste) {
+      actions[0].addAction(this.createPasteAction(desiredActions.paste));
+    }
+    if (desiredActions.deleteitem) {
+      actions[0].addAction(this.createDeleteAction(desiredActions.deleteitem));
+    }
+    if (desiredActions.restore) {
+      actions[0].addAction(this.createRestoreAction(desiredActions.restore));
+    }
+    if (desiredActions.permanentlydelete) {
+      actions[0].addAction(this.createPermanentlyDeleteAction(desiredActions.permanentlydelete));
+    }
+    if (desiredActions.permanentlydeleteall) {
+      actions[0].addAction(this.createPermanentlyDeleteAllAction(desiredActions.permanentlydeleteall));
+    }
+
+    return actions;
+  };
+
+  /*
+   * Actions: Context menu item constructors
+   */
+  ActionRegistry.prototype = {
+      createOpenInMatlabOnlineAction: function(showAction) {
+          return new OpenInMatlabOnlineAction({showAction: showAction, context: this.actionHandler, getInvitationDetailsMethod: this.getInvitationDetailsMethod});
+      },
+      createViewFileAction: function(showAction) {
+        return new ViewAction({showAction: showAction, context: this.actionHandler, getInvitationDetailsMethod: this.getInvitationDetailsMethod});
+      },
+
+      createViewNewTabAction: function(showAction) {
+        return new ViewNewTabAction({showAction: showAction, context: this.actionHandler});
+      },
+
+      createDownloadAction: function(showAction) {
+        return new DownloadAction({showAction: showAction, context: this.actionHandler, folderDownloadEnabled: this.folderDownloadEnabled, getInvitationDetailsMethod: this.getInvitationDetailsMethod});
+      },
+
+      createDeleteAction: function(showAction) {
+        return new DeleteAction({showAction: showAction, context: this.actionHandler, isSharingEnabled: this.sharingEnabled});
+      },
+
+      createRenameAction: function(showAction) {
+        return new RenameAction({showAction: showAction, context: this.actionHandler});
+      },
+
+      createMoveAction: function(showAction) {
+        return new MoveAction({showAction: showAction, context: this.actionHandler, moveEnabled: this.moveEnabled});
+      },
+
+      createCutAction: function(showAction) {
+        return new CutAction({showAction: showAction, context: this.actionHandler});
+      },
+
+      createCopyAction: function(showAction) {
+        return new CopyAction({showAction: showAction, context: this.actionHandler, moveEnabled: this.moveEnabled});
+      },
+
+      createPasteAction: function(showAction) {
+        return new PasteAction({showAction: showAction, context: this.actionHandler});
+      },
+
+      createUploadAction: function(showAction) {
+        return new UploadAction({showAction: showAction, context: this.actionHandler, folderUploadEnabled: this.folderUploadEnabled});
+      },
+
+      createUploadFilesAction: function(showAction, isSubMenu) {
+        return new UploadFilesAction({showAction: showAction, context: this.actionHandler, pageName: this.pageName, isSubMenu: isSubMenu, folderUploadEnabled: this.folderUploadEnabled});
+      },
+
+      createUploadFolderAction: function(showAction, isSubMenu) {
+        return new UploadFolderAction({showAction: showAction, context: this.actionHandler, pageName: this.pageName, isSubMenu: isSubMenu, folderUploadEnabled: this.folderUploadEnabled});
+      },
+
+      createNewFolderAction: function(showAction) {
+        return new NewFolderAction({showAction: showAction, context: this.actionHandler});
+      },
+
+      createRestoreAction: function(showAction) {
+        return new RestoreAction({showAction: showAction, context: this.actionHandler});
+      },
+
+      createPermanentlyDeleteAction: function(showAction) {
+        return new PermanentlyDeleteAction({showAction: showAction, context: this.actionHandler});
+      },
+
+      createPermanentlyDeleteAllAction: function(showAction) {
+        return new EmptyTrashAction({showAction: showAction, context: this.actionHandler});
+      },
+
+      createShareAction: function(showAction) {
+        return new ShareAction({showAction: showAction, context: this.actionHandler, pageName: this.pageName, isPersonalInvitationsEnabled: this.personalInvitationsEnabled});
+      },
+
+      createLinkAction: function(showAction, isSubMenu) {
+        return new LinkAction({showAction: showAction, context: this.actionHandler, pageName: this.pageName, isSubMenu: isSubMenu});
+      },
+
+      createManageAction: function(showAction, isSubMenu) {
+        return new ManageAction({showAction: showAction, context: this.actionHandler, pageName: this.pageName, isSubMenu: isSubMenu});
+      },
+
+      createLeaveAction: function(showAction, isSubMenu) {
+        return new LeaveAction({showAction: showAction, context: this.actionHandler, pageName: this.pageName, isSubMenu: isSubMenu});
+      },
+
+      createAddToDriveAction: function(showAction) {
+        return new AddToDriveAction({showAction: showAction, context: this.actionHandler, getInvitationDetailsMethod: this.getInvitationDetailsMethod});
+      },
+
+      createAddShortcutAction: function(showAction) {
+        return new AddShortcutAction({showAction: showAction, context: this.actionHandler, getInvitationDetailsMethod: this.getInvitationDetailsMethod});
+      },
+
+      createCopyToDriveAction: function(showAction) {
+        return new CopyToDriveAction({showAction: showAction, context: this.actionHandler, getInvitationDetailsMethod: this.getInvitationDetailsMethod});
+      },
+
+      createGoToDriveAction: function(showAction) {
+        return new GoToDriveAction({showAction: showAction, context: this.actionHandler, getInvitationDetailsMethod: this.getInvitationDetailsMethod});
+      },
+
+      createShareLinkAction: function(showAction) {
+        return new ShareLinkAction({showAction: showAction, context: this.actionHandler, getInvitationDetailsMethod: this.getInvitationDetailsMethod});
+      }
+
+    };
+
+  return ActionRegistry;
+});

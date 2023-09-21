@@ -1,0 +1,59 @@
+define([
+    "dojo/_base/declare",
+    "mw-filebrowser/actions/Action",
+    "mw-keybindings/DefaultKeys",
+    "mw-filename-utils/FileNameUtil",
+    "dojo/i18n!nls/mldoStringResource",
+    "dojo/string"
+], function (declare, Action, DefaultKeys, FileNameUtil, MLDOStrings, DojoString) {
+  return declare(Action, {
+    constructor: function (args) {
+        args = args || {};
+        var context = args.context;
+        var makeActionAvailable = args.showAction || false;
+        this.name =  "viewAction";
+        this.label = MLDOStrings.contextMenuViewFileLabel;
+        this.enabled = makeActionAvailable;
+        this.section = {
+            id: "MISC",
+            name: "MISC",
+            allowSubMenu: false,
+            forceSubMenu: false
+        };
+        this.getInvitationDetailsMethod = args.getInvitationDetailsMethod;
+        this.isApplicableTo = function (path) {
+          var selectedFileCount = context.getSelectedRowCount();
+          if (selectedFileCount !== 1) {
+            this.enabled = false;
+          } else {
+            var fileInfos = context.getSelectedItemFileInfos();
+            var fileInfo = fileInfos[0];
+            if (fileInfo && FileNameUtil.isFileInfo(fileInfo) && !fileInfo.isDirectory) {
+              this.enabled = makeActionAvailable && true;
+            } else {
+              this.enabled = false;
+            }
+          }
+          return this.enabled;
+        };
+        this.callback = function (action) {
+          var fileInfos = context.getSelectedItemFileInfos();
+          var fileInfo = fileInfos[0];
+          if (this.isApplicableTo(fileInfo)) {
+            var path = FileNameUtil.pathFromFileInfo(fileInfo);
+            if (this.getInvitationDetailsMethod && typeof this.getInvitationDetailsMethod === "function" && this.getInvitationDetailsMethod()) {
+              var invitationId = this.getInvitationDetailsMethod().invitationId;
+              context.handlePreviewFile(path, fileInfo, invitationId);
+            } else {
+              var currentFolder = context.getCurrentFolder();
+              if (currentFolder !== "/") {
+                path = currentFolder + path;
+              }
+              context.handleOpenInBrowserAction(path, fileInfo);
+            }
+          }
+        };
+    }
+  });
+
+});

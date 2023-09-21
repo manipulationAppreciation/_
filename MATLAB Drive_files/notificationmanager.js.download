@@ -1,0 +1,170 @@
+define([
+  "underscore",
+  "jquery",
+  "backbone"
+], function( _, $, Backbone ) {
+
+    var NotificationManager = Backbone.View.extend({
+        template: _.template('<div id="mldoNotificationMessage" class="notificationWrapper"><div class="notificationContent">' +
+            '<div class="notificationImageSuccess" aria-hidden="true"></div><div class="notificationContentText"><%- notificationMsg %></div>' +
+            '<div class="notificationAckButton" aria-label="close button"><span class="glyphicon glyphicon-remove" aria-hidden="true"></span></div></div></div>'),
+        linkTemplate: _.template('<div id="mldoNotificationMessage" class="notificationWrapper"><div class="notificationContent">' +
+            '<div class="notificationImageSuccess" aria-hidden="true"></div><div class="notificationContentText"><%- notificationMsg %>' +
+            '&nbsp;&nbsp;<a class="notificationContentLink"><%- linkText %></a></div>' +
+            '<div class="notificationAckButton" aria-label="close button"><span class="glyphicon glyphicon-remove" aria-hidden="true"></span></div></div></div>'),
+        errorTemplate: _.template('<div id="mldoNotificationErrorMessage" class="notificationErrorWrapper"><div class="notificationContentError">' +
+            '<div class="notificationImageError" aria-hidden="true"></div><div class="notificationContentTextError"><%- notificationMsg %></div>' +
+            '<div class="notificationAckButtonError" aria-label="close button"><span class="glyphicon glyphicon-remove" aria-hidden="true"></span></div></div></div>'),
+        infoTemplate: _.template('<div id="mldoNotificationInfoMessage" class="notificationInfoWrapper"><div class="notificationContentInfo">' +
+            '<div class="notificationImageInfo" aria-hidden="true"></div><div class="notificationContentTextInfo"><%- notificationMsg %></div>' +
+            '<div class="notificationAckButtonInfo" aria-label="close button"><span class="glyphicon glyphicon-remove" aria-hidden="true"></span></div></div></div>'),
+        // map event handlers to events that are for THIS component (not intercomponent)
+        events: {
+
+        },
+        // called by the contructor
+        initialize: function(options) {
+          if (!options || typeof options !== "object" || !options.notificationAreaId || typeof options.notificationAreaId !== "string") {
+            throw new TypeError("Invalid options argument");
+          }
+          this.notificationAreaId = options.notificationAreaId;
+          this.getNotificationArea = function() {
+              return $('#' + this.notificationAreaId);
+          };
+        },
+        /**
+         * Write supplied success message to the notification area
+         */
+        notifyUserOfSuccess: function(msg, doLogout) {
+          if (!msg || typeof msg !== "string") {
+            throw new TypeError("Invalid msg argument");
+          }
+          this.render(msg, doLogout, 'success');
+          this.getNotificationArea().removeClass('importantMessageError').removeClass('importantMessageInfo').addClass('importantMessage');
+        },
+
+        /**
+         * Write supplied success message to the notification area with link
+         */
+        notifyUserOfSuccessWithLink: function(msg, linkText, linkCallback) {
+          if (!msg || typeof msg !== "string") {
+            throw new TypeError("Invalid msg argument");
+          }
+          if (!linkText ||typeof linkText !== "string") {
+            throw new TypeError("Invalid linkText argument");
+          }
+          if (!linkCallback || typeof linkCallback !== "function") {
+            throw new TypeError("Invalid link callback argument");
+          }
+          this.render(msg, false, 'successLink', linkText, linkCallback);
+          this.getNotificationArea().removeClass('importantMessageError').removeClass('importantMessageInfo').addClass('importantMessage');
+        },
+
+        /**
+         * Write supplied error message to the notification area
+         */
+        notifyUserOfError: function(msg, doLogout) {
+          if (!msg || typeof msg !== "string") {
+            throw new TypeError("Invalid msg argument");
+          }
+          this.render(msg, doLogout, 'error');
+          this.getNotificationArea().removeClass('importantMessage').removeClass('importantMessageInfo').addClass('importantMessageError');
+        },
+
+        /**
+         * Write supplied info message to the notification area
+         */
+        notifyUserOfInfo: function(msg, doLogout) {
+          if (!msg || typeof msg !== "string") {
+            throw new TypeError("Invalid msg argument");
+          }
+          this.render(msg, doLogout, 'info');
+          this.getNotificationArea().removeClass('importantMessageError').removeClass('importantMessage').addClass('importantMessageInfo');
+        },
+
+        /**
+         * Clear and hide the notification area if any
+         */
+        clearErrorNotification: function(doLogout) {
+          if (this.getNotificationArea()) {
+              this.getNotificationArea().empty().hide();
+          }
+          if (doLogout) {
+              // Send user back to login page
+              $.event.trigger("exit_app:mldo");
+          }
+        },
+
+        /**
+         * Start listening for quota controller events
+         */
+        start: function(fnLogoutHandler) {
+          if (!fnLogoutHandler || typeof fnLogoutHandler !== 'function') {
+              throw new TypeError("Logout handler unexpected type.");
+          }
+          $(document).on('exit_app:mldo', function() {
+              fnLogoutHandler();
+          } );
+        },
+
+        /**
+         * Stop listening for quota controller events
+         */
+        stop: function() {
+          $(document).off('exit_app:mldo');
+        },
+
+        render: function(msg, doLogout, type, linkText, linkCallback) {
+          if (!msg || typeof msg !== "string") {
+            throw new TypeError("Invalid msg argument");
+          }
+          if (type !== 'success' && type !== 'successLink' && type !== 'error' && type !== 'info') {
+            throw new TypeError("Invalid message type argument");
+          }
+          if (type === 'successLink' && (!linkText || typeof linkText !== "string")) {
+            throw new TypeError("Invalid linkText argument");
+          }
+          if (type === 'successLink' && (!linkCallback ||typeof linkCallback !== "function")) {
+            throw new TypeError("Invalid link callback argument");
+          }
+          var context = this;
+          var errorFadeOutDuration = 4000;
+          var successFadeOutDuration = 4000;
+          var successLinkFadeOutDuration = 8000;
+          if (this.getNotificationArea()) {
+              this.getNotificationArea().show();
+              if(type === 'success') {
+                $('#mldoNotificationMessage').stop(true);
+                  this.getNotificationArea().html(this.template({notificationMsg:msg}));
+                  $('.notificationAckButton>span.glyphicon-remove', this.getNotificationArea()).on('click', function(event) {event.preventDefault(); context.clearErrorNotification(doLogout);});
+                  $('#mldoNotificationMessage').delay(2000).fadeOut(successFadeOutDuration, function() {context.clearErrorNotification(doLogout);});
+                  $('#mldoNotificationMessage').mouseenter(function(e) { e.preventDefault(); $('#mldoNotificationMessage').stop(true,true);});
+                  $('#mldoNotificationMessage').mouseleave(function(e) { e.preventDefault(); $('#mldoNotificationMessage').fadeOut(successFadeOutDuration, function() {context.clearErrorNotification(doLogout);});});
+              } else if (type === 'successLink') {
+                $('#mldoNotificationMessage').stop(true);
+                  this.getNotificationArea().html(this.linkTemplate({notificationMsg:msg, linkText: linkText}));
+                  $('a.notificationContentLink').focus();
+                  $('.notificationAckButton>span.glyphicon-remove', this.getNotificationArea()).on('click', function(event) {event.preventDefault(); context.clearErrorNotification(doLogout);});
+                  $('a.notificationContentLink', this.getNotificationArea()).on('click', function(event) {event.preventDefault(); linkCallback();});
+              } else if (type === 'error') {
+                $('#mldoNotificationMessage').stop(true);
+                  this.getNotificationArea().html(this.errorTemplate({notificationMsg:msg}));
+                  $('.notificationAckButtonError>span.glyphicon-remove', this.getNotificationArea()).on('click', function(event) {event.preventDefault(); context.clearErrorNotification(doLogout);});
+                  if (!doLogout) {
+                    $('#mldoNotificationErrorMessage').delay(10000).fadeOut(errorFadeOutDuration, function() {context.clearErrorNotification(doLogout);});
+                    $('#mldoNotificationErrorMessage').mouseenter(function(e) { e.preventDefault(); $('#mldoNotificationErrorMessage').stop(true,true);});
+                    $('#mldoNotificationErrorMessage').mouseleave(function(e) { e.preventDefault(); $('#mldoNotificationErrorMessage').fadeOut(errorFadeOutDuration, function() {context.clearErrorNotification(doLogout);});});
+                  }
+              } else if (type === 'info') {
+                $('#mldoNotificationMessage').stop(true);
+                  this.getNotificationArea().html(this.infoTemplate({notificationMsg:msg}));
+                  $('.notificationAckButtonInfo>span.glyphicon-remove', this.getNotificationArea()).on('click', function(event) {event.preventDefault(); context.clearErrorNotification(doLogout);});
+              }
+            } else {
+              alert(msg);
+            }
+        }
+
+    });
+    return NotificationManager;
+}); // require

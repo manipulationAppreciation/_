@@ -1,0 +1,42 @@
+define([
+    "mw-filename-utils/FileNameUtil"
+], function(FileNameUtil) {
+
+  /**
+   * Map GDS file to FileBrowser2 file node data
+   */
+  FbFileNode = function(gdsFile, parent, parentWritable) {
+    var gds = gdsFile || {};
+    var fileExt = '';
+    if (gds.name) {
+      fileExt = FileNameUtil.getFileNameExtension(gds.name).toLocaleLowerCase();
+    }
+    // FileBrowswer2 fields
+    this.isDirectory = false;
+    this.filePermissions = {canWrite: gds.writable, parentCanWrite: !!parentWritable};
+    this.type = fileExt;
+    this.separator = "/";
+    this.name = gds.name;
+    this.parent = ((parent && parent.path)? parent.path : "/");
+    this.location = ((parent && parent.path)? parent.path + "/" : "/");
+    this.path = ((parent && parent.path)? parent.path + "/" : "/") + gds.name;
+    this.size = gds.size;
+    this.modifiedUtc = gds.lastModifiedDate;
+    this.accessType = gds.accessType;
+    this.initiator = gds.initiator || "";
+    this.clientLastModifiedUtc = gds.clientLastModifiedDate || gds.lastModifiedDate;
+    // trash contents ?
+    if (gds.tombstone && gds.deletedDate && gds.parentResource && gds.parentResource.path) {
+      this.originalLocation = gds.parentResource.path;
+      this.deletedDate = gds.deletedDate;
+      this.tombstoneId = gds.tombstone;
+      this.isSharedContent = gds.sharedTrash || false;
+    }
+    // Search results
+    if (gds.fullPath && gds.parentPath) {
+      this.originalLocation = gds.parentPath;
+    }
+  };
+
+  return FbFileNode;
+});

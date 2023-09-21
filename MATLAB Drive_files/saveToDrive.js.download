@@ -1,0 +1,108 @@
+define([
+  "underscore",
+  "widgets/abstractWidget",
+  "saveToDriveView"
+], function(_, AbstractWidget, SaveToDriveView) {
+  var SaveToDriveWidget = function(args) {
+    var initializeArgs = {
+      widgetName: "savetomatlabdrive",
+      embeddedCore: (args && (typeof args === "object") && args.embeddedCore) ? args.embeddedCore : null,
+      apsType: "FILES"
+    };
+    this.initialize(initializeArgs);
+  };
+  SaveToDriveWidget.prototype = Object.create(AbstractWidget.prototype);
+  SaveToDriveWidget.prototype.constructor = SaveToDriveWidget;
+  SaveToDriveWidget.prototype.initialize = function(args) {
+    // super
+    Object.getPrototypeOf(SaveToDriveWidget.prototype).initialize.call(this, args);
+    _.bindAll(this, "getInstance");
+  };
+  /*
+   *  List the contents of the folder path specified in configOptions.folderPath,
+   *  if any.  If the folder path is not specified then the root folder "/" is
+   *  used.  When this method is called without a sessionId (e.g. when used as
+   *  the "src" value in a iframe), a message of "folderpathcontents" is posted
+   *  to the parent window.  It's a signal that the app is loaded.  If the
+   *  embedding page then posts another message with the "configOptions" and
+   *  "sessionId" values specified, we render the widget using data associated
+   *  with that sessionID.
+   */
+  SaveToDriveWidget.prototype.getInstance = function(containerId, sessionId, configOptions) {
+    containerId = containerId || "";
+    configOptions = configOptions || {};
+    var context = this;
+    var embeddedWidgetName = this.getName();
+    var disposibleElement;
+    var url;
+    var blob;
+    var blobType;
+    // Override MLDOFileService useHtmlLocalStorage method to
+    // prevent using local storage for embedded widgets.
+    configOptions = configOptions || {
+      showFileNameSelector: false,
+      showNewFolderAction: false,
+      showRenameAction: false,
+      desiredHeightPx: "600",
+      desiredWidthPx: "400",
+      startingFullPath: "/",
+      suggestedFileName: ""
+    };
+    // super
+    Object.getPrototypeOf(SaveToDriveWidget.prototype).getInstance.call(this, containerId, sessionId, configOptions);
+    if (sessionId) {
+      if (!this.getController()) {
+        configOptions.isEmbedded = true;
+        configOptions.embeddedName = embeddedWidgetName;
+        this.setController(new SaveToDriveView(configOptions));
+        this.getController().fileService.gdsDAO.setSessionId(sessionId);
+        disposibleElement = document.createElement('div');
+        disposibleElement.id = "saveToDriveContainer";
+        this.getWidgetContainer().append(disposibleElement);
+        this.getController().setElement(disposibleElement);
+        this.getController().setEmbeddedContainerId(containerId);
+        this.getController().setEmbeddedClientHost(this.getEmbeddedCore().getClientHost());
+        this.getController().render();
+        window.parent.postMessage(JSON.stringify({ name: "widgetstaticready:" + embeddedWidgetName + ":" + containerId }), this.getEmbeddedCore().getClientHost());
+      } else {
+        if ("url" in configOptions && configOptions.url) {
+          url = configOptions.url;
+        } else if ("dataArray" in configOptions && configOptions.dataArray) {
+          if (configOptions.mimeType) {
+            blobType = configOptions.mimeType;
+            blob = new Blob([new Uint8Array(configOptions.dataArray)], {type: blobType});
+          } else {
+            blob = new Blob([new Uint8Array(configOptions.dataArray)]);
+          }
+          url = URL.createObjectURL(blob);
+        }
+        var promise = this.getController().saveUrlToDrive(url, configOptions.folderPath, configOptions.fileName, configOptions.presentUI);
+        promise.done(function(results) {
+          window.parent.postMessage(JSON.stringify({ name: "widgetcmdcomplete:" + embeddedWidgetName + ":" + containerId, commandData: results.status }), context.getEmbeddedCore().getClientHost());
+        })
+        .fail(function(err) {
+          window.parent.postMessage(JSON.stringify({ name: "widgetcmdfailure:" + embeddedWidgetName + ":" + containerId, commandData: err.message }), context.getEmbeddedCore().getClientHost());
+        });
+      }
+    } else {
+      // signal we are ready
+      window.parent.postMessage(JSON.stringify({ name: "widgetinit:" + embeddedWidgetName + ":" + containerId }), this.getEmbeddedCore().getClientHost());
+    }
+  };
+
+  SaveToDriveWidget.prototype.setClientString = function(clientString) {
+    if (clientString && typeof clientString !== "string") {
+      throw new TypeError("Invalid clientString");
+    }
+    this.getController().fileService.gdsDAO.setClientString(clientString);
+  };
+
+  SaveToDriveWidget.prototype.setGdsClientType = function(gdsClientType) {
+    if (gdsClientType && typeof gdsClientType !== "string") {
+      throw new TypeError("Invalid gdsClientType");
+    }
+    this.getController().fileService.gdsDAO.setGdsClientType(gdsClientType);
+  };
+
+  return SaveToDriveWidget;
+});

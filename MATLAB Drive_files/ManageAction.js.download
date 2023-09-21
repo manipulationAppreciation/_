@@ -1,0 +1,107 @@
+define([
+    "dojo/_base/declare",
+    "mw-filebrowser/actions/Action",
+    "mw-keybindings/DefaultKeys",
+    "mw-filename-utils/FileNameUtil",
+    "util",
+    "dojo/i18n!nls/mldoStringResource",
+    "dojo/string"
+], function (declare, Action, DefaultKeys, FileNameUtil, Util, MLDOStrings, DojoString) {
+  return declare(Action, {
+    constructor: function (args) {
+        args = args || {};
+        var context = args.context;
+        var makeActionAvailable = args.showAction || false;
+        this.name =  "manageAction";
+        this.label = MLDOStrings.contextMenuManageLabel;
+        this.id = "mldoManageAction";
+        this.enabled = makeActionAvailable;
+        this.section = args.isSubMenu ? {
+            id: "shareSub",
+            enabled: false,
+            isApplicableTo: function() { return false; },
+            label: "sub1",
+            parent: {
+                id: "mldoShareAction",
+                name: MLDOStrings.contextMenuShareLabel,
+                label: MLDOStrings.contextMenuShareLabel,
+                allowSubMenu: true,
+                forceSubMenu: true
+            }
+        } : {
+          id: "MISC",
+          name: "MISC",
+          allowSubMenu: false,
+          forceSubMenu: false
+        };
+        this.supportsKeyBinding = false;
+        this.isApplicableTo = function (path) {
+          var selectedFileCount = context.getSelectedRowCount();
+          var currentFolder = context.getCurrentFolder();
+          if (selectedFileCount > 1) {
+            this.enabled = false;
+          } else {
+            var fileInfos = context.getSelectedItemFileInfos();
+            var fileInfo;
+            if (selectedFileCount === 0) {
+              this.enabled = false;
+            } else {
+              fileInfo = fileInfos[0];
+            }
+            if (fileInfo && FileNameUtil.isFileInfo(fileInfo) && fileInfo.isDirectory) {
+              if (fileInfo.isSharedFolder && fileInfo.accessType && fileInfo.accessType.toLowerCase() !== "owner") {
+                this.label = MLDOStrings.contextMenuViewMembersLabel;
+              } else {
+                if (fileInfo.isSharedFolder) {
+                  this.label = MLDOStrings.contextMenuManageLabel;
+                } else {
+                  this.label = MLDOStrings.contextMenuInviteLabel;
+                }
+              }
+              if ((fileInfo.filePermissions.canWrite || (fileInfo.isSharedFolder && fileInfo.shareAttributes.invitationType !== "CREATED_FROM_OPEN")) &&
+                  (!("linkPath" in fileInfo) || fileInfo.linkPath) ) {
+                //if the folder is shared or has a shared parent, it can not be shared
+                if ((fileInfo.isSharedFolder && fileInfo.path !== fileInfo.sharedParentPath)|| (!fileInfo.isSharedFolder && fileInfo.initiator)) {
+                  this.enabled = false;
+                  return true;
+                } else {
+                  this.enabled = makeActionAvailable && true;
+                }
+              } else {
+                this.enabled = false;
+              }
+            } else {
+              this.enabled = false;
+            }
+          }
+          return this.enabled;
+        };
+        this.callback = function (action) {
+          var fileInfos = context.getSelectedItemFileInfos();
+          var currentFolder = context.getCurrentFolder();
+          var sortedFileInfos;
+          var fileInfo;
+          var path;
+          if (fileInfos.length) {
+            sortedFileInfos = Util.sortFileInfosByPath(fileInfos);
+            fileInfo = fileInfos[0];
+            path = context.getSelectedItemFullPath(fileInfo);
+          } else {
+            path = context.getSelectedItemFullPath();
+            fileInfo = context.getFullPathFileInfo();
+          }
+
+          // override if there is a linkPath value
+          if ("linkPath" in fileInfo && fileInfo.linkPath.length) {
+            path = fileInfo.linkPath;
+          }
+          if (this.isApplicableTo()) {
+            if (fileInfos.length <= 1 && fileInfo && path) {
+              context.handleManageAction(path, fileInfo);
+            }
+          }
+        };
+    }
+  });
+
+});

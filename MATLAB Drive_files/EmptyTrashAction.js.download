@@ -1,0 +1,38 @@
+define([
+    "dojo/_base/declare",
+    "mw-filebrowser/actions/Action",
+    "mw-keybindings/DefaultKeys",
+    "mw-filename-utils/FileNameUtil",
+    "dojo/i18n!nls/mldoStringResource",
+    "dojo/string"
+], function (declare, Action, DefaultKeys, FileNameUtil, MLDOStrings, DojoString) {
+  return declare(Action, {
+    constructor: function (args) {
+        args = args || {};
+        var context = args.context;
+        var makeActionAvailable = args.showAction || false;
+        this.name =  "permantentlyDeleteAllAction";
+        this.label = MLDOStrings.contextMenuEmptyTrashLabel;
+        this.enabled = makeActionAvailable;
+        this.section = {
+            id: "MISC",
+            name: "MISC",
+            allowSubMenu: false,
+            forceSubMenu: false
+        };
+        this.isApplicableTo = function (path) {
+          var contentCount = document.getElementsByClassName("dgrid-row").length;
+          this.enabled = makeActionAvailable && contentCount > 0;
+          return this.enabled;
+        };
+        this.callback = function (action) {
+          var fileInfos = context.getSelectedItemFileInfos();
+          var fileInfo = fileInfos[0];
+          if(this.isApplicableTo(fileInfo)) {
+              context.handlePermanentlyDeleteAllAction();
+          }
+        };
+    }
+  });
+
+});

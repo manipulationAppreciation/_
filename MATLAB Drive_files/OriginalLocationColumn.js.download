@@ -1,0 +1,52 @@
+define([
+    "dojo/_base/declare",
+    "dgrid/editor",
+    "dgrid/tree",
+    "dijit/form/ValidationTextBox",
+    "mw-filebrowser/columns/helpers/FileIconUtils",
+    "mw-filebrowser/columns/helpers/NameComparator",
+    "dojo/i18n!nls/mldoStringResource",
+    "dojo/string"
+], function (declare, editor, tree, ValidationTextBox, FileIconUtils, NameComparator, MLDOStrings, DojoString) {
+    return declare([], {
+      constructor: function (args) {
+          args = args || {};
+          this.column = {
+              id: "originalLocationColumn",
+              label: MLDOStrings.originalLocationColumnLabel,
+              renderHeaderCell: function (th) {
+                if (!th || !th.appendChild || typeof th.appendChild !== "function") {
+                  throw new TypeError("Invalid th argument");
+                }
+                var originalLocationColumn = document.createElement("div");
+                originalLocationColumn.className = "columnHeaderLabel";
+                var labelNode = document.createTextNode(MLDOStrings.originalLocationColumnLabel);
+                originalLocationColumn.appendChild(labelNode);
+                th.appendChild(originalLocationColumn);
+              },
+              field: "originalLocation",
+              get: function (fileInfo) {
+                if (!fileInfo || !fileInfo.originalLocation) {
+                  throw new TypeError("Invalid fileInfo argument");
+                }
+                return fileInfo.originalLocation;
+              },
+              sortable: true,
+              sort: function (a, b) {
+                if (!a || typeof a !== "object") {
+                  throw new TypeError("Invalid a argument");
+                }
+                if (!b || typeof b !== "object") {
+                  throw new TypeError("Invalid b argument");
+                }
+                if (a.originalLocation === b.originalLocation) {
+                    return NameComparator.caseSensitiveStringComparator(a.name, b.name);
+                } else {
+                    return NameComparator.caseSensitiveStringComparator(a.originalLocation, b.originalLocation);
+                }
+              },
+              hidden: true
+          };
+      }
+    });
+});

@@ -1,0 +1,5 @@
+define(function(){
+
+  return function(obj) {obj || (obj = {});var __t, __p = '', __e = _.escape;with (obj) {__p += '<div id="openInMODialog" class="modal fade" role="dialog" tabindex="-1">\n  <div class="modal-dialog" role="document">\n      <div class="modal-content">\n          <div class="modal-header">\n              <button type="button" class="close openInMOClose" data-dismiss="modal" aria-label="Close"><span aria-hidden="true">&times;</span></button>\n              <h4 id="openInMOTitle" class="modal-title">' +((__t = ( modalTitle )) == null ? '' : __t) +'</h4>\n          </div>\n          <div class="modal-body">\n              ' +((__t = ( openInMOLabel )) == null ? '' : __t) +'\n          </div>\n          <div class="modal-footer">\n              <button type="button" id="" class="btn btn-primary addToDrive" data-dismiss="modal">' +((__t = ( addToDriveButton )) == null ? '' : __t) +'</button>\n              <button type="button" class="btn btn-primary copyToDrive" data-dismiss="modal">' +((__t = ( copyToDriveButton )) == null ? '' : __t) +'</button>\n          </div>\n      </div>\n  </div>\n</div>\n';}return __p}
+
+});

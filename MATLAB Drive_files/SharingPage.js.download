@@ -1,0 +1,634 @@
+define([
+  "pages/AbstractPage",
+  "templates/sharingPage",
+  "RenamePrompt",
+  "dojo/i18n!nls/mldoStringResource",
+  "dojo/string",
+  "util"
+], function( AbstractPage, PageTemplate, RenamePrompt, MLDOStrings, DojoString, Util ) {
+
+  /**
+   * This subclass of MatlabDriveApplication uses
+   * Mathworks FileBrowser2 widget for the tree controller.
+   */
+  var SharingPage = AbstractPage.extend({
+    initialize: function (params) {
+
+      this.pageTemplate = PageTemplate;
+
+      this.events = {
+        "click #sharingView div.facets-trash" : "goToTrashCan",
+        "click #sharingViewHeader li.facets-trash" : "goToTrashCan",
+        "click #sharingView div.facets-files" : "goToFiles",
+        "click #sharingViewHeader li.facets-files" : "goToFiles",
+        "click #sharingView .acceptPendingInvitationIcon" : "acceptPendingInvitation",
+        "click #sharingView .declinePendingInvitationIcon" : "declinePendingInvitation",
+        "click #sharingView .copyToDrivePendingInvitationIcon" : "copyPendingInvitation",
+        "dragover div.facets": "dragoverNotAllowed",
+        "dragover div.generalToolbar": "dragoverNotAllowed",
+        "dragover div.headerContainer": "dragoverNotAllowed",
+        "dragover div.mainFooter": "dragoverNotAllowed",
+        "click li.dropdown-showhiddenfiles input" : "toggleShowHiddenFiles",
+        "click a.shareInvitationLink" : "goToSymLink",
+        "click a.previewInvitationLink": "previewPendingInvitation",
+        "click div.appTitle": "deSelectGrid",
+        "click .treeView div.wrapper": "deSelectGrid",
+        "click div.myfilesTitlebar":  "deSelectGrid",
+        "click div.facets": "deSelectGrid",
+        "click div#sharingFooter": "deSelectGrid",
+        "click .matlabDriveUserName": "deSelectGrid",
+        "click .headerContainer .navbar": "deSelectGrid"
+      };
+
+      this.goToSharing = function(e) { /* do nothing */ };
+
+      this.startPage = function(msgHandler) {
+        this.stopPage(); // stop any previous listeners before starting new listeners
+        if (!msgHandler || typeof msgHandler !== "function") {
+          throw new TypeError("Invalid message handler argument");
+        }
+        var publicPromise = $.Deferred();
+        var context = this;
+        var linkPromise;
+        // Workaround for EmbeddedLogin redirect URL changes
+        let invitationId = localStorage.getItem("mldo:invitationId");
+        if (this.htmlLocalStorage && invitationId) {
+          let command = localStorage.getItem("mldo:command");
+          if (command) {
+            this.setActionableInvitation({invitationId: invitationId, action: command,
+              fileInfo: !localStorage.getItem("mldo:fileInfo") ? null : JSON.parse(localStorage.getItem("mldo:fileInfo"))});
+            localStorage.removeItem("mldo:command");
+            localStorage.removeItem("mldo:fileInfo");
+          }
+          localStorage.removeItem("mldo:invitationId");
+        }
+        if (this.getActionableInvitation()) {
+          linkPromise = this.getTreeController().getFileService().createPersonalFromOpenSharingInvitation(this.getActionableInvitation().invitationId);
+        } else {
+          linkPromise = $.Deferred();
+          linkPromise.resolve({});
+        }
+        linkPromise.done(function(data) {
+          var actionableInvitation = context.getActionableInvitation();
+          context.setInvitationIdToSelect(null);
+          if (data && data.invitation && data.invitation.invitationId && data.invitation.status === "PENDING") {
+            if (actionableInvitation &&
+                Util.isValidInvitationAction(actionableInvitation.action)) {
+                  if (actionableInvitation.action === "accept") {
+                    context.performInvitationAcceptance.call(context, null, data.invitation.invitationId, data.invitation.name, data.invitation.name);
+                  }
+                  if (actionableInvitation.action === "decline") {
+                    context.performInvitationDeclination.call(context, null, data.invitation.invitationId);
+                  }
+                  if (actionableInvitation.action === "acceptAndOpen") {
+                    let deferredPromise = $.Deferred();
+                    let fileInfo = actionableInvitation.fileInfo;
+                    let promise = context.performInvitationAcceptance.call(context, null, data.invitation.invitationId, data.invitation.name, data.invitation.name, deferredPromise);
+                    promise.done(function(targetFolderPath) {
+                      let newPath = targetFolderPath + fileInfo.path;
+                      fileInfo.path = newPath;
+                      if (fileInfo.path === "/") {
+                        fileInfo.name = data.invitation.name;
+                      }
+                      $.event.trigger('changetofilespage:mldo', {destination: targetFolderPath});
+                      context.getTreeController().getActionHandler().callOpenWithService(newPath, fileInfo);
+                    }).fail(function(err) {
+                      context.fileService.notify(err.message, "ERROR");
+                    });
+                    return deferredPromise;
+                  }
+            } else {
+              context.setInvitationIdToSelect(data.invitation.invitationId);
+            }
+          } else if (data.invitation && data.invitation.status === "ACCEPTED") {
+            if (data.invitation.tombstone) {
+              $.event.trigger("changetotrashpage:mldo");
+              context.getTreeController().getFileService().focusRowAfterGridRefresh({path: "/" , tombstoneId: data.invitation.tombstone, pageId: "Trash"});
+              if (actionableInvitation && Util.isValidInvitationAction(actionableInvitation.action) && actionableInvitation.action === "acceptAndOpen") {
+                context.getTreeController().getFileService().dispatchCanonicalizedTreeEvent("message:treecontroller",
+                  {message: MLDOStrings.openInMOFileInTrash, severity: "ERROR"}, "Trash");
+              } else {
+                context.getTreeController().getFileService().dispatchCanonicalizedTreeEvent("message:treecontroller",
+                  {message: DojoString.substitute(MLDOStrings.invitationPreviewInvitationAlreadyAddedToDrive, [data.invitation.name]), severity: "NORMAL"}, "Trash");
+              }
+            } else {
+              if (actionableInvitation && Util.isValidInvitationAction(actionableInvitation.action) && actionableInvitation.action === "acceptAndOpen") {
+                $.event.trigger('changetofilespage:mldo', {destination: data.invitation.resource.path});
+                if (actionableInvitation.fileInfo.isDirectory) {
+                  if (actionableInvitation.fileInfo.location === "/") {
+                    actionableInvitation.fileInfo.name = data.invitation.name;
+                    actionableInvitation.fileInfo.path = data.invitation.resource.path;
+                  }
+                } else {
+                  actionableInvitation.fileInfo.path = data.invitation.resource.path + actionableInvitation.fileInfo.path;
+                }
+                context.getTreeController().getActionHandler().callOpenWithService(actionableInvitation.fileInfo.path, actionableInvitation.fileInfo);
+              } else {
+                $.event.trigger('changetofilespage:mldo', {destination: (data && data.invitation && data.invitation.resource) ? data.invitation.resource.path : "/"});
+              }
+              context.getTreeController().getFileService().dispatchCanonicalizedTreeEvent("message:treecontroller",
+                {message: DojoString.substitute(MLDOStrings.invitationPreviewInvitationAlreadyAddedToDrive, [data.invitation.name]), severity: "NORMAL"}, "Files");
+            }
+            return publicPromise.reject({});
+          }
+        })
+        .fail(function(err) {
+          // Can't render notifications yet because the treeController isn't rendered yet.
+          if (err && err.errorCode !== "PERMISSION_ALREADY_EXISTS") {
+            context.linkErrorMsg = Util.getErrorMessageTranslator().getTranslatedMessage(err, "sharingPage.getActionableInvitation");
+          }
+        })
+        .always(function() {
+          context.setActionableInvitation(null);
+          context.refreshPendingInvitationsList();
+          context.getTreeController().start(msgHandler);
+          publicPromise.resolve({});
+        });
+        window.ondragover=function(event) {
+          if (event && event.preventDefault && typeof event.preventDefault === "function") {
+            event.preventDefault();
+          }
+          if (event && event.dataTransfer && typeof event.dataTransfer === "object") {
+            event.dataTransfer.dropEffect = "none";
+          }
+        };
+        $(document).on("click", "li.headernav_login.dropdown:not(.open) a", context.updateUserQuota.bind(context));
+        $(document).on("click", "li.headernav_login.dropdown:not(.open) a", context.updateSettings.bind(context));
+        $(document).on("folderdblclick:mldo", context.onFolderDoubleClick);
+        context.$el.on("click", "li.dropdown-additionalApplications input", context.changeApplication);
+        return publicPromise;
+      };
+
+      this.stopPage = function() {
+        var context = this;
+        $('div.pendingInvitationContainer').off("click", this.deSelectGrid);
+        window.ondragover = null;
+        context.getTreeController().stop();
+        $(document).off("click", "li.headernav_login.dropdown:not(.open) a");
+        $(document).off("click", "li.headernav_login.dropdown:not(.open) a");
+        $(document).off("folderdblclick:mldo");
+        context.$el.off("click", "li.dropdown-additionalApplications input", context.changeApplication);
+      };
+
+      this.render = function() {
+        var touchevents = (('ontouchstart' in window )|| ("DocumentTouch" in window && window.DocumentTouch && document instanceof window.DocumentTouch));
+        var am = this.getAuthManager();
+        var templateParameters = {};  // new object
+        templateParameters.headerNavigation = this.renderNavigationHeader();
+        templateParameters.facetsFiles = MLDOStrings.sharingPageFacetsFiles;
+        templateParameters.facetsSharing = MLDOStrings.sharingPageFacetsSharing;
+        templateParameters.facetsDeletedFiles = MLDOStrings.sharingPageFacetsDeletedFiles;
+        templateParameters.userFirstNameFiles = MLDOStrings.sharingPageUserFirstNameFiles;
+        templateParameters.loginData = JSON.stringify(am.getLoginData() || '');
+        templateParameters.sessionId = am.getSessionId() || '';
+        templateParameters.reloginMinutes = (am.getMinutesBeforeRelogin() ? am.getMinutesBeforeRelogin() : 'unknown');
+        templateParameters.sharingEnabled = this.isSharingEnabled;
+        templateParameters.personalInvitationsEnabled = this.isPersonalInvitationsEnabled;
+        templateParameters.pendingInvitationsLegendText = MLDOStrings.sharingPagePendingInvitationsGroupLegend;
+        templateParameters.currentlySharedLegendText = MLDOStrings.sharingPageCurrentlySharedGroupLegend;
+        templateParameters.manageActionLabel = MLDOStrings.filesPageManageLabel;
+        templateParameters.linkActionLabel = MLDOStrings.filesPageViewLinkLabel;
+        // TODO LEAVE
+        // templateParameters.leaveActionLabel = MLDOStrings.filesPageLeaveLabel;
+        templateParameters.manageToolTipText = MLDOStrings.manageToolTipText;
+        templateParameters.linkToolTipText = MLDOStrings.linkToolTipText;
+        // TODO LEAVE
+        // templateParameters.leaveToolTipText = MLDOStrings.leaveToolTipText;
+        templateParameters.previewBannerText = MLDOStrings.previewBannerText;
+        templateParameters.previewBannerEnabled = ((this.config.isPreviewBannerEnabled && this.config.isPreviewBannerEnabled()) ? true : false);
+        templateParameters.shouldShowUnshareOption = (this.config.shouldShowUnshareOption && this.config.shouldShowUnshareOption()) ? true : false;
+        templateParameters.footerPatentsLabel = MLDOStrings.footerPatents;
+        templateParameters.footerTrademarksLabel = MLDOStrings.footerTrademarks;
+        templateParameters.footerPrivacyPolicyLabel = MLDOStrings.footerPrivacy;
+        templateParameters.footerPiracyLabel = MLDOStrings.footerPiracy;
+        templateParameters.copyrightYear = new Date().getFullYear();
+        var htmlResult = this.pageTemplate(templateParameters);
+        this.$el.empty().html(htmlResult);
+        // render subviews
+
+        $('.appContainer').removeClass('ff-delete');
+        $('.mainFooter').addClass('ff-delete');
+        $('.right-column').addClass('ff-delete');
+        $('.facets').addClass('ff-delete');
+
+        var treeOptions = {
+          id: 'jstree',
+          // action bar buttons the tree needs to update
+          manageSelector : this.isSharingEnabled ? '.manage' : '',
+          linkSelector : this.isSharingEnabled ? '.link' : ''
+          // TODO LEAVE
+          // leaveSelector : this.isSharingEnabled ? '.leave' : ''
+        };
+        this.getTreeController().render(treeOptions);
+        this.getUserQuotaController().setElement($('.quotaListItem'));
+        this.getUserQuotaController().render();
+
+        // Activate tooltip
+        /* istanbul ignore next */
+        if (!touchevents) {
+          $(".retentionInfo").tooltip();
+          $('[data-toggle="tooltip"]').tooltip();
+        }
+
+        this.updateSettings();
+        // Any link error messages? Do the notification now.
+        if (this.linkErrorMsg) {
+          this.getTreeController().getFileService().notify(this.linkErrorMsg, "ERROR");
+          this.linkErrorMsg = null;
+        }
+        if (this.linkNormalMsg) {
+          this.getTreeController().getFileService().notify(this.linkNormalMsg, "NORMAL");
+          this.linkNormalMsg = null;
+        }
+        this.setActionableInvitation(null);
+        this.setInvitationIdToSelect(null);
+        this.renderMatrix();
+      };
+
+      this.clearPendingInvitationList = function() {
+        $('#pendingInvitationList').empty();
+        $('#pendingInvitationList').html('');
+      };
+
+      this.getAccessTypeName = function(accessType) {
+        var name = "";
+        if (accessType) {
+          var lcat = accessType.toLowerCase();
+          switch (lcat) {
+            case "owner":
+            case "admin_access":
+              name = MLDOStrings.initiateSharingDialogPermission_owner;
+              break;
+            case "manage_access":
+              name = MLDOStrings.initiateSharingDialogPermission_manage_access;
+              break;
+            case "read_write":
+                name = MLDOStrings.initiateSharingDialogPermission_read_write;
+              break;
+            case "read_only":
+              name = MLDOStrings.initiateSharingDialogPermission_read_only;
+              break;
+            default:
+              break;
+          }
+        }
+        return name;
+      };
+
+      this.getInitiatorDisplayName = function(invitation) {
+        var displayName = "";
+        if (invitation && invitation.initiator && invitation.accessType) {
+          if (invitation.initiator.emailAddress) {
+            displayName = _.escape(invitation.initiator.emailAddress);
+          } else {
+            if (invitation.initiator.firstName || invitation.initiator.lastName) {
+              if (invitation.initiator.firstName) {
+                displayName += invitation.initiator.firstName;
+              }
+              if (displayName && invitation.initiator.lastName) {
+                displayName += " ";
+              }
+              if (invitation.initiator.lastName) {
+                displayName += invitation.initiator.lastName;
+              }
+            }
+          }
+        }
+        return displayName;
+      };
+
+      this.scrollToHighlightedInvitation = function(invitationIdToHightLight) {
+        if (invitationIdToHightLight && typeof invitationIdToHightLight === "string" && invitationIdToHightLight.length) {
+          $('div.pendingInvitationsContainer').animate({
+              scrollTop: $("#pendingInvitationList li.pendingInvitationEntry[data-invitationid='" + invitationIdToHightLight + "']").offset().top
+          }, 'slow');
+          if (this.config.isInvitationPreviewEnabled && this.config.isInvitationPreviewEnabled()) {
+            $("#pendingInvitationList li.pendingInvitationEntry[data-invitationid='" + invitationIdToHightLight + "'] div.action_icon.previewInvitation").click();
+          }
+        }
+      };
+
+      this.createPendingInvitationEntry = function(index, invitation, invitationIdToHightLight) {
+        var context = this;
+        pending = '<li class=\"pendingInvitationEntry' + (invitationIdToHightLight === invitation.invitationId ? ' newShareInvitation' : '') +
+                    '\" data-invitationid=\"' + invitation.invitationId + '\" data-invitationname=\"' + _.escape(invitation.name) + '\">' +
+                    '<div class="innerTableContainer pendingEntryBorder">' +
+                      '<div class="innerPendingInvitationTable">' +
+                        '<div class="innerPendingInvitationEntry">' +
+                          '<div class="pendingInvitationName">' +
+                            '<span class=\"motwFileTypeinvite\"></span>' +
+                            '<span><a class=\"previewInvitationLink\">' + _.escape(invitation.name) + '</a></span>' +
+                          '</div>' +
+                          '<div class="pendingAttributeEmail">' +
+                            '<div class="smallTitle">' + MLDOStrings.smallTitleSharedBy + '</div>' +
+                            '<div class="pendingAttributeValue">' + this.getInitiatorDisplayName(invitation) + '</div>' +
+                          '</div>' +
+                          '<div class="pendingAttributeContainer sharedOn">' +
+                            '<div class="smallTitle">' + MLDOStrings.smallTitleSharedOn + '</div>' +
+                            '<div class="pendingAttributeValue">' + (invitation.createdDate ? new Date(invitation.createdDate).toLocaleDateString() : MLDOStrings.sharingPageUnknownSharedOnDate) + '</div>' +
+                          '</div>' +
+                          '<div class="pendingAttributeContainer accessType">' +
+                            '<div class="smallTitle">' + MLDOStrings.smallTitleAccess + '</div>' +
+                            '<div class="pendingAttributeValue">' + context.getAccessTypeName(invitation.accessType) + '</div>' +
+                          '</div>' +
+                          '<div class="innerTableContainer">' +
+                            '<div class="innerPendingInvitationTable">' +
+                              '<div class="innerPendingInvitationEntry pendingAcceptDecline">' +
+                                '<div class="acceptPendingInvitationIcon">' +
+                                  '<div class="action_icon acceptInvitation">' +
+                                    '<div class="horizontalIconContainer">' +
+                                      '<div class="addToDriveIcon" aria-hidden="true" data-toggle="tooltip" data-container="div#sharingView h3" data-placement="top" data-delay=\'{ "show": 1000, "hide": 100 }\' title="' + MLDOStrings.previewPageAddToDriveLabel + '"></div>' +
+                                    '</div>' +
+                                    '<div class="iconText">' + MLDOStrings.previewPageAddToDriveLabel + '</div>' +
+                                  '</div>' +
+                                '</div>' +
+                              ( (this.config.isCopyToDriveEnabled && this.config.isCopyToDriveEnabled()) ?
+                                '<div class="copyToDrivePendingInvitationIcon">' +
+                                '<div class="action_icon copyToDriveInvitation">' +
+                                '<div class="horizontalIconContainer">' +
+                                '<div class="copyIcon" aria-hidden="true" data-toggle="tooltip" data-container="div#sharingView h3" data-placement="top" data-delay=\'{ "show": 1000, "hide": 100 }\' title="' + MLDOStrings.sharingPageCopyToDriveTitle + '"></div>' +
+                                '</div>' +
+                                '<div class="iconText">' + MLDOStrings.sharingPageCopyToDriveTitle + '</div>' +
+                                '</div>' +
+                                '</div>' : '') +
+                                '<div class="declinePendingInvitationIcon">' +
+                                  '<div class="action_icon declineInvitation"' + ((invitation.accessType).toLowerCase() === "owner" ? 'style="display:none;"' : '') + '>' +
+                                    '<div class="horizontalIconContainer">' +
+                                      '<div class="glyphicon glyphicon-remove" aria-hidden="true" data-toggle="tooltip" data-container="div#sharingView h3" data-placement="top" data-delay=\'{ "show": 1000, "hide": 100 }\' title="' + MLDOStrings.sharingPageDeclineTitle + '"></div>' +
+                                    '</div>' +
+                                    '<div class="iconText">' + MLDOStrings.sharingPageDeclineTitle + '</div>' +
+                                  '</div>' +
+                                '</div>' +
+                              '</div>' +
+                            '</div>' +
+                          '</div>' +
+                        '</div>' +
+                      '</div>' +
+                    '</div>' +
+                  '</li>';
+        $('#pendingInvitationList').append($(pending));
+        // Activate tooltip
+        var touchevents = (('ontouchstart' in window )|| ("DocumentTouch" in window && window.DocumentTouch && document instanceof window.DocumentTouch));
+        /* istanbul ignore next */
+        if (!touchevents) {
+          $('[data-toggle="tooltip"]').tooltip();
+        }
+      };
+
+      this.processGetPendingInvitationsResponse = function(response, invitationIdToHightLight) {
+        var context = this;
+        var invitationsArray = [];
+        $('#pendingInvitationList').html("");
+        if (response && ("invitations" in response)) {
+          invitationsArray = response.invitations;
+        }
+        if (invitationsArray && invitationsArray.length) {
+          $.each(invitationsArray, function(index, invitation) { context.createPendingInvitationEntry(index, invitation, invitationIdToHightLight); });
+        } else {
+          pending = '<li class=\"pendingInvitationEntry\"><div class=\"noContents pendingEntryBorder\">' + MLDOStrings.sharingPageNoPendingInvitations + '</div></li>';
+          $('#pendingInvitationList').append($(pending));
+        }
+        $('div.pendingInvitationContainer').on("click", context.deSelectGrid);
+        if (invitationIdToHightLight.length) {
+          context.scrollToHighlightedInvitation(invitationIdToHightLight);
+        }
+      };
+
+      this.handleGetPendingInvitationsError = function(err) {
+        var msg = Util.getErrorMessageTranslator().getTranslatedMessage(err, "sharingPage.getPendingInvitations");
+        this.getTreeController().getFileService().notify(msg, "ERROR");
+      };
+
+      this.refreshPendingInvitationsList = function() {
+      var promise = this.getTreeController().getFileService().getPendingSharingInvitations();
+      var invitationIdToHightLight = this.getInvitationIdToSelect() || "";
+      var pending;
+      var context = this;
+      $('div.pendingInvitationContainer').off("click", this.deSelectGrid);
+      this.clearPendingInvitationList();
+      promise.done(function(response) { context.processGetPendingInvitationsResponse(response, invitationIdToHightLight); })
+      .fail(this.handleGetPendingInvitationsError);
+    };
+
+      this.previewPendingInvitation = function(e) {
+        if (!this.config.isInvitationPreviewEnabled || !this.config.isInvitationPreviewEnabled()) {
+          return false;
+        }
+        if (e && e.preventDefault) {
+          e.preventDefault();
+        }
+        var pendingEntry = $(e.currentTarget).closest('li.pendingInvitationEntry');
+        var invitationId = pendingEntry.data("invitationid");
+        $.event.trigger("changetosharingpage:mldo", {invitationId: invitationId});
+      };
+
+      this.acceptPendingInvitation = function(e) {
+        if (e && e.preventDefault) {
+          e.preventDefault();
+        }
+        var pendingEntry = $(e.currentTarget).closest('li.pendingInvitationEntry');
+        var invitationId = pendingEntry.data("invitationid");
+        var name = pendingEntry.data("invitationname");
+        if (invitationId) {
+          this.performInvitationAcceptance(pendingEntry, invitationId, name, name);
+        }
+      };
+
+      this.performInvitationAcceptance = function(pendingEntry, invitationId, originalName, name, deferredPromise) {
+        var context = this;
+        if (invitationId) {
+          promise = this.getTreeController().getFileService().acceptSharingInvitation(invitationId, "/" + name);
+          promise.done(function(data) {
+            if (pendingEntry) {
+              pendingEntry.remove();
+            }
+            context.refreshPage();
+            context.setActionableInvitation(null);
+            $.event.trigger('changetofilespage:mldo', {destination: (data && data.invitation && data.invitation.resource) ? data.invitation.resource.path : "/"});
+            context.getTreeController().getFileService().dispatchCanonicalizedTreeEvent("message:treecontroller",
+              {message: DojoString.substitute(MLDOStrings.invitationPreviewInvitationAccepted, [name]), severity: "NORMAL"}, "Files");
+            if (deferredPromise && typeof deferredPromise === "object") {
+              deferredPromise.resolve("/" + name);
+            }
+          })
+          .fail(function(err) {
+            if (err.errorCode === "RESOURCE_ALREADY_EXISTS") {
+              var renamePrompt = new RenamePrompt({
+                initialText: name,
+                promptTitle: DojoString.substitute(MLDOStrings.sharingPageAcceptInvitationNameConflictDialogTitle, [originalName]),
+                promptLabel: DojoString.substitute(MLDOStrings.sharingPageAcceptInvitationNameConflictDialogLabel, [name]),
+                itemType: "folder",
+                promptAsInfo: false,
+                callback: function(newName) {
+                  context.performInvitationAcceptance.call(context, pendingEntry, invitationId, originalName, newName, deferredPromise);
+                }
+              });
+              var renamePromptDialogContainer = document.createElement('div');
+              renamePromptDialogContainer.setAttribute("id", "renamePromptDialogContainer");
+              $('#modalContainer').append(renamePromptDialogContainer);
+              renamePrompt.setElement(renamePromptDialogContainer);
+              renamePrompt.render();
+            } else if (err.errorCode === "PERMISSION_DOES_NOT_EXIST") {
+              context.refreshPendingInvitationsList();
+            } else {
+              var msg = Util.getErrorMessageTranslator().getTranslatedMessage(err, "sharingPage.acceptInvitation");
+              context.getTreeController().getFileService().notify(msg, "ERROR");
+            }
+          });
+          return deferredPromise;
+        }
+      };
+
+      this.performInvitationDeclination = function(pendingEntry, invitationId) {
+        var context = this;
+        var promise;
+        var msg;
+        if (invitationId) {
+          promise = this.getTreeController().getFileService().declineSharingInvitation(invitationId);
+          promise.done(function() {
+            msg = DojoString.substitute(MLDOStrings.invitationPreviewInvitationDeclined, [pendingEntry.data("invitationname")]);
+            if (pendingEntry) {
+              pendingEntry.remove();
+            }
+            if ($('li.pendingInvitationEntry').length === 0) {
+              context.refreshPendingInvitationsList();
+            }
+            context.getTreeController().getFileService().notify(msg, "NORMAL");
+          })
+          .fail(function(err) {
+            msg = Util.getErrorMessageTranslator().getTranslatedMessage(err, "sharingPage.declineInvitation");
+            context.getTreeController().getFileService().notify(msg, "ERROR");
+          });
+        }
+      };
+
+      this.declinePendingInvitation = function(e) {
+        if (e && e.preventDefault) {
+          e.preventDefault();
+        }
+        $(".retentionInfo").tooltip('hide');
+        $('[data-toggle="tooltip"]').tooltip('hide');
+        var pendingEntry = $(e.currentTarget).closest('li.pendingInvitationEntry');
+        var invitationId = pendingEntry.data("invitationid");
+        this.performInvitationDeclination(pendingEntry, invitationId);
+      };
+
+      this.copyPendingInvitation = function(e) {
+        if (e && e.preventDefault) {
+          e.preventDefault();
+        }
+        var pendingEntry = $(e.currentTarget).closest('li.pendingInvitationEntry');
+        var invitationId = pendingEntry.data("invitationid");
+        var name = pendingEntry.data("invitationname");
+        if (invitationId) {
+          this.performInvitationCopy(pendingEntry, invitationId, name, name);
+        }
+      };
+
+      this.getInvitationIdToSelect = function() {
+        return this.invitationIdToSelect;
+      };
+
+      this.setInvitationIdToSelect = function(invitationId) {
+        this.invitationIdToSelect = invitationId;
+      };
+
+      this.setActionableInvitation = function(data) {
+        if (data && typeof data === "object" && data.hasOwnProperty("invitationId") && data.hasOwnProperty("action")) {
+          this.actionableInvitation = data;
+        } else {
+          this.actionableInvitation = null;
+        }
+      };
+
+      this.getActionableInvitation = function() {
+        return this.actionableInvitation;
+      };
+
+      this.goToSymLink = function(e) {
+        var destinationPath = $(e.currentTarget).data("linkpath");
+        var tombstoneId = $(e.currentTarget).data("tombstoneid");
+        var parentPath;
+        var folderName;
+        if (destinationPath) {
+          parentPath = Util.getParentPath(destinationPath);
+          folderName = Util.getFolderNameFromPath(destinationPath);
+          $.event.trigger("changetofilespage:mldo", {destination: parentPath});
+          this.getTreeController().getFileService().focusRowAfterGridRefresh({path: "/" + folderName, parentFolder: "/" + folderName, pageId: "Files"});
+        } else if(tombstoneId) {
+          $.event.trigger("changetotrashpage:mldo");
+          this.getTreeController().getFileService().focusRowAfterGridRefresh({path: "/" , tombstoneId: tombstoneId, pageId: "Trash"});
+        }
+      };
+
+      this.getTreeControllerOptions = function() {
+        return {
+          id: "Sharing",
+          indentWidth: 25,
+          enableNavigation: false,
+          showUploadDetails: false,
+          viewFileEnabled: false,
+          viewerServiceEnabled: false,
+          viewerServiceURL: "",
+          openWithEnabled: false,
+          mockOpenwith: false,
+          directoryUploadEnabled: false,
+          sharingEnabled: true,
+          personalInvitationsEnabled: (this.config.isPersonalInvitationsEnabled && this.config.isPersonalInvitationsEnabled()),
+          editPermissionsEnabled: (this.config.isEditPermissionsEnabled && this.config.isEditPermissionsEnabled()),
+          allowDnD: false,
+          listMethodName: "getAcceptedSharingInvitations",
+          shouldShowUnshareOption: (this.config.shouldShowUnshareOption && this.config.shouldShowUnshareOption()) ? true : false,
+          actions: {
+            manage: (this.config.isSharingEnabled && this.config.isSharingEnabled()),
+            link: (this.config.isSharingEnabled && this.config.isSharingEnabled())
+            // TODO LEAVE
+            // leave: (this.config.isSharingEnabled && this.config.isSharingEnabled())
+          },
+          columns: {
+            linkName: true,
+            sharedBy: true,
+            sharedOn: true,
+            accessType: true
+          }
+        };
+      };
+
+      this.refreshPage = function() {
+        this.getTreeController().refresh();
+        this.refreshPendingInvitationsList();
+      };
+
+
+      this.constructor.__super__.initializeParams.apply(this, arguments);
+
+      this.htmlLocalStorage = (typeof(Storage) !== "undefined");
+      // Test and turn off if browser settings doesn't allow access.
+      if (this.htmlLocalStorage) {
+        try {
+          localStorage.getItem("mldo.currentFolder");
+        } catch (e) {
+          this.htmlLocalStorage = false;
+        }
+      }
+
+      this.createTreeController(this.getTreeControllerOptions());
+
+      // bind 'this' in the listed methods to the current 'this',
+      // even when called by other modules.
+      _.bindAll(this, "logoutPage", "goToTrashCan", "goToFiles", "refreshPage",
+                      "invalidate", "updateUserQuota", "toggleShowHiddenFiles",
+                      "changeApplication", "createTreeController",
+                      "getTreeControllerOptions", "deSelectGrid",
+                      "acceptPendingInvitation", "declinePendingInvitation",
+                      "copyPendingInvitation",
+                      "refreshPendingInvitationsList", "needsRefresh",
+                      "createPendingInvitationEntry",
+                      "handleGetPendingInvitationsError",
+                      "performInvitationDeclination",
+                      "processGetPendingInvitationsResponse");
+    }
+
+  });
+  return SharingPage;
+}); // require

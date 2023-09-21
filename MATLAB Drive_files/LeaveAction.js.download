@@ -1,0 +1,94 @@
+define([
+    "dojo/_base/declare",
+    "mw-filebrowser/actions/Action",
+    "mw-keybindings/DefaultKeys",
+    "mw-filename-utils/FileNameUtil",
+    "util",
+    "dojo/i18n!nls/mldoStringResource",
+    "dojo/string"
+], function (declare, Action, DefaultKeys, FileNameUtil, Util, MLDOStrings, DojoString) {
+  return declare(Action, {
+    constructor: function (args) {
+        args = args || {};
+        var context = args.context;
+        var makeActionAvailable = args.showAction || false;
+        this.name =  "leaveAction";
+        this.label = MLDOStrings.contextMenuLeaveLabel;
+        this.id = "mldoLeaveAction";
+        this.enabled = makeActionAvailable;
+        this.section = args.isSubMenu ? {
+            id: "shareSub2",
+            name: "shareSub2",
+            enabled: false,
+            isApplicableTo: function() { return false; },
+            label: "shareSub2",
+            parent: {
+                id: "mldoShareAction",
+                name: MLDOStrings.contextMenuShareLabel,
+                label: MLDOStrings.contextMenuShareLabel,
+                allowSubMenu: true,
+                forceSubMenu: false
+            }
+        } : {
+          id: "MISC2",
+          name: "MISC2",
+          allowSubMenu: false,
+          forceSubMenu: false
+        };
+        this.supportsKeyBinding = false;
+        this.isApplicableTo = function (path) {
+          var selectedFileCount = context.getSelectedRowCount();
+          var currentFolder = context.getCurrentFolder();
+          if (selectedFileCount > 1) {
+            this.enabled = false;
+          } else {
+            var fileInfos = context.getSelectedItemFileInfos();
+            var fileInfo;
+            if (selectedFileCount === 0) {
+              if (currentFolder === "/") {
+                this.enabled = false;
+              } else {
+                fileInfo = context.getCurrentFolderInfo();
+              }
+            } else {
+              fileInfo = fileInfos[0];
+            }
+            if (fileInfo && FileNameUtil.isFileInfo(fileInfo) && fileInfo.isDirectory &&
+                (fileInfo.isSharedFolder && fileInfo.accessType.toLowerCase() !== "owner") &&
+                (!("linkPath" in fileInfo) || fileInfo.linkPath) ) {
+              this.enabled = makeActionAvailable && true;
+            } else {
+              this.enabled = false;
+            }
+          }
+          return true;
+        };
+        this.callback = function (action) {
+          var fileInfos = context.getSelectedItemFileInfos();
+          var currentFolder = context.getCurrentFolder();
+          var sortedFileInfos;
+          var fileInfo;
+          var path;
+          if (fileInfos.length) {
+            sortedFileInfos = Util.sortFileInfosByPath(fileInfos);
+            fileInfo = fileInfos[0];
+            path = context.getSelectedItemFullPath(fileInfo);
+          } else {
+            path = context.getSelectedItemFullPath();
+            fileInfo = context.getFullPathFileInfo();
+          }
+
+          // override if there is a linkPath value
+          if ("linkPath" in fileInfo && fileInfo.linkPath.length) {
+            path = fileInfo.linkPath;
+          }
+          if (this.isApplicableTo()) {
+            if (fileInfos.length <= 1 && fileInfo && path) {
+              context.handleLeaveAction(path, fileInfo);
+            }
+          }
+        };
+    }
+  });
+
+});

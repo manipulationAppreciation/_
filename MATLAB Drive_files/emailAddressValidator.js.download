@@ -1,0 +1,318 @@
+define([
+  "underscore",
+  "dojo/i18n!nls/mldoStringResource",
+  "dojo/string"
+], function(_, MLDOStrings, DojoString) {
+
+  // email address validation
+  var ILLEGAL_SUBSTRINGS = [ "%", "^", "#&", "://", "/>", "<>" ];
+  var VALID_DOMAIN_FORMAT_PART_ONE = /^[^.\-\s](?:[a-zA-Z0-9\-_.#]*)$/;
+  var BAD_DOMAIN = 0;
+  var TOO_MANY_AT_SIGNS = -1;
+  var MISSING_AT_SIGN_NOT_AN_ERROR_YET = 1;
+
+  var EmailAddressValidator = function(args) {
+    this.currentUserEmail = "";
+    this.initialize(args);
+  };
+
+  EmailAddressValidator.prototype = {
+    initialize: function(args) {
+      if (!args || typeof args !== "object" || Object.keys(args).length === 0) {
+        throw new TypeError("Invalid arguments");
+      }
+      this.currentUserEmail = args.currentUserEmail || "";
+      _.bindAll(this, "validateMultipleEmailAddresses",
+                      "validateSingleEmailAddress" );
+    },
+
+    emailAddressContainsIllegalCharacterSequence: function(email) {
+      var illegalSubstring = false;
+
+      if (email.length && !illegalSubstring) {
+        var rawEmail = _.unescape(email);
+        var illegalSubstringArrayLength = ILLEGAL_SUBSTRINGS.length;
+        var foundIllegalSubstring = false;
+        for (var illegalSubstringArrayIndex = 0, substring = "";
+             !foundIllegalSubstring && (illegalSubstringArrayIndex < illegalSubstringArrayLength);
+             illegalSubstringArrayIndex++) {
+          substring = ILLEGAL_SUBSTRINGS[illegalSubstringArrayIndex];
+          if (rawEmail.indexOf(substring) >= 0) {
+            illegalSubstring = true;
+          }
+        }
+      }
+      return illegalSubstring;
+    },
+
+    emailAddressTooLong: function(email) {
+      var tooLong = false;
+      if (email && email.length > 70) {
+        tooLong = true;
+      }
+      return tooLong;
+    },
+
+    isMyOwnEmailAddress: function(email) {
+      var inviteMyself = false;
+      // Inviting oneself is not allowed
+      if (email && email.length && this.currentUserEmail && this.currentUserEmail.toLowerCase() === email.toLowerCase()) {
+        inviteMyself = true;
+      }
+      return inviteMyself;
+    },
+
+    emailAddressMissingAtSign: function(email) {
+      var missingAtSign = false;
+      var atSignIndex = -1;
+      if (email && typeof email === "string" && email.length) {
+        atSignIndex = email.indexOf("@");
+      }
+      return (atSignIndex < 0);
+    },
+
+    emailAddressContainsMultipleAtSigns: function(email) {
+      var containsMultipleAtSigns = false;
+      if (email && typeof email === "string" && email.replace(/[^@]/g, "").length > 1) {
+        containsMultipleAtSigns = true;
+      }
+      return containsMultipleAtSigns;
+    },
+
+    emailAddressEndsWithPeriod: function(email) {
+      var endsWithPeriod = false;
+      if (email && typeof email === "string" && email.length) {
+        endsWithPeriod = (email.slice(-1) === ".");
+      }
+      return endsWithPeriod;
+    },
+
+    emailAddressHasDomain: function(email) {
+      var hasDomain = false;
+      var atSignIndex;
+      if (email && typeof email === "string" && email.length) {
+        atSignIndex = email.indexOf("@");
+        if ((atSignIndex > 0) && email.substring(atSignIndex + 1).length) {
+          hasDomain = true;
+        }
+      }
+      return hasDomain;
+    },
+
+    emailAddressDomainHasSubDomain: function(domain) {
+      var hasSubDomain = false;
+      if (domain && typeof domain === "string" && domain.length) {
+        hasSubDomain = (domain.indexOf(".") >= 0);
+      }
+      return hasSubDomain;
+    },
+
+    emailAddressLocalPartIsValid: function(email) {
+      var isValid = false;
+      if (email && typeof email === "string" && email.length) {
+        var atSignIndex = email.indexOf("@");
+        if (atSignIndex > 0) {
+          var localPart = email.substring(0, atSignIndex);
+          var localPartEndsInPeriod = this.emailAddressEndsWithPeriod(localPart);
+          if (localPart.match(VALID_DOMAIN_FORMAT_PART_ONE) && !localPartEndsInPeriod) {
+            isValid = true;
+          }
+        }
+      }
+      return isValid;
+    },
+
+    isRestrictedSubDomain: function(subDomain) {
+      var isRestrictedSubDomain = false;
+      var RESTRICTED_DOMAINS = [ "CU", "IR", "LY", "KP", "SD", "SY" ];
+      if (subDomain && typeof subDomain === "string" && subDomain.length) {
+        isRestrictedSubDomain = (RESTRICTED_DOMAINS.indexOf(subDomain.toUpperCase()) >= 0);
+      }
+      return isRestrictedSubDomain;
+    },
+
+    emailAddressSubDomainsAreValid: function(domain, checkEnding) {
+      var isValid = true;
+      var badDomain = false;
+      var context = this;
+      if (domain && typeof domain === "string" && domain.length) {
+        var subDomains = domain.split(".");
+        var subDomainsLastIndex = subDomains.length - 1;
+        // validate each sub-domain
+        subDomains.forEach(function(subDomain, index, origArray) {
+          if (!badDomain && (index < subDomainsLastIndex) && !subDomain.match(VALID_DOMAIN_FORMAT_PART_ONE)) {
+            badDomain = true;
+          }
+          if (checkEnding && !badDomain && context.isRestrictedSubDomain(subDomain)) {
+            badDomain = true;
+          }
+        });
+      }
+      isValid = !badDomain;
+      return isValid;
+    },
+
+    getAtSignInEmailUsageInfo: function(email, checkEnding) {
+      var returnValue = { isValid: true, errorCode: 0 };
+      if ((!email && email !== "") || typeof email !== "string") {
+        throw new TypeError("Invalid email argument");
+      }
+      if (typeof checkEnding !== "boolean") {
+        throw new TypeError("Invalid checkEnding argument. Should be true or false.");
+      }
+
+      var atSignIndex = email.indexOf("@");
+
+      // Does it not contain an "@" character? No good. Missing domain.
+      if (atSignIndex < 0 && email.length) {
+        returnValue.isValid = false;
+        if (checkEnding) {
+          returnValue.errorCode = BAD_DOMAIN;
+        } else {
+          returnValue.errorCode = MISSING_AT_SIGN_NOT_AN_ERROR_YET;
+        }
+      }
+
+      // contains more than 1 "@" char?
+      if ((returnValue.isValid) && this.emailAddressContainsMultipleAtSigns(email)) {
+        returnValue.isValid = false;
+        returnValue.errorCode = TOO_MANY_AT_SIGNS;  // atSignCount is the number of times an email had more than 1 "@" char.
+      }
+
+      // locale part missing? (i.e. can't start with @ sign)
+      if ((returnValue.isValid) && (atSignIndex === 0)) {
+        returnValue.isValid = false;
+        returnValue.errorCode = BAD_DOMAIN;
+      }
+
+      return returnValue;
+    },
+
+    /**
+      * @description Validates a single email address, possibly using the
+      * results of previoius validations as a start.
+      * @param email: string - email address
+      * @param checkEnding: boolean - typing is complete so, check ending of email
+      * @param initialValues: object - initial validation parameter values
+      * @return object with fields "atSignCount, badDomain, domain"
+    */
+    validateSingleEmailAddress: function(email, checkEnding, initialValues) {
+      if ((!email && email !== "") || typeof email !== "string") {
+        throw new TypeError("Invalid email argument");
+      }
+      if (typeof checkEnding !== "boolean") {
+        throw new TypeError("Invalid checkEnding argument. Should be true or false.");
+      }
+      if (!initialValues || typeof initialValues !== "object" ||
+          !("atSignCount" in initialValues) || isNaN(initialValues.atSignCount) ||
+          !("badDomain" in initialValues) || !("domain" in initialValues) ||
+          typeof initialValues.domain !== "string") {
+        throw new TypeError("Invalid initialValues argument");
+      }
+
+      var atSignIndex = email.indexOf("@");
+
+      var lengthTooLong = initialValues.lengthTooLong;
+      var illegalSubstring = initialValues.illegalSubstring;
+      var atSignCount = initialValues.atSignCount;
+      var inviteMyself = initialValues.inviteSelf;
+      var badDomain = initialValues.badDomain;
+      var domain = initialValues.badDomain ? initialValues.domain : email.substring(atSignIndex + 1);
+
+      illegalSubstring = this.emailAddressContainsIllegalCharacterSequence(email);
+      if (!illegalSubstring) {
+        lengthTooLong = this.emailAddressTooLong(email);
+      }
+      if (!illegalSubstring && !lengthTooLong) {
+
+        // emailing oneself is not allowed
+        inviteMyself = this.isMyOwnEmailAddress(email);
+
+        var atSignUsageInfo = this.getAtSignInEmailUsageInfo(email, checkEnding);
+        var atSignUsageValid = atSignUsageInfo.isValid;
+        if (!atSignUsageValid) {
+          switch (atSignUsageInfo.errorCode) {
+            case TOO_MANY_AT_SIGNS:
+              ++atSignCount;
+              break;
+            case BAD_DOMAIN:
+              badDomain = true;
+              break;
+          }
+        }
+
+        if (!badDomain && atSignUsageValid && email.trim().length) { // Has an "@" character? Validate the domain.
+
+          if (!this.emailAddressLocalPartIsValid(email)) {
+            badDomain = true;
+          }
+
+          // Only check if there is not already a bad domain
+          if (!badDomain && domain && domain.length) {
+            // check if domain is valid.
+            // A domain can have sub-domains (separated by ".").
+            if (!domain.match(VALID_DOMAIN_FORMAT_PART_ONE)) {
+              badDomain = true;
+            } else if (this.emailAddressDomainHasSubDomain(domain)) {  // sub-domains?
+              if (!this.emailAddressSubDomainsAreValid(domain, checkEnding)) {
+                badDomain = true;
+              }
+            } else {
+              if (checkEnding) {
+                badDomain = true;
+              }
+            }
+          } else {
+            // missing domain
+            if (checkEnding && !badDomain && !this.emailAddressHasDomain(email)) {
+              badDomain = true;
+            }
+          }
+        }
+
+        if (checkEnding) {
+          // Should not end with a "."
+          if (this.emailAddressEndsWithPeriod(email)) {
+            badDomain = true;
+          }
+        }
+      }
+
+      return {
+        illegalSubstring: illegalSubstring,
+        lengthTooLong: lengthTooLong,
+        atSignCount: atSignCount,
+        inviteSelf: inviteMyself,
+        badDomain: badDomain,
+        domain: domain
+      };
+    },
+
+    /**
+      * @description Validates an array of email addresses
+      * @param emails: array - email addresses
+      * @param checkEnding: boolean - typing is complete so, check ending of email
+      * @return object with fields "atSignCount, badDomain, domain"
+    */
+    validateMultipleEmailAddresses: function(emails, checkEnding) {
+      var context = this;
+      var results = {
+        illegalSubstring: false,
+        lengthTooLong: false,
+        atSignCount: 1,
+        badDomain: false,
+        inviteSelf: false,
+        domain: ""
+      };
+      if (emails && emails.length) {
+        emails.forEach(function(email, i, a) {
+           results = context.validateSingleEmailAddress(email, checkEnding ? true : false, results);
+        });
+      }
+      return results;
+    }
+
+  };
+
+  return EmailAddressValidator;
+}); // require

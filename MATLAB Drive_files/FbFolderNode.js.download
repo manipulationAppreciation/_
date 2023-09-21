@@ -1,0 +1,67 @@
+define([], function() {
+
+  /**
+   * Map GDS folder to FileBrowser2 folder node data
+   */
+  FbFolderNode = function(gdsFolder, parent, isRelativeRoot, parentWritable) {
+    var gds = gdsFolder || {};
+    var parentCanWrite = (parent && parent.filePermissions && "canWrite" in parent.filePermissions) ? parent.filePermissions.canWrite : !!parentWritable;
+    // FileBrowser2 fields
+    this.isDirectory = true;
+    this.filePermissions = {canWrite: gds.writable, parentCanWrite: parentCanWrite};
+    this.type = "folder";
+    this.isSharedFolder = gds.sharedFolder;
+    this.hasActiveLink = gds.hasActiveLink;
+    this.accessType = (this.isSharedFolder && gds.invitation && gds.invitation.accessType) ? gds.invitation.accessType : gds.accessType;
+    this.childCount = gds.childCount;
+    if (this.isSharedFolder) {
+      this.shareAttributes = {
+        isProducedRoot: true,
+        invitationType: gds.invitation && gds.invitation.invitationType ? gds.invitation.invitationType : "",
+        hasActiveLink: gds.invitation && gds.invitation.hasActiveLink ? gds.invitation.hasActiveLink : false
+      };
+      /*
+      ** temp workaround
+      */
+      if (this.accessType === "READ_ONLY") {
+        this.filePermissions.canWrite = false;
+      }
+    }
+    this.sharedParentPath = gds.sharedParentPath || "";
+    this.initiator = gds.initiator || "";
+    this.separator = "/";
+    this.name = gds.name;
+    if (gds.name !== "/") {
+      this.parent = ((parent && parent.path)? parent.path : "/");
+      this.location = ((parent && parent.path && parent.path !== "/")? parent.path + "/" : "/");
+      this.path = ((parent && parent.path && parent.path !== "/")? parent.path + "/" : "/") + gds.name;
+    } else {
+      this.parent = "";
+      this.location = "/";
+      this.path = gds.name;
+    }
+    if (isRelativeRoot) {
+      this.parent = "";
+      this.location = "/";
+      this.path = "/";
+    }
+    this.createdOnUtc = gds.createdDate;
+    this.modifiedUtc = gds.lastModifiedDate;
+    this.clientLastModifiedUtc = gds.clientLastModifiedDate || gds.lastModifiedDate;
+    if (gds.hasOwnProperty("folderSize") && gds.folderSize !== null) {
+      this.folderSize = gds.folderSize;
+    }
+    // trash contents ?
+    if (gds.tombstone && gds.deletedDate && gds.parentResource && gds.parentResource.path) {
+      this.originalLocation = gds.parentResource.path;
+      this.deletedDate = gds.deletedDate;
+      this.tombstoneId = gds.tombstone;
+      this.isSharedContent = gds.sharedTrash || false;
+    }
+    // Search results
+    if (gds.fullPath) {
+      this.originalLocation = gds.fullPath;
+    }
+  };
+  return FbFolderNode;
+});

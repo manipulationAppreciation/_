@@ -1,0 +1,62 @@
+define([
+    "dojo/_base/declare",
+    "mw-filebrowser/actions/Action",
+    "mw-keybindings/DefaultKeys",
+    "dojo/keys",
+    "mw-filename-utils/FileNameUtil",
+    "util",
+    "dojo/i18n!nls/mldoStringResource",
+    "dojo/string"
+], function (declare, Action, DefaultKeys, keys, FileNameUtil, Util, MLDOStrings, DojoString) {
+  return declare(Action, {
+    constructor: function (args) {
+        args = args || {};
+        var context = args.context;
+        var pageName = args.pageName || "";
+        var makeActionAvailable = args.showAction || false;
+        this.name = MLDOStrings.contextMenuShareLabel;
+        this.label = MLDOStrings.contextMenuShareLabel;
+        this.enabled = makeActionAvailable;
+        this.personalInvitationsEnabled = args.isPersonalInvitationsEnabled || false;
+        this.id = "mldoShareAction";
+        this.allowSubMenu = true;
+        // TODO LEAVE
+        // this.childActionIds = ["mldoManageAction", "mldoLinkAction", "mldoLeaveAction"];
+        this.childActionIds = this.personalInvitationsEnabled === true ? ["mldoManageAction", "mldoLinkAction"] : ["mldoLinkAction"];
+        this.section = {
+            id: "MISC",
+            name: "MISC",
+            allowSubMenu: true,
+            forceSubMenu: false
+        };
+        this.isApplicableTo = function (path) {
+          var selectedFileCount = context.getSelectedRowCount();
+          var currentFolder = context.getCurrentFolder();
+          if (selectedFileCount === 0) {
+            this.enabled = false;
+          } else if (selectedFileCount !== 1) {
+            this.enabled = false;
+          } else {
+            var fileInfos = context.getSelectedItemFileInfos();
+            var fileInfo = fileInfos[0];
+            if (fileInfo && FileNameUtil.isFileInfo(fileInfo) && fileInfo.isDirectory &&
+                (fileInfo.filePermissions.canWrite || fileInfo.isSharedFolder) &&
+                (!("linkPath" in fileInfo) || fileInfo.linkPath) ) {
+              //if the folder has a shared parent, it can not be shared
+              if((fileInfo.isSharedFolder && fileInfo.path !== fileInfo.sharedParentPath)|| (!fileInfo.isSharedFolder && fileInfo.initiator)) {
+                this.enabled = false;
+                this.allowSubMenu = false;
+                return false;
+              } else {
+                this.enabled = makeActionAvailable && true;
+              }
+            } else {
+              this.enabled = false;
+            }
+          }
+          return this.enabled;
+        };
+    }
+  });
+
+});

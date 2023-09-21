@@ -1,0 +1,67 @@
+define([
+  "underscore",
+  "widgets/abstractWidget",
+  "userquotamanager"
+], function(_, AbstractWidget, UserQuotaController) {
+  var QuotaWidget = function(args) {
+    var initializeArgs = {
+      widgetName: "quota",
+      embeddedCore: (args && (typeof args === "object") && args.embeddedCore) ? args.embeddedCore : null,
+      apsType: "STORAGE"
+    };
+    this.initialize(initializeArgs);
+  };
+  QuotaWidget.prototype = Object.create(AbstractWidget.prototype);
+  QuotaWidget.prototype.constructor = QuotaWidget;
+  QuotaWidget.prototype.initialize = function(args) {
+    // super
+    Object.getPrototypeOf(QuotaWidget.prototype).initialize.call(this, args);
+    this.controller = new UserQuotaController(
+      {
+        gdsDAO: this.getEmbeddedCore().getDAO(),
+        isEmbedded: true,
+        embeddedName: this.getName()
+      }
+    );
+    _.bindAll(this, "getInstance");
+  };
+  /*
+   *  Display the GDS quota usage for the user associated with the provided
+   *  sessionId. When this method is called without a sessionId (e.g. when used as
+   *  the "src" value in a iframe), a message of "quota" is posted
+   *  to the parent window.  It's a signal that the app is loaded.  If the
+   *  embedding page then posts another message with the
+   *  "sessionId" value specified, we render the widget using data associated
+   *  with that sessionID.  configOptions are ignored in this case.
+   */
+  QuotaWidget.prototype.getInstance = function(containerId, sessionId, configOptions) {
+    containerId = containerId || "";
+    configOptions = configOptions || {};
+    var embeddedWidgetName = this.getName();
+    // super
+    Object.getPrototypeOf(QuotaWidget.prototype).getInstance.call(this, containerId, sessionId, configOptions);
+    if (sessionId) {
+      this.sessionId = sessionId;
+      configOptions.isEmbedded = true;
+      this.getWidgetContainer().html('');
+      var elem = document.createElement('div');
+      elem.id = "embeddedQuota";
+      this.getWidgetContainer().html(elem);
+      this.getWidgetContainer().show();
+      this.getController().gdsDAO.setSessionId(sessionId);
+      this.getController().setElement($(elem));
+      this.getController().setEmbeddedContainerId(containerId);
+      this.getController().setEmbeddedClientHost(this.getEmbeddedCore().getClientHost());
+      this.getController().render();
+      this.getEmbeddedCore().stopDragAndDrop();
+      this.getEmbeddedCore().$el.on("dragover", this.getEmbeddedCore().dragoverNotAllowed);
+      window.parent.postMessage(JSON.stringify({ name: "widgetstaticready:" + embeddedWidgetName + ":" + containerId }), this.getEmbeddedCore().getClientHost());
+
+    } else {
+      // signal we are ready
+      window.parent.postMessage(JSON.stringify({ name: "widgetinit:" + embeddedWidgetName + ":" + containerId }), this.getEmbeddedCore().getClientHost());
+    }
+  };
+
+  return QuotaWidget;
+});

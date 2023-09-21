@@ -1,0 +1,300 @@
+define([
+  "underscore",
+  "jquery",
+  "backbone",
+  "loginuimanager",
+  "util",
+  "dao/gdsdao",
+  "dao/mockdao"
+], function( _, $, Backbone, LoginUIManager, Util, GDSDAO, MockDAO) {
+
+  AuthManager = function(options, config) {
+    // config should be provide and have a getGdsURL method -- if not, throw exception
+    if (!config || typeof config != 'object' || !config.getGdsURL || !config.getDAOClassName) {
+      throw new Error("Config parameter missing or incorrect. Unable to configure GDS connection.");
+    }
+    this.config = config;
+    this.gdsLoginURL = this.config.getGdsURL(); // set the URL for talking to GDS
+    this.logoutURL = this.config.getLogoutURL() + encodeURIComponent(Util.getMldoURL(window.location.href, "login"));
+    this.authContainerId = options.authContainerId; // html element's id attribute value
+    this.loginIframeId = options.loginIframeId; // html element's id attribute value
+    this.loginTextContainerId = options.loginTextContainerId;
+    this.loginFooterId = options.loginFooterId;
+    this.loginLinkAreaId = options.loginLinkAreaId;
+    // The embedded login manager
+    this.loginUIManager = new LoginUIManager({iframeId: this.loginIframeId,
+                                              authContainerId: this.authContainerId,
+                                              loginTextContainerId: this.loginTextContainerId,
+                                              loginFooterId: this.loginFooterId,
+                                              loginLinkAreaId: this.loginLinkAreaId},
+                                              this.config);
+    // Right now we only use HTML5 local storage. If that's not supported, we do no storing of values.
+    this.htmlLocalStorage = (typeof(Storage) !== "undefined")? true : false;  // can we use HTML5 local (or session) storage?
+    // test and turn off if browser settings doen't allow access.
+    if (this.htmlLocalStorage) {
+      try {
+        localStorage.getItem("mldo.currentFolder");
+      } catch (e) {
+        this.htmlLocalStorage = false;
+      }
+    }
+
+    // Intermodule communication channel to warn of session expiration
+    this.sessionStatusListener = _.extend({}, Backbone.Events);
+
+    /*
+     * The  Data Access Object (DAO) used to communicate with the backend service
+     */
+    this.dao = null;
+    this.dao = (function (classname, config) {
+      var p = Util.getClassFromFullPackageName(classname);
+      if (!p) {
+        throw new Error('Unable to instantiate DAO of class ' + classname);
+      }
+      var dao = new p(config);
+      if (!dao) {
+        throw new Error('Unable to instantiate DAO of class ' + classname);
+      }
+      return dao;
+    })(this.config.getDAOClassName(), this.config);
+
+    this.getMinutesBeforeRelogin = function() {
+      return this.getDAO().getMinutesBeforeRelogin();
+    };
+    this.setMinutesBeforeRelogin = function(minutes) {
+      this.getDAO().setMinutesBeforeRelogin(minutes);
+    };
+    this.useHtmlLocalStorage = function() {
+      return this.htmlLocalStorage;
+    };
+    this.getLoginUIManager = function() {
+      return this.loginUIManager;
+    };
+    this.getGDSLoginURL = function() {
+      return this.gdsLoginURL;
+    };
+    this.getDAO = function() {
+      return this.dao;
+    };
+    this.authTokenExpiredHandler = function() {
+      this.clearLoginInformation();
+      $.event.trigger('exitApplication:mldo');
+    };
+
+    // bind 'this' in the listed methods to the current 'this', even when called by other modules.
+    _.bindAll(this, "authTokenExpiredHandler", "updateLoginInformation");
+
+
+  };
+
+  AuthManager.prototype = {
+    start: function() {
+      this.sessionStatusListener.bind("AUTH_TOKEN_EXPIRED", this.authTokenExpiredHandler);
+      this.getDAO().setSessionListener(this.sessionStatusListener);
+    },
+    stop: function() {
+      this.sessionStatusListener.unbind(); // all events
+      this.getLoginUIManager().stop();
+    },
+    hide: function() {
+      this.getLoginUIManager().hide();
+    },
+    isValidSession: function() {
+      return (this.getSessionId() && this.getLoginData());
+    },
+    isLoggedIn: function() {
+      // return (this.getAuthToken() && this.getLoginData());
+      return (this.getLoginData());
+    },
+    getLogoutURL: function() { return this.logoutURL; },
+    /**
+     * Setter for the auth token received from the login service
+     * We store it as a local member for our current browser session.
+     */
+    setAuthToken: function(token) {
+      // in-memory only
+      this.getDAO().setAuthToken(token);
+    },
+    /**
+     * Getter for the auth token received from the login service.
+     */
+    getAuthToken: function() {
+      return this.getDAO().getAuthToken();
+    },
+    /**
+     * Delete stored value of auth token
+     */
+    removeAuthToken: function() {
+      if (this.useHtmlLocalStorage()) {
+        localStorage.removeItem("authToken");
+      }
+      this.getDAO().setAuthToken(null);
+    },
+    /**
+     * Getter for the login user profile data received from the login service.
+     */
+    getLoginData: function() {
+      return this.getDAO().getLoginData();
+    },
+    /**
+     * Delete stored value of login data (profile)
+     */
+    removeLoginData: function() {
+      if (this.useHtmlLocalStorage()) {
+        localStorage.removeItem("loginData");
+      }
+      this.getDAO().setLoginData(null);
+    },
+    /**
+     * Setter for the login profile data received from the login service
+     */
+    setLoginData: function(data) {
+      this.getDAO().setLoginData(data);
+    },
+
+    /**
+     * Setter for the session ID received from GDS
+     */
+    setSessionId: function(sessionId) {
+      this.getDAO().setSessionId(sessionId);
+    },
+    /**
+     * Getter for the session ID received from GDS
+     */
+    getSessionId: function() {
+      return this.getDAO().getSessionId();
+    },
+    /**
+     * Delete stored value of Session ID
+     */
+    removeSessionId: function() {
+      if (this.useHtmlLocalStorage()) {
+        localStorage.removeItem("sessionId");
+      }
+      this.getDAO().setSessionId(null);
+    },
+    /**
+     * Store all session/user info received from GDS Login
+     */
+     updateLoginInformation: function(sessionRenewalData) {
+       this.getDAO().updateLoginInformation(sessionRenewalData);
+     },
+     clearLoginInformation: function() {
+       this.getDAO().clearLoginInformation();
+     },
+    /**
+     * Used by event listener callback for "loginmgr:loginsuccess" events.
+     * Store the user profile data and the auth token
+     */
+    notifyAccountLoginSuccess : function(data) {
+      if (data && data.token) {
+        this.setLoginData(data);
+        if (data.accessToken) {
+          this.setAuthToken(data.accessToken); // V2 embeddedLoginWS
+        } else {
+          this.setAuthToken(data.token); // V1 embeddedLoginWS
+        }
+        // Login is done so, stop listening to the login manager
+        this.stopLoginMgrListener();
+        this.doServiceHandshake();
+      } else {
+        throw new Error("notifyAccountLoginSuccess called with invalid login data.");
+      }
+    },
+
+    displayHandshakeError: function(msg) {
+      $('#loginHandshakeErrorContainer').show();
+      $('#loginHandshakeErrorText').text(msg);
+    },
+
+    clearHandshakeError: function() {
+      $('#loginHandshakeErrorText').empty();
+      $('#loginHandshakeErrorContainer').hide();
+    },
+
+    /**
+     * Does actual AJAX call to GDS for login handshake.
+     * If successful, we get back a session ID
+     */
+    serviceHandshake: function() {
+      this.clearHandshakeError();
+      return this.getDAO().serviceHandshake(this.getAuthToken());
+    },
+
+    /**
+     * Start listening for login mgr events
+     */
+    startLoginMgrListener: function() {
+      var context = this;
+      this.stopLoginMgrListener();
+      $(document).on("loginmgr:loginsuccess", function(e, data) {
+        e.preventDefault();
+        context.notifyAccountLoginSuccess(data);
+      });
+    },
+    /**
+     * Stop listening for login manager events because we're done login
+     */
+    stopLoginMgrListener: function() {
+      $(document).off("loginmgr:loginsuccess");
+    },
+    /**
+     * Show the embedded login form
+     */
+    startLogin: function(clientString, errorText, view, invId) {
+      var promise = $.Deferred();
+      this.loginPromise = promise;
+      // setup communication with login manager
+      this.startLoginMgrListener();
+      this.getLoginUIManager().start(clientString, errorText, view, invId);
+      return promise;
+    },
+    /**
+     * Clear saved session ID and auth token.
+     * Hide the app container
+     * re-show the embedded login form
+     */
+    logout: function(keepLoad) {
+      this.getDAO().logout();
+      this.removeSessionId();
+      this.removeAuthToken();
+      this.removeLoginData();
+      // setup communication with login manager
+      this.startLoginMgrListener();
+      this.loginUIManager.reset(keepLoad);
+    },
+    /**
+     * Perform aynchronous GDS login handshake using auth token.
+     * Use Promise to handle success/failure callbacks
+     */
+    doServiceHandshake: function() {
+      var sessionPromise = this.serviceHandshake();
+      var context = this;
+      // If successful, store the session ID and
+      // minutes before the session expires.
+      // Then start the app contents rendering.
+      sessionPromise.done(function(result) {
+        // sanity check the result. Throw error if not good.
+        if (! result.sessionId) {
+          throw new Error("Unexpected service call results from serviceHandshake: " + JSON.stringify(result));
+        }
+        context.updateLoginInformation(result);
+        if (context.loginPromise) {
+          context.loginPromise.resolve({});
+        }
+        // On failure, if the error is authentication, redirect to
+        // embedded login form. Otherwise, log error message.
+      }).fail(function(gdsError) {
+        if(context.loginPromise) {
+          context.loginPromise.reject(gdsError);
+        }
+        if (context.getAuthToken() && context.getAuthToken().length) {
+          context.displayHandshakeError("The service is currently unavailable.  Please try again later.");
+        }
+        context.clearLoginInformation();
+      });
+      return sessionPromise;
+    }
+  };
+  return AuthManager;
+}); // require

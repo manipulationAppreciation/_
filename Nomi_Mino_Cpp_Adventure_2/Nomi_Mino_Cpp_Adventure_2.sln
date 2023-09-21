@@ -1,0 +1,31 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.2.32630.192
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Nomi_Mino_Cpp_Adventure_2", "Nomi_Mino_Cpp_Adventure_2\Nomi_Mino_Cpp_Adventure_2.vcxproj", "{FAC63020-81F1-46BB-8320-3A237B429F36}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|x64 = Debug|x64
+		Debug|x86 = Debug|x86
+		Release|x64 = Release|x64
+		Release|x86 = Release|x86
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{FAC63020-81F1-46BB-8320-3A237B429F36}.Debug|x64.ActiveCfg = Debug|x64
+		{FAC63020-81F1-46BB-8320-3A237B429F36}.Debug|x64.Build.0 = Debug|x64
+		{FAC63020-81F1-46BB-8320-3A237B429F36}.Debug|x86.ActiveCfg = Debug|Win32
+		{FAC63020-81F1-46BB-8320-3A237B429F36}.Debug|x86.Build.0 = Debug|Win32
+		{FAC63020-81F1-46BB-8320-3A237B429F36}.Release|x64.ActiveCfg = Release|x64
+		{FAC63020-81F1-46BB-8320-3A237B429F36}.Release|x64.Build.0 = Release|x64
+		{FAC63020-81F1-46BB-8320-3A237B429F36}.Release|x86.ActiveCfg = Release|Win32
+		{FAC63020-81F1-46BB-8320-3A237B429F36}.Release|x86.Build.0 = Release|Win32
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {69210880-50D9-49C6-84A9-ABC9B5FB0815}
+	EndGlobalSection
+EndGlobal
