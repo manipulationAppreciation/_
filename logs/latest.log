@@ -1,0 +1,37 @@
+[16:50:54] [ServerMain/INFO]: Environment: Environment[accountsHost=https://api.mojang.com, sessionHost=https://sessionserver.mojang.com, servicesHost=https://api.minecraftservices.com, name=PROD]
+[16:50:55] [ServerMain/INFO]: Loaded 7 recipes
+[16:50:55] [ServerMain/INFO]: Loaded 1271 advancements
+[16:50:56] [Server thread/INFO]: Starting minecraft server version 1.20.2
+[16:50:56] [Server thread/INFO]: Loading properties
+[16:50:56] [Server thread/INFO]: Default game type: SURVIVAL
+[16:50:56] [Server thread/INFO]: Generating keypair
+[16:50:56] [Server thread/INFO]: Starting Minecraft server on *:25565
+[16:50:56] [Server thread/INFO]: Using default channel type
+[16:50:57] [Server thread/INFO]: Preparing level "world"
+[16:50:58] [Server thread/INFO]: Preparing start region for dimension minecraft:overworld
+[16:50:59] [User Authenticator #1/INFO]: UUID of player LuckySimpan is 5e205e2e-67ed-4bae-9d79-27e977d134b7
+[16:51:02] [Worker-Main-1/INFO]: Preparing spawn area: 0%
+[16:51:02] [Worker-Main-1/INFO]: Preparing spawn area: 0%
+[16:51:02] [Worker-Main-1/INFO]: Preparing spawn area: 0%
+[16:51:02] [Worker-Main-1/INFO]: Preparing spawn area: 0%
+[16:51:02] [Worker-Main-6/INFO]: Preparing spawn area: 0%
+[16:51:02] [Worker-Main-6/INFO]: Preparing spawn area: 0%
+[16:51:02] [Worker-Main-3/INFO]: Preparing spawn area: 0%
+[16:51:02] [Worker-Main-7/INFO]: Preparing spawn area: 0%
+[16:51:02] [Worker-Main-5/INFO]: Preparing spawn area: 47%
+[16:51:03] [Server thread/INFO]: Time elapsed: 4337 ms
+[16:51:03] [Server thread/INFO]: Done (6.313s)! For help, type "help"
+[16:51:03] [Server thread/INFO]: LuckySimpan[/192.168.32.157:57656] logged in with entity id 127 at (-319.05638110932, 64.0, 448.47208140822534)
+[16:51:03] [Server thread/INFO]: LuckySimpan joined the game
+[16:51:06] [Server thread/INFO]: LuckySimpan lost connection: Disconnected
+[16:51:06] [Server thread/INFO]: LuckySimpan left the game
+[16:51:09] [Server thread/INFO]: Stopping server
+[16:51:09] [Server thread/INFO]: Saving players
+[16:51:09] [Server thread/INFO]: Saving worlds
+[16:51:09] [Server thread/INFO]: Saving chunks for level 'ServerLevel[world]'/minecraft:overworld
+[16:51:09] [Server thread/INFO]: Saving chunks for level 'ServerLevel[world]'/minecraft:the_end
+[16:51:09] [Server thread/INFO]: Saving chunks for level 'ServerLevel[world]'/minecraft:the_nether
+[16:51:09] [Server thread/INFO]: ThreadedAnvilChunkStorage (world): All chunks are saved
+[16:51:09] [Server thread/INFO]: ThreadedAnvilChunkStorage (DIM1): All chunks are saved
+[16:51:09] [Server thread/INFO]: ThreadedAnvilChunkStorage (DIM-1): All chunks are saved
+[16:51:09] [Server thread/INFO]: ThreadedAnvilChunkStorage: All dimensions are saved
